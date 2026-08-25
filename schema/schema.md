@@ -1,22 +1,23 @@
 ---
 type: schema
 domain: 招投标（某建设集团 · 投标信息收集智能体）
-version: 0.2.0
+version: 0.4.0
 status: active
 generated_by: domain-schema-generator-v2
-skeleton_source: 投标智能体-智库底座复用方案_v1.md §四（招投标 Schema 骨架树细化版 v1）+ PRD_v1.md
-audit_iterations: 1
+skeleton_source: 投标智能体-智库底座复用方案_v1.md §四（招投标 Schema 骨架树细化版 v1）+ PRD_v1.md + ADR-001
+audit_iterations: 2
 placeholder_hits: 0
-coverage_rate: "51/51"
-passed_gate: 2026-08-13
+coverage_rate: "107/107"
+passed_gate: 2026-08-13 / 2026-08-25
 ---
 
 # 招投标 · 域操作规范（schema）
 
 > 「信息搜集 Agent 的宪法」——修改此文件即修改 Agent 行为。
-> 本 schema 定义从**采集 → 清洗 → 事实卡 → 项目情报库 → 推送 → 反馈校准**的完整规则，全部围绕「纯事实、可溯源、零分析断语」红线。
-> 与智库 schema 的关键差异：**无分析层**（无 7 维分析框架、无 SCQA、无报告撰写标准、无作战地图）。信息搜集 Agent 只产出结构化情报，不做投/不投判断。
-> 关联 PRD：《投标信息收集智能体-PRD_v1.md》为开发基线，字段 key、采集模式、门禁以 PRD 为准并同步更新。
+> 本 schema 定义从**采集 → 清洗 → 事实卡 → 项目情报库 → 匹配与准入 → 人工审批 → 反馈校准**的完整规则，全部围绕「纯事实、可溯源、零分析断语」红线。
+> 与智库 schema 的关键差异：**无分析层**（无 7 维分析框架、无 SCQA、无报告撰写标准、无作战地图）。公开情报层只产出结构化情报，不做投/不投判断。
+> 新增边界（ADR-001，v0.4.0）：资格与资源核查层（§十一）允许**规则化匹配与计分**——但仅限可配置规则和证据化结果；投标审批（§十二）必须由企业负责人完成，系统永不自动投标/报价。
+> 关联 PRD：《投标信息收集智能体-PRD_v1.md》为开发基线，字段 key、采集模式、门禁以 PRD 为准并同步更新；范围变化以 ADR-001 为准。
 
 ---
 
@@ -417,6 +418,9 @@ G2 事实卡门禁（必填齐全 + 溯源 + 纯事实红线）
 G3 情报库门禁（主卡+子卡 + 多源合并）
    │
    ▼
+G3.5 匹配门禁（资格/资源逐项匹配 + 满分判定，v0.4.0 新增；准入链路，G4 独立）
+   │
+   ▼
 G4 推送门禁（匹配命中 + 脱敏 + 链接可点）
    │
    ▼
@@ -482,6 +486,12 @@ phase_c:
 - rule: 主卡+子卡齐备（4.3）；状态流转正确（6.4 项目状态机）；多源合并完成（7.3）；**intake.pipeline_status ∈ {carded, intel} 且主卡存在（C 方案硬校验前置）**
 - auto_action: 生成主卡 → 挂接子卡 → 多源引用合并 → **更新 intake pipeline_status=intel** → **执行事件同步 `python3 scripts/publish/sync_events.py`（为每个已入库 intake 创建/更新 AnnouncementEvent，幂等；计算 content_hash/dedup_key；同 dedup_key 跨平台归并为一条事件 + source_links 追加）** → 验证 → 更新状态
 - check: `python3 scripts/pipeline_gates.py --intake <id>` 输出 G0/G2/G3/事件同步 全 ✅
+
+**G3.5 匹配门禁（v0.4.0 新增，准入链路）**
+- rule: 资格/资源逐项匹配完成（§11.1 匹配矩阵）；三类要求拆分完成（§11.2）；项目经理硬条件验证完成（§11.3）；准入判定 `eligible_for_approval` 计算完成且可解释（§11.5）；匹配结论全部回链招标条款（tender_clause_ref）与企业证据（evidence_refs）
+- auto_action: 缺失/无法核验 → `blocked_missing_data` 待补队列（不推断满足）；硬性否决项不满足 → `blocked_hard_requirement`；明确不满足 → `not_qualified`；全部满足 → `qualified_full_score` → `pending_bid_approval`
+- fallback: 解析不完整/资料库为空 → 人工复核（manual_review），不参与自动满分判定
+- 边界: 本门禁只判定"能否进入人工审批"，**不阻断公开情报推送（G4 独立运行）**；满分 ≠ 自动投标（ADR-001 §2.3）
 
 ### 6.4.0 门禁链硬校验（C 方案，2026-08-17 防 Agent 跳步）`[rule]`
 
@@ -662,6 +672,11 @@ qa_report:
 | 暗标 | Dark Bid | 技术标匿名评审方式 |
 | 综合评估法 | Comprehensive Evaluation | 商务+技术+资信综合打分评审 |
 | 双信封 | Two-Envelope | 商务标与技术标分装递交 |
+| Material | Material | 最小数据治理单元：公告、招标文件、企业资质、业绩、人员证照等（F003 §4.1） |
+| 匹配矩阵 | Match Matrix | 招标要求与企业私有资料逐项匹配的字段级结果（§11.1） |
+| 满分准入 | Full-Score Admission | 全部硬条件满足+计分项满分+证据有效+合格可用项目经理+动作就绪（§11.5） |
+| 待投标审批 | Pending Bid Approval | 满分后进入人工审批队列的状态，不等于自动投标（§12.1） |
+| 人工豁免 | Waiver | 审批人对个别阻断项的授权放行，须记录授权人/原因/证据/有效期/审批时间（§12.3） |
 
 ---
 
@@ -762,6 +777,148 @@ qa_report:
 
 ---
 
+## 十一、资格与资源核查域（v0.4.0 新增，ADR-001 §2.1 第三层）
+
+> **边界声明**：本章为 ADR-001 显式范围变更的落地层——公开情报层红线（§四 4.4 / §八 8.3）不变，公开层仍然零分析断语；匹配/计分只允许在本章出现，且**必须**是可配置规则 + 证据化结果（每条结论回链招标条款 + 企业证据）。企业资料不足时输出"不可判定/待补材料"，**不得默认满分**（ADR-001 §2.4）。
+
+### 11.1 企业资料匹配（MatchMatrix）`[schema]`
+
+匹配矩阵 = 招标要求（F005 子卡）逐项 vs 企业私有资料（F006/F007）的字段级匹配结果：
+
+| field_key | 中文 | 类型 | 必填 | 说明 |
+|-----------|------|:--:|:--:|------|
+| matrix_id | 矩阵ID | string | ✅ | 主键，关联 project_id + 规则版本 |
+| tender_clause_ref | 要求引用 | ref[] | ✅ | 回链招标条款（F005 子卡），每条结论必回链 |
+| evidence_refs | 企业证据引用 | ref[] | ✅ | 回链 F006/F007 证据，无证据不判"满足" |
+| match_result | 匹配结果 | enum | ✅ | satisfied / partial / not_satisfied / unverifiable |
+| score | 计分 | decimal | — | 计分项得分 |
+| max_score | 满分值 | decimal | ✅ | 计分项满分值（规则配置） |
+| missing_items | 缺失项 | ref[] | — | 待补/待核实清单 |
+
+> **差异登记（v0.4.0 审计）**：旧 §三 advantage 占位字段 `match_result`（满足/部分满足/待核实/不满足）为占位枚举（§四 4.1.9，保持不动）；本章 `match_result`（satisfied/partial/not_satisfied/unverifiable）为正式启用枚举（F008 §4.2），依据 ADR-001 影响评估"advantage 由占位升级为正式匹配矩阵"。
+
+### 11.2 三类要求 `[rule]`
+
+| 类型 | 内容 | 判定 |
+|------|------|------|
+| `hard_requirement` 硬性要求 | 资格、资质、人员、业绩、信用、保证金、截止时间、联合体等 | 任一关键项不满足/缺证据 → 一票否决（F008 §4.1） |
+| `scored_requirement` 计分要求 | 商务、技术、资信等可配置评分项 | 每项定义满分值、匹配证据、缺失处置 |
+| `action_requirement` 动作要求 | 报名、CA、保证金、递交、开标 | 未完成前不能进入审批 |
+
+### 11.3 项目经理匹配（ProjectManagerProfile）`[schema]`
+
+> 字段定义与 F007 §4 逐项对齐；硬条件验证（F007 §6.1）在匹配时先于计分执行，任一不满足或**无法核验** → 该经理不计入"满分可投标"。
+
+| field_key | 中文 | 必填 | 说明 |
+|-----------|------|:--:|------|
+| manager_id | 经理ID | ✅ | 主键，如 PM-0001 |
+| display_name | 姓名/脱敏展示名 | ✅ | 列表默认脱敏（如 张**），明细按权限 |
+| organization | 所属组织 | ✅ | 公司/部门/项目部 |
+| specialty | 专业 | ✅ | 建筑工程/市政/公路等 |
+| reg_cert_type | 注册证书 | ✅ | 一级建造师/二级建造师等 |
+| reg_cert_no | 注册编号 | ✅ | 唯一，校验格式 |
+| cert_level | 证书等级 | ✅ | 一级/二级 |
+| cert_valid_until | 证书有效期 | ✅ | 过期自动 expired |
+| edu_safety_status | 继续教育/安全证书状态 | ✅ | valid / expiring / expired / pending |
+| eligible_project_types | 可担任项目类型 | ✅ | 与项目类型匹配 |
+| region_restriction | 地区限制 | — | 如仅限河北省 |
+| performance_refs | 历史业绩 | — | 回链 F006 PerformanceRecord |
+| active_projects | 当前在建项目 | — | 项目ID + 预计结束 |
+| expected_available_at | 预计可用日期 | — | |
+| availability | 可用状态 | ✅ | available / occupied / planning |
+| credit_penalty_status | 信用/处罚状态 | — | 仅限企业合法维护范围（有证据） |
+| evidence_refs | 证据文件引用 | ✅ | 注册证书、社保、继续教育证明、业绩证明 |
+| verified_at | 最后核验时间 | — | |
+| data_owner | 资料责任人 | ✅ | |
+| status | 经理状态 | ✅ | active / unavailable / expired / pending_verification / archived |
+| recommendation_role | 推荐角色 | — | primary / backup（主推荐/备选，投标专员设置，留存审计） |
+
+### 11.4 规则版本（RuleSet）`[schema]`
+
+`rule_set_id` / `rule_version` / `effective_from` / `created_by`——规则版本化（F008 §4.3）：历史项目保留当时规则版本快照；规则变更留审计（谁/何时/改了什么）。
+
+### 11.5 满分准入判定 `[rule + formula]`
+
+```text
+eligible_for_approval =
+  all(hard_requirements == satisfied)
+  AND all(scored_requirements.score == scored_requirements.max_score)
+  AND all(action_requirements.status in [ready, completed])
+  AND exists(qualified_available_project_manager)
+  AND all(required_evidence is valid)
+```
+
+- 判定结果字段：`eligible_for_approval`（boolean）；`blocked_reason`（blocked_missing_data / blocked_hard_requirement）；`pending_items[]`（待补/待核实队列）。
+- 结果展示（F008 §6.3）：总分、满分差距、阻断项、待补项、招标条款引用、企业证据引用、项目经理匹配结果（主推荐/备选）。
+- **满分仅进入 `pending_bid_approval`，绝不自动投标**（ADR-001 §2.3）。
+
+---
+
+## 十二、准入状态机域（v0.4.0 新增，ADR-001 §2.2）
+
+### 12.1 准入状态 `[schema]`
+
+`admission_status`（enum，必填）：
+
+```text
+draft
+  → collecting
+  → parsed
+  → matching
+  → blocked_missing_data          （数据缺失/证据不足，默认阻断）
+  → blocked_hard_requirement      （硬性否决项不满足或无法核验）
+  → not_qualified                 （明确不满足资格）
+  → qualified_full_score          （满分且证据完整，等进入审批）
+  → pending_bid_approval          （满分+证据完整+至少一名可用项目经理）
+  → approved_for_bidding / rejected_by_approver
+  → archived
+```
+
+### 12.2 状态迁移规则 `[rule]`
+
+| 迁移 | 触发 | 说明 |
+|---|---|---|
+| draft → collecting | 人工创建任务并开始导入 | 仅 manual_trigger |
+| collecting → parsed | 原文入库并解析完成 | 解析失败 → 人工复核，不自动前进 |
+| parsed → matching | 匹配任务启动 | 企业资料不足 → blocked_missing_data |
+| matching → blocked_missing_data | 关键证据缺失 | 默认阻断，不推断满足 |
+| matching → blocked_hard_requirement | 硬性否决项不满足/无法核验 | 一票否决 |
+| matching → not_qualified | 明确不满足资格 | 证据充分的不满足 |
+| matching → qualified_full_score | 全部硬条件满足+计分项满分+证据有效+存在合格可用项目经理 | 满分状态 |
+| qualified_full_score → pending_bid_approval | 进入人工审批队列 | 满分不等于自动投标 |
+| pending_bid_approval → approved_for_bidding / rejected_by_approver | 投标负责人审批/驳回 | 可附人工豁免 |
+| approved_for_bidding / rejected_by_approver → archived | 归档 | 保留审计 |
+
+### 12.3 人工豁免（Waiver）`[schema]`
+
+| field_key | 中文 | 必填 | 说明 |
+|-----------|------|:--:|------|
+| waiver_id | 豁免ID | ✅ | 主键 |
+| authorizer | 授权人 | ✅ | 审批人 |
+| reason | 原因 | ✅ | 必填 |
+| evidence_refs | 证据 | ✅ | 在途材料/受理回执等，必填 |
+| valid_until | 有效期 | ✅ | 必填，过期自动失效 |
+| approved_at | 审批时间 | ✅ | |
+| covered_items | 覆盖的阻断项 | ✅ | 具体豁免哪项 |
+
+> 豁免不改变"满分"定义（ADR-001 §2.5），只允许带着豁免项进入人工审批视野；豁免到期未批准 → 回到阻断状态。
+
+### 12.4 审批记录（ApprovalRecord）`[schema]`
+
+| field_key | 中文 | 必填 | 说明 |
+|-----------|------|:--:|------|
+| approval_id | 审批ID | ✅ | 主键 |
+| project_id | 项目ID | ✅ | 回链主卡 |
+| approver | 审批人 | ✅ | 经营负责人 |
+| decision | 决策 | ✅ | approved / rejected / waived |
+| decided_at | 决策时间 | ✅ | |
+| comment | 意见 | — | 驳回时必填 |
+| admission_result_ref | 关联准入结果 | ✅ | 回链 §11.5 |
+
+> 审计要求（F009 §6.4）：全部动作留痕——谁、何时、依据什么、结论；审计记录不可删改；审批层数据仅审批人可见（F003 权限矩阵 approver_only）。
+
+---
+
 - **changelog**：本文件每次版本升级记录变更点，不可虚报（声称补齐的章节数必须与实际一致）。
 - **活文档声明**：每次管道运行后发现此 schema 不足 → 立即补充。
 - **域定制说明**：本 schema 为招投标行业流程定制版——删除智库"报告撰写/SCQA/作战地图/分析框架"整章（信息搜集 Agent 无分析产出）；新增"采集与合规"章与"Pipeline 门禁 G0-G6′"章。字段 key 与 PRD §六 严格对齐，禁止引入 PRD 之外的字段。
@@ -781,3 +938,5 @@ qa_report:
 | 2026-08-18 | v0.2.3 | **数据源注册表升级（依据《京津冀招投标平台对照表-20260817》实测筛选）**：①§1.4 平台注册表由 4 行占位扩展为 24 行全量清单（国家级 L1 3 个 + 北京 L1 3 个 + 天津 L1 2 个 + 河北 L1 4 个 + 河北 L2 11 市 + L0 第三方 4 个），含 URL/采集方式/实测备注；②明确非公告源剔除名单（住建厅/四库一平台/采购与招标网/张家口保函平台/政采地市子站）；③固化 4 条实测认知：公告采集免费免登录（招标投标法 16 条）、工程主战场=省市公共资源平台、政采中小项目=ccgp 三省市分站、商业平台非必需；④纠偏：河北旧域名 `ggzy.hebei.gov.cn` 已注销 → `szj.hebei.gov.cn/hbggfwpt/`；`bidcenter.com.cn` 是采招网 ≠ 比地（比地=`bidizhaobiao.cn`）；本机代理 127.0.0.1:7890 失效 → 采集脚本 trust_env=False |
 | 2026-08-18 | v0.2.4 | **采集策略收敛（用户决策）**：①L2 各地市**不区分优先级全部纳入采集清单**（覆盖 v0.2.3"待圈定优先级"表述），逐个过合规评估后启用；②**千里马/剑鱼免费资源纳入日常巡检**（免注册可看标题/编号/摘要）作官方源补充线索，付费 API 仍待合同、不阻塞采集；③聚合平台日期不可直接采信（官方验证后才计当日） |
 | 2026-08-18 | v0.3.0 | **日报准入口径重构（用户决策：放宽标准）**：①准入 = **可参与性**（deadline_signup 或 deadline_bid 任一未过 → 当天仍可报名/下载/投递 → 收录），**不再限定"当天发布"**——历史发布但截止未过的公告同样推送（§10.2）；②**已推送去重**：扫描历史日报 items 排除已推送事件，同一公告绝不重复推送（§10.3，`daily_issue.exclude_pushed`）；③截止已过 → excluded/deadline_expired 后台；截止缺失 → 复核队列 missing_deadline（替代 missing_publish_time）；④渲染文案同步（可参与公告/当日无新增可参与公告）；⑤测试 48→53 项适配新口径 |
+| 2026-08-18 | v0.3.1 | **推送卡片排版优化（参考 Google/Facebook 通知风格）**：①每条公告标序号（1. 2. …，序号+优先级标签）；②去多余空行（分组间不空行、卡片间单空行）；③九段分组结构与字段内容不变、有值才展示、文末待补充汇总保持；④条目数校验正则改 `^\d+\.`；⑤模板同步；⑥重新推送 PUSH-20260818-003 成功（本行补录，依据 .pipeline_state.yml phase_e step_03） |
+| 2026-08-25 | v0.4.0 | **资格与资源核查域 + 准入状态机域（ADR-001 范围变更落地，R002）**：①新增 §十一（资格与资源核查域）：匹配矩阵 7 字段（§11.1，含 match_result 正式枚举，登记与旧优势卡占位差异）、三类要求（§11.2）、项目经理匹配 21 字段 + 硬条件验证（§11.3，对齐 F007）、规则版本（§11.4）、满分准入公式（§11.5，对齐 F008 §6.1）；②新增 §十二（准入状态机域）：admission_status 12 态（ADR-001 §2.2）、迁移表（§12.2）、人工豁免 7 字段（§12.3，F009 §4.2）、审批记录 7 字段（§12.4，F009 §4.1）；③门禁新增 **G3.5 匹配门禁**（§6.4，F008 §6.4 定稿命名）：准入链路独立门禁，不阻断公开情报推送；④骨架树同步扩展第 9/10 章（tender_skeleton_tree.json 重新生成，scripts/build_skeleton_tree.py）；⑤全量审计通过：coverage 107/107、placeholder 0、无重复定义（见 _schema_generation_log.md）；⑥frontmatter version 0.2.0 → 0.4.0（对齐 .pipeline_state.yml 既有 v0.3.x 演进，v0.3.1 补录）；⑦兼容策略：本章为纯新增，不改动 §一~§十 既有规则与字段含义 |

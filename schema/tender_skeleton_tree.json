@@ -1078,6 +1078,13 @@
         "kind": "rule",
         "note": "G6′",
         "gate": "G6′"
+      },
+      {
+        "id": "6.8",
+        "name": "G3.5 匹配门禁",
+        "kind": "rule",
+        "note": "准入链路新增门禁（F008 §6.4 定稿命名）：G3 情报库通过后，对资格/资源逐项匹配与满分判定；通过 → qualified_full_score → pending_bid_approval；缺失/不满足 → 阻断；不阻断公开情报推送（G4 独立运行）",
+        "gate": "G3.5"
       }
     ]
   },
@@ -1146,6 +1153,635 @@
         "name": "缺失检查",
         "kind": "rule",
         "note": "缺失字段标待补，不硬造"
+      }
+    ]
+  },
+  {
+    "id": "9",
+    "name": "资格与资源核查域",
+    "kind": "section",
+    "children": [
+      {
+        "id": "9.1",
+        "name": "企业资料匹配",
+        "kind": "section",
+        "children": [
+          {
+            "id": "9.1.1",
+            "name": "矩阵ID",
+            "kind": "field",
+            "field_key": "matrix_id",
+            "type": "string",
+            "required": true,
+            "source": "系统生成",
+            "note": "关联 project_id + 规则版本"
+          },
+          {
+            "id": "9.1.2",
+            "name": "要求引用",
+            "kind": "field",
+            "field_key": "tender_clause_ref",
+            "type": "ref[]",
+            "required": true,
+            "source": "回链招标条款（F005 子卡）"
+          },
+          {
+            "id": "9.1.3",
+            "name": "企业证据引用",
+            "kind": "field",
+            "field_key": "evidence_refs",
+            "type": "ref[]",
+            "required": true,
+            "source": "回链 F006/F007 证据"
+          },
+          {
+            "id": "9.1.4",
+            "name": "匹配结果",
+            "kind": "field",
+            "field_key": "match_result",
+            "type": "enum",
+            "required": true,
+            "source": "规则匹配",
+            "note": "正式枚举替代旧优势卡占位（登记差异见审计日志）"
+          },
+          {
+            "id": "9.1.5",
+            "name": "计分",
+            "kind": "field",
+            "field_key": "score",
+            "type": "decimal",
+            "required": false,
+            "source": "规则计分",
+            "note": "计分项得分"
+          },
+          {
+            "id": "9.1.6",
+            "name": "满分值",
+            "kind": "field",
+            "field_key": "max_score",
+            "type": "decimal",
+            "required": true,
+            "source": "规则配置",
+            "note": "计分项满分值（F008 配置）"
+          },
+          {
+            "id": "9.1.7",
+            "name": "缺失项",
+            "kind": "field",
+            "field_key": "missing_items",
+            "type": "ref[]",
+            "required": false,
+            "source": "匹配结果",
+            "note": "待补/待核实清单"
+          }
+        ]
+      },
+      {
+        "id": "9.2",
+        "name": "三类要求",
+        "kind": "section",
+        "children": [
+          {
+            "id": "9.2.1",
+            "name": "硬性要求 hard_requirement",
+            "kind": "rule",
+            "note": "资格/资质/人员/业绩/信用/保证金/截止时间/联合体等；任一不满足或无法核验 → 一票否决（F008 §4.1）"
+          },
+          {
+            "id": "9.2.2",
+            "name": "计分要求 scored_requirement",
+            "kind": "rule",
+            "note": "商务/技术/资信评分项；每项配置满分值、匹配证据、缺失处置（F008 §4.1）"
+          },
+          {
+            "id": "9.2.3",
+            "name": "动作要求 action_requirement",
+            "kind": "rule",
+            "note": "报名/CA/保证金/递交/开标；未完成不能进入审批（F008 §4.1）"
+          }
+        ]
+      },
+      {
+        "id": "9.3",
+        "name": "项目经理匹配",
+        "kind": "section",
+        "children": [
+          {
+            "id": "9.3.1",
+            "name": "经理ID",
+            "kind": "field",
+            "field_key": "manager_id",
+            "type": "string",
+            "required": true,
+            "source": "系统生成/导入",
+            "note": "如 PM-0001"
+          },
+          {
+            "id": "9.3.2",
+            "name": "姓名/脱敏展示名",
+            "kind": "field",
+            "field_key": "display_name",
+            "type": "string",
+            "required": true,
+            "source": "企业私有库",
+            "note": "列表默认脱敏（如 张**），明细按权限"
+          },
+          {
+            "id": "9.3.3",
+            "name": "所属组织",
+            "kind": "field",
+            "field_key": "organization",
+            "type": "string",
+            "required": true,
+            "source": "企业私有库"
+          },
+          {
+            "id": "9.3.4",
+            "name": "专业",
+            "kind": "field",
+            "field_key": "specialty",
+            "type": "string",
+            "required": true,
+            "source": "企业私有库",
+            "note": "建筑工程/市政/公路等"
+          },
+          {
+            "id": "9.3.5",
+            "name": "注册证书",
+            "kind": "field",
+            "field_key": "reg_cert_type",
+            "type": "string",
+            "required": true,
+            "source": "企业私有库",
+            "note": "一级建造师/二级建造师等"
+          },
+          {
+            "id": "9.3.6",
+            "name": "注册编号",
+            "kind": "field",
+            "field_key": "reg_cert_no",
+            "type": "string",
+            "required": true,
+            "source": "企业私有库",
+            "note": "唯一，校验格式"
+          },
+          {
+            "id": "9.3.7",
+            "name": "证书等级",
+            "kind": "field",
+            "field_key": "cert_level",
+            "type": "string",
+            "required": true,
+            "source": "企业私有库",
+            "note": "一级/二级"
+          },
+          {
+            "id": "9.3.8",
+            "name": "证书有效期",
+            "kind": "field",
+            "field_key": "cert_valid_until",
+            "type": "date",
+            "required": true,
+            "source": "企业私有库",
+            "note": "过期自动 expired"
+          },
+          {
+            "id": "9.3.9",
+            "name": "继续教育/安全证书状态",
+            "kind": "field",
+            "field_key": "edu_safety_status",
+            "type": "enum",
+            "required": true,
+            "source": "企业私有库",
+            "values": [
+              "valid",
+              "expiring",
+              "expired",
+              "pending"
+            ]
+          },
+          {
+            "id": "9.3.10",
+            "name": "可担任项目类型",
+            "kind": "field",
+            "field_key": "eligible_project_types",
+            "type": "string[]",
+            "required": true,
+            "source": "企业私有库",
+            "note": "与项目类型匹配"
+          },
+          {
+            "id": "9.3.11",
+            "name": "地区限制",
+            "kind": "field",
+            "field_key": "region_restriction",
+            "type": "string",
+            "required": false,
+            "source": "企业私有库",
+            "note": "如仅限河北省"
+          },
+          {
+            "id": "9.3.12",
+            "name": "历史业绩",
+            "kind": "field",
+            "field_key": "performance_refs",
+            "type": "ref[]",
+            "required": false,
+            "source": "回链 F006 PerformanceRecord"
+          },
+          {
+            "id": "9.3.13",
+            "name": "当前在建项目",
+            "kind": "field",
+            "field_key": "active_projects",
+            "type": "ref[]",
+            "required": false,
+            "source": "企业私有库",
+            "note": "项目ID + 预计结束"
+          },
+          {
+            "id": "9.3.14",
+            "name": "预计可用日期",
+            "kind": "field",
+            "field_key": "expected_available_at",
+            "type": "date",
+            "required": false,
+            "source": "企业私有库"
+          },
+          {
+            "id": "9.3.15",
+            "name": "可用状态",
+            "kind": "field",
+            "field_key": "availability",
+            "type": "enum",
+            "required": true,
+            "source": "企业私有库",
+            "values": [
+              "available",
+              "occupied",
+              "planning"
+            ]
+          },
+          {
+            "id": "9.3.16",
+            "name": "信用/处罚状态",
+            "kind": "field",
+            "field_key": "credit_penalty_status",
+            "type": "string",
+            "required": false,
+            "source": "企业私有库",
+            "note": "仅限企业合法维护范围（失信/处罚记录，有证据）"
+          },
+          {
+            "id": "9.3.17",
+            "name": "证据文件引用",
+            "kind": "field",
+            "field_key": "evidence_refs",
+            "type": "ref[]",
+            "required": true,
+            "source": "回链 F003 evidence_file",
+            "note": "注册证书、社保、继续教育证明、业绩证明"
+          },
+          {
+            "id": "9.3.18",
+            "name": "最后核验时间",
+            "kind": "field",
+            "field_key": "verified_at",
+            "type": "datetime",
+            "required": false,
+            "source": "企业私有库"
+          },
+          {
+            "id": "9.3.19",
+            "name": "资料责任人",
+            "kind": "field",
+            "field_key": "data_owner",
+            "type": "string",
+            "required": true,
+            "source": "企业私有库"
+          },
+          {
+            "id": "9.3.20",
+            "name": "经理状态",
+            "kind": "field",
+            "field_key": "status",
+            "type": "enum",
+            "required": true,
+            "source": "企业私有库",
+            "values": [
+              "active",
+              "unavailable",
+              "expired",
+              "pending_verification",
+              "archived"
+            ]
+          },
+          {
+            "id": "9.3.21",
+            "name": "推荐角色",
+            "kind": "field",
+            "field_key": "recommendation_role",
+            "type": "enum",
+            "required": false,
+            "source": "投标专员设置",
+            "values": [
+              "primary",
+              "backup"
+            ],
+            "note": "主推荐/备选，留存审计（F007 §6.2）"
+          },
+          {
+            "id": "9.3.22",
+            "name": "硬条件验证",
+            "kind": "rule",
+            "note": "逐项验证：专业匹配/注册证书类型与等级/有效期（含继续教育与安全证书）/社保在岗/业绩满足/在建冲突/可用状态/信用处罚；任一不满足或无法核验 → 不计入满分可投标（F007 §6.1）"
+          }
+        ]
+      },
+      {
+        "id": "9.4",
+        "name": "规则版本",
+        "kind": "section",
+        "children": [
+          {
+            "id": "9.4.1",
+            "name": "规则集ID",
+            "kind": "field",
+            "field_key": "rule_set_id",
+            "type": "string",
+            "required": true,
+            "source": "系统生成"
+          },
+          {
+            "id": "9.4.2",
+            "name": "规则版本",
+            "kind": "field",
+            "field_key": "rule_version",
+            "type": "string",
+            "required": true,
+            "source": "规则配置"
+          },
+          {
+            "id": "9.4.3",
+            "name": "生效日期",
+            "kind": "field",
+            "field_key": "effective_from",
+            "type": "date",
+            "required": true,
+            "source": "规则配置"
+          },
+          {
+            "id": "9.4.4",
+            "name": "创建人",
+            "kind": "field",
+            "field_key": "created_by",
+            "type": "string",
+            "required": true,
+            "source": "规则配置"
+          }
+        ]
+      },
+      {
+        "id": "9.5",
+        "name": "满分准入判定",
+        "kind": "section",
+        "children": [
+          {
+            "id": "9.5.1",
+            "name": "准入判定",
+            "kind": "field",
+            "field_key": "eligible_for_approval",
+            "type": "boolean",
+            "required": true,
+            "source": "准入公式",
+            "note": "F008 §6.1：全硬条件满足 AND 计分项全满分 AND 动作就绪 AND 存在合格可用项目经理 AND 证据有效"
+          },
+          {
+            "id": "9.5.2",
+            "name": "阻断类型",
+            "kind": "field",
+            "field_key": "blocked_reason",
+            "type": "enum",
+            "required": false,
+            "source": "匹配结果",
+            "values": [
+              "blocked_missing_data",
+              "blocked_hard_requirement"
+            ],
+            "note": "数据缺失默认阻断，不推断满足"
+          },
+          {
+            "id": "9.5.3",
+            "name": "待补/待核实项",
+            "kind": "field",
+            "field_key": "pending_items",
+            "type": "ref[]",
+            "required": false,
+            "source": "匹配结果",
+            "note": "待补队列"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "10",
+    "name": "准入状态机域",
+    "kind": "section",
+    "children": [
+      {
+        "id": "10.1",
+        "name": "准入状态",
+        "kind": "section",
+        "children": [
+          {
+            "id": "10.1.1",
+            "name": "准入状态",
+            "kind": "field",
+            "field_key": "admission_status",
+            "type": "enum",
+            "required": true,
+            "source": "准入状态机",
+            "values": [
+              "draft",
+              "collecting",
+              "parsed",
+              "matching",
+              "blocked_missing_data",
+              "blocked_hard_requirement",
+              "not_qualified",
+              "qualified_full_score",
+              "pending_bid_approval",
+              "approved_for_bidding",
+              "rejected_by_approver",
+              "archived"
+            ],
+            "note": "ADR-001 §2.2 状态机"
+          }
+        ]
+      },
+      {
+        "id": "10.2",
+        "name": "状态迁移规则",
+        "kind": "rule",
+        "note": "draft→collecting→parsed→matching→blocked_missing_data/blocked_hard_requirement/not_qualified→qualified_full_score→pending_bid_approval→approved_for_bidding/rejected_by_approver→archived；迁移表见 ADR-001 §2.2；满分仅进入 pending_bid_approval，不自动投标"
+      },
+      {
+        "id": "10.3",
+        "name": "人工豁免",
+        "kind": "section",
+        "children": [
+          {
+            "id": "10.3.1",
+            "name": "豁免ID",
+            "kind": "field",
+            "field_key": "waiver_id",
+            "type": "string",
+            "required": true,
+            "source": "系统生成"
+          },
+          {
+            "id": "10.3.2",
+            "name": "授权人",
+            "kind": "field",
+            "field_key": "authorizer",
+            "type": "string",
+            "required": true,
+            "source": "审批人"
+          },
+          {
+            "id": "10.3.3",
+            "name": "原因",
+            "kind": "field",
+            "field_key": "reason",
+            "type": "string",
+            "required": true,
+            "source": "豁免申请",
+            "note": "必填"
+          },
+          {
+            "id": "10.3.4",
+            "name": "证据",
+            "kind": "field",
+            "field_key": "evidence_refs",
+            "type": "ref[]",
+            "required": true,
+            "source": "回链 evidence_file",
+            "note": "在途材料/受理回执等，必填"
+          },
+          {
+            "id": "10.3.5",
+            "name": "有效期",
+            "kind": "field",
+            "field_key": "valid_until",
+            "type": "date",
+            "required": true,
+            "source": "豁免配置",
+            "note": "必填，过期自动失效"
+          },
+          {
+            "id": "10.3.6",
+            "name": "审批时间",
+            "kind": "field",
+            "field_key": "approved_at",
+            "type": "datetime",
+            "required": true,
+            "source": "审批记录"
+          },
+          {
+            "id": "10.3.7",
+            "name": "覆盖的阻断项",
+            "kind": "field",
+            "field_key": "covered_items",
+            "type": "ref[]",
+            "required": true,
+            "source": "豁免申请",
+            "note": "具体豁免哪项"
+          }
+        ]
+      },
+      {
+        "id": "10.4",
+        "name": "审批记录",
+        "kind": "section",
+        "children": [
+          {
+            "id": "10.4.1",
+            "name": "审批ID",
+            "kind": "field",
+            "field_key": "approval_id",
+            "type": "string",
+            "required": true,
+            "source": "系统生成"
+          },
+          {
+            "id": "10.4.2",
+            "name": "项目ID",
+            "kind": "field",
+            "field_key": "project_id",
+            "type": "string",
+            "required": true,
+            "source": "回链主卡"
+          },
+          {
+            "id": "10.4.3",
+            "name": "审批人",
+            "kind": "field",
+            "field_key": "approver",
+            "type": "string",
+            "required": true,
+            "source": "审批人配置",
+            "note": "经营负责人"
+          },
+          {
+            "id": "10.4.4",
+            "name": "决策",
+            "kind": "field",
+            "field_key": "decision",
+            "type": "enum",
+            "required": true,
+            "source": "人工审批",
+            "values": [
+              "approved",
+              "rejected",
+              "waived"
+            ]
+          },
+          {
+            "id": "10.4.5",
+            "name": "决策时间",
+            "kind": "field",
+            "field_key": "decided_at",
+            "type": "datetime",
+            "required": true,
+            "source": "审批记录"
+          },
+          {
+            "id": "10.4.6",
+            "name": "意见",
+            "kind": "field",
+            "field_key": "comment",
+            "type": "string",
+            "required": false,
+            "source": "审批记录",
+            "note": "驳回时必填"
+          },
+          {
+            "id": "10.4.7",
+            "name": "关联准入结果",
+            "kind": "field",
+            "field_key": "admission_result_ref",
+            "type": "ref[]",
+            "required": true,
+            "source": "回链 F008 准入判定"
+          },
+          {
+            "id": "10.4.8",
+            "name": "审计要求",
+            "kind": "rule",
+            "note": "全部动作留痕：谁、何时、依据什么、结论；审计记录不可删改（F009 §6.4/§9）"
+          }
+        ]
       }
     ]
   }

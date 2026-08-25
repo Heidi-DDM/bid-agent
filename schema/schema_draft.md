@@ -1,6 +1,6 @@
 # 招投标 Schema 骨架树（生成稿）
 
-> 生成时间：2026-08-18 11:32:08
+> 生成时间：2026-08-25 13:20:54
 > 树节点校验：通过
 
 ## 一、项目主卡字段清单
@@ -201,6 +201,7 @@
   - 6.5 G4 推送门禁
   - 6.6 G5 归档门禁
   - 6.7 G6′ 校准门禁
+  - 6.8 G3.5 匹配门禁
 - 7 去重规则
   - 7.1 L1 精确去重
   - 7.2 L2 近似去重
@@ -212,3 +213,69 @@
   - 8.3 红线检查
   - 8.4 溯源检查
   - 8.5 缺失检查
+- 9 资格与资源核查域
+  - 9.1 企业资料匹配
+    - 9.1.1 矩阵ID（`matrix_id` / string / 必填）
+    - 9.1.2 要求引用（`tender_clause_ref` / ref[] / 必填）
+    - 9.1.3 企业证据引用（`evidence_refs` / ref[] / 必填）
+    - 9.1.4 匹配结果（`match_result` / enum / 必填）
+    - 9.1.5 计分（`score` / decimal / 选填）
+    - 9.1.6 满分值（`max_score` / decimal / 必填）
+    - 9.1.7 缺失项（`missing_items` / ref[] / 选填）
+  - 9.2 三类要求
+    - 9.2.1 硬性要求 hard_requirement
+    - 9.2.2 计分要求 scored_requirement
+    - 9.2.3 动作要求 action_requirement
+  - 9.3 项目经理匹配
+    - 9.3.1 经理ID（`manager_id` / string / 必填）
+    - 9.3.2 姓名/脱敏展示名（`display_name` / string / 必填）
+    - 9.3.3 所属组织（`organization` / string / 必填）
+    - 9.3.4 专业（`specialty` / string / 必填）
+    - 9.3.5 注册证书（`reg_cert_type` / string / 必填）
+    - 9.3.6 注册编号（`reg_cert_no` / string / 必填）
+    - 9.3.7 证书等级（`cert_level` / string / 必填）
+    - 9.3.8 证书有效期（`cert_valid_until` / date / 必填）
+    - 9.3.9 继续教育/安全证书状态（`edu_safety_status` / enum / 必填）
+    - 9.3.10 可担任项目类型（`eligible_project_types` / string[] / 必填）
+    - 9.3.11 地区限制（`region_restriction` / string / 选填）
+    - 9.3.12 历史业绩（`performance_refs` / ref[] / 选填）
+    - 9.3.13 当前在建项目（`active_projects` / ref[] / 选填）
+    - 9.3.14 预计可用日期（`expected_available_at` / date / 选填）
+    - 9.3.15 可用状态（`availability` / enum / 必填）
+    - 9.3.16 信用/处罚状态（`credit_penalty_status` / string / 选填）
+    - 9.3.17 证据文件引用（`evidence_refs` / ref[] / 必填）
+    - 9.3.18 最后核验时间（`verified_at` / datetime / 选填）
+    - 9.3.19 资料责任人（`data_owner` / string / 必填）
+    - 9.3.20 经理状态（`status` / enum / 必填）
+    - 9.3.21 推荐角色（`recommendation_role` / enum / 选填）
+    - 9.3.22 硬条件验证
+  - 9.4 规则版本
+    - 9.4.1 规则集ID（`rule_set_id` / string / 必填）
+    - 9.4.2 规则版本（`rule_version` / string / 必填）
+    - 9.4.3 生效日期（`effective_from` / date / 必填）
+    - 9.4.4 创建人（`created_by` / string / 必填）
+  - 9.5 满分准入判定
+    - 9.5.1 准入判定（`eligible_for_approval` / boolean / 必填）
+    - 9.5.2 阻断类型（`blocked_reason` / enum / 选填）
+    - 9.5.3 待补/待核实项（`pending_items` / ref[] / 选填）
+- 10 准入状态机域
+  - 10.1 准入状态
+    - 10.1.1 准入状态（`admission_status` / enum / 必填）
+  - 10.2 状态迁移规则
+  - 10.3 人工豁免
+    - 10.3.1 豁免ID（`waiver_id` / string / 必填）
+    - 10.3.2 授权人（`authorizer` / string / 必填）
+    - 10.3.3 原因（`reason` / string / 必填）
+    - 10.3.4 证据（`evidence_refs` / ref[] / 必填）
+    - 10.3.5 有效期（`valid_until` / date / 必填）
+    - 10.3.6 审批时间（`approved_at` / datetime / 必填）
+    - 10.3.7 覆盖的阻断项（`covered_items` / ref[] / 必填）
+  - 10.4 审批记录
+    - 10.4.1 审批ID（`approval_id` / string / 必填）
+    - 10.4.2 项目ID（`project_id` / string / 必填）
+    - 10.4.3 审批人（`approver` / string / 必填）
+    - 10.4.4 决策（`decision` / enum / 必填）
+    - 10.4.5 决策时间（`decided_at` / datetime / 必填）
+    - 10.4.6 意见（`comment` / string / 选填）
+    - 10.4.7 关联准入结果（`admission_result_ref` / ref[] / 必填）
+    - 10.4.8 审计要求
