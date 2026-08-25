@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="format-detection" content="telephone=no">
+<title>$title</title>
+<style>
+  :root{--brand:#1a56a8;--bg:#f5f6f8;--card:#fff;--text:#1f2329;--sub:#646a73;--line:#e5e6eb;
+        --urgent:#d92d20;--high:#e8930c;--normal:#1a56a8;--ok:#18a058}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{max-width:100%;overflow-x:hidden}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--text);font-size:15px;line-height:1.55;
+       -webkit-text-size-adjust:100%}
+  .wrap{max-width:720px;margin:0 auto;padding:12px 12px 32px}
+  .head{background:linear-gradient(135deg,#1a56a8,#2563eb);color:#fff;border-radius:12px;padding:16px;margin-bottom:12px}
+  .head h1{font-size:19px;line-height:1.4;word-break:break-all;margin-bottom:10px}
+  .meta{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;opacity:.96}
+  .meta b{font-size:15px}
+  .updated{font-size:12px;opacity:.82;margin-top:8px}
+  .section{margin:14px 0 6px;font-size:15px;font-weight:600;color:var(--brand)}
+  .item{background:var(--card);border-radius:10px;padding:12px;margin-bottom:10px;
+        box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .item-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .type-badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:4px;
+              background:#eef2fb;color:var(--brand)}
+  .urgency{font-size:12px;font-weight:600}
+  .urgency.urgent{color:var(--urgent)} .urgency.high{color:var(--high)}
+  .urgency.normal{color:var(--normal)} .urgency.unknown{color:var(--sub)}
+  .name{display:block;font-size:16px;font-weight:600;color:var(--text);text-decoration:none;
+        word-break:break-all;line-height:1.45;margin-bottom:8px}
+  .name:active{opacity:.7}
+  .grid{display:grid;grid-template-columns:1fr;gap:4px 10px;font-size:13.5px;color:var(--sub)}
+  .cell{word-break:break-all}
+  .cell b{color:var(--text);font-weight:500}
+  .actions{display:flex;gap:10px;margin-top:10px}
+  .btn{flex:1;text-align:center;padding:11px 0;border-radius:8px;text-decoration:none;font-size:14px;
+       min-height:44px;display:inline-flex;align-items:center;justify-content:center}
+  .btn.primary{background:var(--brand);color:#fff}
+  .btn.ghost{background:#f0f2f5;color:var(--brand)}
+  .btn:active{opacity:.8}
+  .empty{background:var(--card);border-radius:10px;padding:28px 16px;text-align:center;color:var(--sub);
+         font-size:14px;margin-bottom:12px}
+  .late-note{font-size:12px;color:var(--sub);background:#fff8e6;border-radius:8px;padding:8px 10px;margin:10px 0}
+  .foot{font-size:12px;color:var(--sub);text-align:center;margin-top:18px;line-height:1.6}
+  .foot a{color:var(--sub)}
+  @media (min-width:640px){
+    .grid{grid-template-columns:1fr 1fr}
+    .head{padding:20px 24px}
+    .item{padding:14px 16px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="head">
+    <h1>$title</h1>
+    <div class="meta">
+      <span>日报日期：<b>$date</b></span>
+      <span>新增公告：<b>$item_count</b> 条</span>
+      <span>紧急事项：<b>$urgent_count</b> 条</span>
+    </div>
+    <div class="updated">最后更新时间：$updated ｜ $data_note</div>
+  </header>
+  $empty_note
+  $groups_html
+  <footer class="foot">
+    本日报由系统自动生成，信息均来自公开招标公告原文，仅供投标专员初筛；投/不投由经营部决策。<br>
+    <a href="$archive_url">查看历史日报</a> ｜ 数据来源：官方招标平台公开发布信息
+  </footer>
+</div>
+</body>
+</html>

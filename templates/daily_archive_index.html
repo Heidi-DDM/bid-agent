@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>$title</title>
+<style>
+  :root{--brand:#1a56a8;--bg:#f5f6f8;--card:#fff;--text:#1f2329;--sub:#646a73;--line:#e5e6eb}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{max-width:100%;overflow-x:hidden}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--text);font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%}
+  .wrap{max-width:720px;margin:0 auto;padding:12px 12px 32px}
+  .head{background:linear-gradient(135deg,#1a56a8,#2563eb);color:#fff;border-radius:12px;padding:16px;margin-bottom:12px}
+  .head h1{font-size:19px;margin-bottom:6px}
+  .head .sub{font-size:13px;opacity:.9}
+  .card{background:var(--card);border-radius:12px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .card h2{font-size:15px;color:var(--brand);margin-bottom:8px}
+  a{color:var(--brand);text-decoration:none}
+  .day{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid var(--line);
+       min-height:44px}
+  .day:last-child{border-bottom:none}
+  .day .d{font-weight:600;color:var(--text)}
+  .day .n{font-size:13px;color:var(--sub)}
+  .empty{color:var(--sub);font-size:13px;padding:6px 0}
+  .months{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
+  .months a{background:#eef2fb;padding:6px 12px;border-radius:6px;font-size:13px}
+  .foot{font-size:12px;color:var(--sub);text-align:center;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>$title</h1>
+    <div class="sub">$subtitle</div>
+  </div>
+  $level_links
+  $content_html
+  <div class="foot">某建设招标信息日报归档 ｜ 数据来源：官方招标平台公开发布信息</div>
+</div>
+</body>
+</html>

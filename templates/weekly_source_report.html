@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>$title</title>
+<style>
+  :root{--brand:#1a56a8;--bg:#f5f6f8;--card:#fff;--text:#1f2329;--sub:#646a73;--line:#e5e6eb}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{max-width:100%;overflow-x:hidden}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;-webkit-text-size-adjust:100%}
+  .wrap{max-width:900px;margin:0 auto;padding:12px 12px 32px}
+  .head{background:linear-gradient(135deg,#1a56a8,#2563eb);color:#fff;border-radius:12px;padding:16px;margin-bottom:12px}
+  .head h1{font-size:19px;margin-bottom:6px}
+  .head .sub{font-size:13px;opacity:.9}
+  .card{background:var(--card);border-radius:12px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .card h2{font-size:15px;color:var(--brand);margin-bottom:8px}
+  table{width:100%;border-collapse:collapse;font-size:13px;overflow-x:auto;display:block}
+  th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+  th{background:#f7f9fc;color:var(--sub);font-weight:500}
+  td{white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+  td a{color:var(--brand)}
+  .ok{color:#18a058}.warn{color:#b45309}.err{color:#d92d20}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+  .stat{background:#f7f9fc;border-radius:8px;padding:10px;text-align:center}
+  .stat .num{font-size:20px;font-weight:700;color:var(--brand);display:block}
+  .stat .lbl{font-size:12px;color:var(--sub)}
+  a.dl{display:inline-block;background:#eef2fb;color:var(--brand);padding:10px 16px;border-radius:8px;
+       text-decoration:none;font-size:14px;margin:4px 8px 4px 0;min-height:44px;line-height:1.4}
+  .src-note{background:#f7f9fc;border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--sub);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>$title</h1>
+    <div class="sub">$period ｜ 时间口径：北京时间（Asia/Shanghai）</div>
+  </div>
+  $export_links
+  <div class="card">
+    <h2>一、巡检覆盖概况</h2>
+    $source_stats_html
+  </div>
+  <div class="card">
+    <h2>二、信息漏斗</h2>
+    $funnel_html
+  </div>
+  <div class="card">
+    <h2>三、数量对账</h2>
+    $recon_html
+  </div>
+  <div class="card">
+    <h2>四、每日简报链接</h2>
+    $daily_links_html
+  </div>
+  <div class="card">
+    <h2>五、信息血缘明细</h2>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>公告名称</th><th>公告类型</th><th>来源平台</th><th>原始发布时间</th><th>系统采集时间</th>
+      <th>跨平台重复</th><th>所属日报</th><th>日报链接</th><th>原文链接</th><th>处理状态</th></tr></thead>
+      <tbody>$lineage_rows</tbody>
+    </table></div>
+    $lineage_note
+  </div>
+  <div class="src-note">本报告为来源与覆盖审计报告：仅汇总巡检运行与推送覆盖情况，不含抓取过程、失败堆栈、鉴权信息与内部技术细节。$recon_note</div>
+</div>
+</body>
+</html>

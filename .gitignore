@@ -1,0 +1,47 @@
+# 企业私有资料与业务敏感数据 —— 一律不提交
+企业资料台账20260821/
+**/企业资料台账20260821/
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.pdf
+*.pptx
+*.ppt
+
+# 招标文件与原始抓取内容
+raw/
+scripts/*.html
+**/raw/
+
+# 密钥与凭据
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*credential*
+*cookie*
+
+# 运行数据与日志
+data/
+daily/
+推送日志/
+报告/
+日志/
+logs/
+*.log
+
+# 构建产物与依赖
+node_modules/
+ppt_build/
+__pycache__/
+*.pyc
+dist/
+build/
+.next/
+*.egg-info/
+
+# 系统文件
+.DS_Store
+Thumbs.db

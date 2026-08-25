@@ -1,0 +1,125 @@
+# 发布层配置（publish_config.yml）
+# 依据：招标信息推送与归档架构改造任务书 §十二
+# 策略一律配置化，不写死在代码中。修改本文件即修改发布层行为。
+
+timezone: Asia/Shanghai
+
+daily_issue:
+  enabled: true
+  publish_time: "18:00"          # 默认生成时刻（agent/调度按此触发）
+  include_empty_issue: true      # 当日无公告也生成 published_empty 日报
+  # 准入模式（2026-08-18 用户决策 v0.3.0）：participable = 当天可参与（报名/投标截止未过），
+  #   不再限定"当天发布"（历史公告只要仍可投递/下载资料就进日报）
+  admission_mode: participable
+  # 已推送去重：生成日报时排除所有历史日报 items 中出现过的事件（曾推送不重复推送）
+  exclude_pushed: true
+  grouping:
+    - urgent                     # 报名/文件获取即将截止
+    - deadline                   # 投标即将截止
+    - new                        # 今日新增公告
+    - change                     # 今日变更与澄清
+    - result                     # 今日中标及结果信息
+  title_template: "某建设招标信息日报｜{date}"
+
+delivery:
+  late_announcement_policy: backend_only
+  # 客户发布策略（P1-2 收敛，2026-08-17）：客户日报只展示当天公告，正式配置一律 backend_only。
+  #   backend_only       迟到公告仅保留后台复核队列，不发送给客户（唯一允许的客户策略）
+  #   supplement_section 仅用于【内部审计预览】（make_preview 审计样例），禁止用于客户渠道
+  #   urgent_only        同上，仅内部审计用
+  channels:
+    - web
+    - wechat
+  urgent_threshold_hours: 24
+  high_threshold_hours: 72
+  share_message: "某建设招标信息日报｜{date}｜今日新增 {count} 条，紧急 {urgent} 条"  # 微信分享摘要，不含巡检信息
+
+dedup:
+  # 公告指纹组合（任务书 §4.5）：
+  # normalized_project_name + announcement_type + publisher_or_tenderer + publish_date + normalized_content_hash
+  content_hash_length: 16
+  primary_source_priority:       # 主来源优先级（配置化，从高到低）
+    - level: 法定官方平台
+      keywords: [中国招标投标公共服务平台, 全国公共资源交易平台, ggzy.gov.cn, cebpubservice, ccgp.gov.cn]
+    - level: 招标人或招标代理官方平台
+      keywords: [ebidding.hebtig.com, hebtic, 交投招标与采购, 招标与采购服务平台]
+    - level: 政府公共资源平台
+      keywords: [公共资源交易, 政府采购, ggzy, 惠招标, szj.hebei.gov.cn, ggzyfw.beijing.gov.cn, ggzy.zwfwb.tj.gov.cn, ccgp-beijing, ccgp-tianjin, ccgp-hebei, zhjy.bcactc.com, sjzsggzyjyzx.org.cn, qhdggzy, hsggzy.hengshui.gov.cn, xzsp.cangzhou.gov.cn]
+    - level: 权威聚合平台
+      keywords: [千里马, 剑鱼, 标讯, 采招]
+    - level: 其他转载平台
+      keywords: []
+
+source_report:
+  enabled: true
+  frequency: weekly
+  week_start: monday
+  generation_time: "09:00"
+  export_formats:
+    - html
+    - xlsx
+    - csv
+
+render:
+  # 客户可见字段白名单（announcement_detail 页）——不在白名单的内部字段一律不渲染
+  visible_fields:
+    - project_name
+    - tender_no
+    - tenderee
+    - agency
+    - region
+    - project_type
+    - industry
+    - procurement_method
+    - announcement_type
+    - publish_time
+    - deadline_signup
+    - deadline_clarify
+    - deadline_bid
+    - open_date
+    - deadline_bond
+    - budget_amount
+    - ceiling_price
+    - bid_bond_amount
+    - qualification
+    - personnel
+    - performance
+    - finance
+    - credit
+    - joint_venture
+    - review_method
+    - review_standard
+    - dark_bid
+    - ca_requirement
+    - submission_method
+    - site_visit
+    - tender_doc_method
+    - tender_doc_window
+    - tender_doc_link
+  # 内部字段黑名单（即使数据中存在也绝不渲染）
+  forbidden_fields:
+    - confidence_score
+    - parser_version
+    - crawler_task_id
+    - raw_record_id
+    - fact_gate_status
+    - gate
+    - intake_id
+    - G0
+    - G1
+    - G2
+    - G3
+    - G4
+    - L0
+    - L1
+    - L2
+    - L3
+
+storage:
+  events_dir: data/announcement_events
+  issues_dir: data/daily_issues
+  deliveries_dir: data/delivery_records
+  source_runs_dir: data/source_runs
+  weekly_reports_dir: data/weekly_source_reports
+  report_daily_dir: 报告/日报        # 日报以 Markdown 报告存储（不生成 HTML）
+  report_source_dir: 报告/来源与覆盖  # 周报以 Markdown 报告存储 + XLSX/CSV 明细

@@ -1,0 +1,104 @@
+# 招投标域 Pipeline 状态文件
+# 读取时机：每次采集/推送任务开始时；写入时机：每道门禁通过后
+# 2026-08-13 v0.1.0 优化：时效优先级分级（§2.2.7），已截止项目不入库
+domain: zhaotoubiao
+schema_version: 1
+created: 2026-08-13
+status: active
+
+phase_a:
+  raw_intake:
+    count: 1
+    status: carded
+  evidence_card:
+    count: 6
+    status: carded
+
+phase_b:
+  step_01_collect:
+    status: PASSED
+    description: "G0 采集门禁 — zb-20260813-004 康保储能EPC（P0，L1官方平台）；已截止 001/002/003 按 §2.2.7 移入 raw/_dropped/ 不入库"
+    output_artifacts: ["raw/intake/zb-20260813-004.md", "raw/_dropped/"]
+    completed_at: "2026-08-13"
+  step_02_clean:
+    status: PASSED
+    description: "G1 清洗门禁 — 字段标准化完成，时效判定 P0，无重复"
+    output_artifacts: ["raw/_清洗报告_G1_20260813_004.md"]
+    completed_at: "2026-08-13"
+  step_03_factcard:
+    status: PASSED
+    description: "G2 事实卡门禁 — 6 卡（F001-F006），confirmed，0 红线"
+    output_artifacts: ["raw/cards/zb-20260813-004-F*.md"]
+    completed_at: "2026-08-13"
+  step_04_intel_lib:
+    status: PASSED
+    description: "G3 情报库门禁 — 主卡 T-CARD-20260813-004（priority=P0，active）"
+    output_artifacts: ["情报库/T-CARD-20260813-004_康保储能EPC.md"]
+    completed_at: "2026-08-13"
+  step_05_push:
+    status: PASSED
+    description: "G4 推送门禁 — PUSH-20260813-002（v0.1.0 新格式：与主卡同等详细+中文表头+P0标注）"
+    output_artifacts: ["推送日志/PUSH-20260813-002.md"]
+    completed_at: "2026-08-13"
+  step_06_archive:
+    status: PASSED
+    description: "G5 归档门禁 — 已截止项目不归档（不入库），历史 closed 卡保留于 情报库/归档/"
+    output_artifacts: ["情报库/归档/"]
+    completed_at: "2026-08-13"
+
+phase_c:
+  step_01_calibrate:
+    status: MISSING
+    description: "G6′ 校准门禁 — 月度人工抽查 ≥100 条 + 阈值校准（待正式期运营）"
+    output_artifacts: ["质量报告"]
+
+phase_c2:                     # 门禁链硬校验（C 方案，2026-08-17）
+  gate_hard_check:
+    status: PASSED
+    description: "sync_events 门禁硬校验上线：intake.pipeline_status ∈ {carded,intel} 且主卡存在才允许同步，否则 gate_blocked 拒绝；--force 可绕过但仅人工场景、禁止 cron。pipeline_gates.py --intake <id> 输出单条门禁链。8/17 广宗补课：事实卡 F001 + 主卡 T-CARD-20260817-001 + pipeline_status=intel（此前只有 intake 就同步，属跳步）"
+    output_artifacts: ["schema/schema.md §6.4.0", "scripts/publish/sync_events.py（硬校验）", "scripts/pipeline_gates.py（--intake 模式）", "raw/cards/zb-20260817-001-F001.md", "情报库/T-CARD-20260817-001_广宗葫芦中学.md"]
+    completed_at: "2026-08-17"
+
+phase_d:                     # 发布与归档层（schema v0.2.0，任务书改造）
+  step_00_event_sync:
+    status: PASSED
+    description: "事件同步器接入（2026-08-17 修复）：scripts/publish/sync_events.py 幂等增量同步；G3 门禁 auto_action 已内嵌；content_hash/dedup_key 由 intake 摘录计算（content_hash_source 记录输入来源）；同 dedup_key 跨平台归并为 1 事件 + source_links；空哈希事件日报去重保守不合并"
+    output_artifacts: ["data/announcement_events/（4 条已补齐哈希）", "schema §6.4 G3 / §10.5"]
+    completed_at: "2026-08-17"
+  step_01_daily_issue:
+    status: PASSED
+    description: "日报编排（幂等）— 2026-08-13 published_empty（0 正常条目，4 迟到公告进后台 late_discovered）；generate_daily_issue(date, force)"
+    output_artifacts: ["data/daily_issues/2026-08-13.md", "daily/2026-08-13/index.html", "data/delivery_records/"]
+    completed_at: "2026-08-17"
+  step_02_source_runs:
+    status: PASSED
+    description: "巡检记录后台化 — 历史回填 2 条 SourceRun（ggzy-hebei / hebtig），日报头部不再展示巡检信息"
+    output_artifacts: ["data/source_runs/"]
+    completed_at: "2026-08-17"
+  step_03_weekly_report:
+    status: PASSED
+    description: "来源与覆盖周报 — 2026-W33（08-10~08-16）：巡检 2 次成功率 100%，原始发现 4，进日报 0，迟到 4，对账一致"
+    output_artifacts: ["data/weekly_source_reports/2026-W33.md", "archive/source-reports/2026/W33/"]
+    completed_at: "2026-08-17"
+
+phase_e:                     # 数据源注册表升级（schema v0.2.3，2026-08-18）
+  step_00_source_registry:
+    status: PASSED
+    description: "平台注册表全量升级（依据《京津冀招投标平台对照表-20260817》实测筛选）：schema §1.4 由 4 行占位扩展为 24 行清单（国家级 L1 3 / 北京 L1 3 / 天津 L1 2 / 河北 L1 4 / 河北 11 市 L2 / L0 第三方 4）；明确非公告源剔除名单（住建厅/四库一平台/采购与招标网/张家口保函平台/政采地市子站）；固化 4 条实测认知（公告采集免费免登录·招标投标法16条 / 工程主战场=省市公共资源平台 / 政采中小项目=ccgp 三省市分站 / 商业平台非必需）；纠偏：河北旧域名 ggzy.hebei.gov.cn 已注销→szj.hebei.gov.cn/hbggfwpt/、bidcenter.com.cn 是采招网≠比地（比地=bidizhaobiao.cn）、本机代理 127.0.0.1:7890 失效→采集脚本 trust_env=False"
+    output_artifacts: ["schema/schema.md §1.4（v0.2.3）", "scripts/build_skeleton_tree.py §1.3", "schema/tender_skeleton_tree.json（重新生成）", "config/publish_config.yml（去重主来源关键词补京津冀平台）", "质量报告/全景架构_信息采集系统_20260818.html/png（数据源层 6 分组）", "templates/数据源合规记录模板.md"]
+    completed_at: "2026-08-18"
+  step_01_collect_strategy:
+    status: PASSED
+    description: "采集策略收敛（schema v0.2.4，用户决策）：①L2 各地市不区分优先级全部纳入采集清单（石家庄/唐山/邯郸/秦皇岛/承德/衡水/沧州/邢台独立接入 + 保定·廊坊走省级，逐个过合规评估）；②千里马/剑鱼免费资源纳入日常巡检作官方源补充线索（免注册看标题/编号/摘要），付费 API 待合同不阻塞采集；③聚合平台日期不可直接采信（官方验证后才计当日）——8/18 实测：toobiao 标注今日的任丘热电 5 公告在官方建投商务网无法验证 → 进复核队列不推送"
+    output_artifacts: ["schema/schema.md §1.4（v0.2.4）", "scripts/build_skeleton_tree.py §1.3.7", "schema/tender_skeleton_tree.json（重新生成）", "ROADMAP.md（阻塞项 1/3 更新）", "质量报告/全景架构_信息采集系统_20260818.html/png（L0/L2 框文案）", "bid-market-scan skill（免费资源利用）"]
+    completed_at: "2026-08-18"
+  step_02_admission_policy:
+    status: PASSED
+    description: "日报准入口径重构（schema v0.3.0，用户决策：放宽标准）：①准入=可参与性（deadline_signup 或 deadline_bid 任一未过 → 当天仍可报名/下载/投递 → 收录），不再限定当天发布（§10.2）；②已推送去重：扫描历史日报 items 排除已推送事件（§10.3，daily_issue.exclude_pushed=true）；③截止已过→excluded/deadline_expired；截止缺失→复核队列 missing_deadline；④渲染文案同步（可参与公告/当日无新增可参与公告）；⑤测试 48→53 项全绿"
+    output_artifacts: ["schema/schema.md §10.2-10.4（v0.3.0）", "config/publish_config.yml（admission_mode/exclude_pushed）", "scripts/publish/daily_issue_generator.py（_classify 可参与性+去重）", "scripts/publish/renderer.py + templates/daily_issue_report.md（文案）", "scripts/tests/（53 项）"]
+    completed_at: "2026-08-18"
+  step_03_push_format:
+    status: PASSED
+    description: "推送卡片排版优化（v0.3.1，参考 Google/Facebook 通知风格）：①每条公告标序号（1. 2. …，序号+优先级标签）；②去多余空行（分组间不空行、卡片间单空行）；③九段分组结构与字段内容不变、有值才展示、文末待补充汇总保持；④条目数校验正则改 ^\\d+\\. ；⑤模板同步；⑥重新推送 PUSH-20260818-003 成功（message_id=om_x100b67771c7b18a4b49a8058d4c814a）"
+    output_artifacts: ["scripts/publish/renderer.py（_render_push_card seq 参数）", "templates/推送卡片模板.md（排版规则）", "推送日志/PUSH-CARDS-2026-08-18.txt（新格式）", "推送日志/PUSH-20260818-003.md"]
+    completed_at: "2026-08-18"
