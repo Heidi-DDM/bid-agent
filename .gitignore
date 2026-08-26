@@ -20,6 +20,7 @@ scripts/*.html
 会议纪要/
 竞品调研/
 /archive/
+scripts/parse_lab/
 
 # 密钥与凭据
 .env
