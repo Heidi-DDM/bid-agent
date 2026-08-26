@@ -178,6 +178,25 @@ APPROVAL_FIELDS = [
 ]
 
 
+MATERIAL_FIELDS = [
+    {"name": "材料ID", "key": "material_id", "type": "string", "required": True, "source": "系统生成/导入", "note": "主键，如 MAT-PUB-xxx / MAT-PRV-xxx"},
+    {"name": "材料类型", "key": "material_type", "type": "enum", "required": True, "source": "F003 契约", "values": ["announcement", "tender_document", "qualification_cert", "performance_record", "personnel_cert", "evidence_file"]},
+    {"name": "来源类型", "key": "source_type", "type": "enum", "required": True, "source": "F003 契约", "values": ["official_platform", "agency", "uploaded", "internal", "manual_entry"]},
+    {"name": "归属类型", "key": "owner_type", "type": "enum", "required": True, "source": "F003 契约", "values": ["public", "enterprise"], "note": "公开/私有严格分层隔离"},
+    {"name": "密级", "key": "classification", "type": "enum", "required": True, "source": "F003 契约", "values": ["public", "internal", "confidential"]},
+    {"name": "权限范围", "key": "permission_scope", "type": "enum", "required": True, "source": "F003 契约", "values": ["public_read", "enterprise_read", "restricted", "approver_only"]},
+    {"name": "原文哈希", "key": "content_hash", "type": "string", "required": True, "source": "SHA-256 计算", "note": "防篡改；不一致 = 篡改风险，阻断使用"},
+    {"name": "版本", "key": "version", "type": "int", "required": True, "source": "系统生成", "note": "从 1 递增，不覆盖历史"},
+    {"name": "导入时间", "key": "imported_at", "type": "datetime", "required": True, "source": "系统生成"},
+    {"name": "有效期", "key": "valid_until", "type": "date", "required": False, "source": "F003 契约", "note": "证书/证照必填；过期标 expired，不计入满分"},
+    {"name": "解析状态", "key": "parse_status", "type": "enum", "required": True, "source": "解析流程", "values": ["pending", "parsed", "partial", "failed", "manual_review"], "note": "failed/partial 不进入匹配，人工复核"},
+    {"name": "证据文件引用", "key": "evidence_refs", "type": "ref[]", "required": False, "source": "回链 evidence_file"},
+    {"name": "数据责任人", "key": "data_owner", "type": "string", "required": True, "source": "F003 契约", "note": "谁负责维护/核验"},
+    {"name": "最后核验时间", "key": "verified_at", "type": "datetime", "required": False, "source": "F003 契约"},
+    {"name": "状态", "key": "status", "type": "enum", "required": True, "source": "F003 契约", "values": ["active", "expired", "archived", "invalid"]},
+]
+
+
 TREE = [
     node("1", "域识别与路由", children=[
         node("1.1", "公告类型路由", children=[
@@ -378,6 +397,14 @@ TREE = [
         ] + [
             rule("10.4.8", "审计要求", note="全部动作留痕：谁、何时、依据什么、结论；审计记录不可删改（F009 §6.4/§9）"),
         ]),
+    ]),
+    node("11", "数据治理域", children=[
+        node("11.1", "Material 契约字段", children=[
+            field(f"11.1.{i+1}", f["name"], f["key"], f["type"], f["required"], source=f["source"], values=f.get("values"), note=f.get("note", "")) for i, f in enumerate(MATERIAL_FIELDS)
+        ]),
+        rule("11.2", "权限矩阵", note="公开原文/事实卡：public_read+enterprise_read+restricted+approver_only；企业资质/业绩：enterprise_read 起；项目经理个人信息：脱敏展示，明细仅审批人；审批/豁免/审计：仅 approver_only（F003 §6.2，Iteration 3 冻结目标态）"),
+        rule("11.3", "隔离与不可变约束", note="公开/私有严格分层存储，禁止混存；raw 原文不可覆盖，每次导入 version+1；公告变更/澄清按 project_id 挂接；原文哈希不一致 = 篡改风险，阻断使用"),
+        rule("11.4", "缺失/过期处置", note="企业证书/人员资质/业绩必须有：有效期、证据文件、数据责任人；缺失字段一律 pending_verification/待补/待核实，禁止编造；过期数据标 expired，不得用于满分判定"),
     ]),
 ]
 
