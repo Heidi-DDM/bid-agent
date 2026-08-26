@@ -1,6 +1,6 @@
 # 招投标 Schema 骨架树（生成稿）
 
-> 生成时间：2026-08-25 13:20:54
+> 生成时间：2026-08-25 14:41:21
 > 树节点校验：通过
 
 ## 一、项目主卡字段清单
@@ -279,3 +279,23 @@
     - 10.4.6 意见（`comment` / string / 选填）
     - 10.4.7 关联准入结果（`admission_result_ref` / ref[] / 必填）
     - 10.4.8 审计要求
+- 11 数据治理域
+  - 11.1 Material 契约字段
+    - 11.1.1 材料ID（`material_id` / string / 必填）
+    - 11.1.2 材料类型（`material_type` / enum / 必填）
+    - 11.1.3 来源类型（`source_type` / enum / 必填）
+    - 11.1.4 归属类型（`owner_type` / enum / 必填）
+    - 11.1.5 密级（`classification` / enum / 必填）
+    - 11.1.6 权限范围（`permission_scope` / enum / 必填）
+    - 11.1.7 原文哈希（`content_hash` / string / 必填）
+    - 11.1.8 版本（`version` / int / 必填）
+    - 11.1.9 导入时间（`imported_at` / datetime / 必填）
+    - 11.1.10 有效期（`valid_until` / date / 选填）
+    - 11.1.11 解析状态（`parse_status` / enum / 必填）
+    - 11.1.12 证据文件引用（`evidence_refs` / ref[] / 选填）
+    - 11.1.13 数据责任人（`data_owner` / string / 必填）
+    - 11.1.14 最后核验时间（`verified_at` / datetime / 选填）
+    - 11.1.15 状态（`status` / enum / 必填）
+  - 11.2 权限矩阵
+  - 11.3 隔离与不可变约束
+  - 11.4 缺失/过期处置

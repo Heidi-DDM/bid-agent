@@ -86,6 +86,7 @@
 |------|------|------|
 | 2026-08-13 | v0.0.0 | 初版通过审计门禁（coverage 51/51，placeholder 0） |
 | 2026-08-25 | v0.4.0 | 二次全量审计：资格与资源核查域 + 准入状态机域（coverage 107/107，placeholder 0） |
+| 2026-08-25 | v0.5.0 | 三次全量审计：数据治理域 Material 契约 + 权限矩阵（coverage 125/125，placeholder 0） |
 
 ---
 
@@ -153,5 +154,72 @@
 2. ✅ `schema/schema.md` 更新：frontmatter version 0.4.0 / audit_iterations 2 / coverage_rate 107/107；新增 §十一、§十二；§6.1 图与 §6.4 门禁增加 G3.5；术语表补充；变更记录补 v0.3.1 + 新增 v0.4.0
 3. ✅ 本日志写入审计轨迹
 4. ✅ 与 ADR-001 / F003 / F007 / F008 / F009 字段契约对齐（每个新增叶子节点有明确出处）
+
+> 后续版本化规则：schema 首次通过门禁记为 v1.0.0；因新证据触发的补充走 PATCH/MINOR 逻辑；结构性改版（新增章节）才触发全量审计。
+
+---
+
+## 九、三次审计记录（v0.5.0，2026-08-25，R003）
+
+> 触发原因：R003（F003-最小数据治理与权限）契约冻结——结构性改版（新增章节），按版本化规则触发全量审计。
+
+### 9.1 输入
+
+| 项 | 路径/来源 |
+|----|----------|
+| 骨架树（唯一真相源） | `schema/tender_skeleton_tree.json`（既有 10 章 + 本次新增第 11 章，由 `scripts/build_skeleton_tree.py` 重新生成） |
+| 既有规范 | `schema/schema.md`（v0.4.0，§一~§十二） |
+| 契约冻结依据 | `docs/03-功能规格/F003-最小数据治理与权限.md`（§4.1 Material 15 字段 / §6.2 权限矩阵 / §4.2 隔离不可变 / §7 异常处置） |
+| 关联约束 | `docs/06-产品决策记录/ADR-001-投标准入边界.md`（§2.4 缺失处置）、AGENTS.md（Git 白名单） |
+
+### 9.2 差异分析（既有 vs F003 契约要求）
+
+| 差异 | 处置 |
+|------|------|
+| 骨架树无数据治理域（Material 契约字段、权限矩阵、隔离约束、缺失处置） | 新增第 11 章（11.1-11.4，18 个叶子检查点：Material 15 字段 + 权限矩阵 1 规则 + 隔离约束 1 规则 + 缺失处置 1 规则） |
+| schema 无 Material 字段契约（F003 §4.1 要求冻结 source_type/owner_type/classification/permission_scope/hash/version/valid_until/parse_status 等） | 新增 §十三（13.1 Material 契约 15 字段，枚举与 F003 逐项对齐；13.2 权限矩阵；13.3 隔离与不可变；13.4 缺失/过期处置） |
+| 术语表 Material 词条仅指向 F003，未指向契约章节 | 补引用 §13.1；新增"权限矩阵"词条 |
+| schema frontmatter 审计计数落后（audit_iterations 2 / coverage 107/107） | 本次升级 v0.5.0：audit_iterations 3 / coverage_rate 125/125 |
+
+### 9.3 审计结果（iteration 2）
+
+```json
+{
+  "audit_iteration": 2,
+  "missing_nodes": [],
+  "total_leaf_nodes_checked": 125,
+  "total_missing": 0,
+  "coverage_rate": "125/125"
+}
+```
+
+- 既有 10 章检查点 107 个：全量复核，未受新增影响，无缺失 ✅
+- 新增第 11 章（数据治理域）检查点 18 个：11.1 Material 契约 15 字段（枚举与 F003 §4.1 逐项一致）/ 11.2 权限矩阵 1 规则（对齐 F003 §6.2 四档矩阵）/ 11.3 隔离与不可变约束 1 规则（分层存储、raw 不可覆盖、哈希防篡改）/ 11.4 缺失/过期处置 1 规则（待补/待核实、过期不计满分、解析失败人工复核）✅
+- 与 F003 §4.1 字段契约逐项核对：material_id / material_type / source_type / owner_type / classification / permission_scope / content_hash / version / imported_at / valid_until / parse_status / evidence_refs / data_owner / verified_at / status 共 15 字段，类型与必填一致 ✅
+- 与 ADR-001 §2.4 缺失处置核对：数据缺失默认阻断、不推断满足 ✅
+
+### 9.4 机械占位符扫描
+
+- 检测模式：空字符串 / N 占位 / "待补充|待填写|TODO|TBD|xxx|XXX" / 列表空项
+- 结果：`{"placeholder_hits": [], "total": 0}`
+- 业务占位判定（不计缺陷）："待补/待核实/待企业资料导入"——均为规则明确要求的业务语义（ADR-001 §2.4 缺失处置），非开发占位。
+
+### 9.5 定点修复
+
+- diff_report.missing_nodes 为空数组；`validate_tree` 校验通过（重复 id 0、缺字段 0、未知门禁 0）→ 无需修复，0 轮修复。
+
+### 9.6 门禁通过
+
+| 条件 | 结果 |
+|------|:--:|
+| 条件1：coverage_rate = 100%（125/125） | ✅ |
+| 条件2：placeholder_hits.total = 0 | ✅ |
+| 条件3：无重复定义（tree id / 字段 key 唯一性校验通过） | ✅ |
+
+通过后动作：
+1. ✅ `scripts/build_skeleton_tree.py` 重新生成 `tender_skeleton_tree.json` + `schema_draft.md`（校验 + 冒烟通过）
+2. ✅ `schema/schema.md` 更新：frontmatter version 0.5.0 / audit_iterations 3 / coverage_rate 125/125；新增 §十三；术语表补充；变更记录新增 v0.5.0
+3. ✅ 本日志写入审计轨迹
+4. ✅ 与 F003 / ADR-001 / AGENTS.md 契约对齐（每个新增叶子节点有明确出处）
 
 > 后续版本化规则：schema 首次通过门禁记为 v1.0.0；因新证据触发的补充走 PATCH/MINOR 逻辑；结构性改版（新增章节）才触发全量审计。

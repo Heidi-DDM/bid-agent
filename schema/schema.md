@@ -1,14 +1,14 @@
 ---
 type: schema
 domain: 招投标（某建设集团 · 投标信息收集智能体）
-version: 0.4.0
+version: 0.5.0
 status: active
 generated_by: domain-schema-generator-v2
 skeleton_source: 投标智能体-智库底座复用方案_v1.md §四（招投标 Schema 骨架树细化版 v1）+ PRD_v1.md + ADR-001
-audit_iterations: 2
+audit_iterations: 3
 placeholder_hits: 0
-coverage_rate: "107/107"
-passed_gate: 2026-08-13 / 2026-08-25
+coverage_rate: "125/125"
+passed_gate: 2026-08-13 / 2026-08-25（R002）/ 2026-08-25（R003）
 ---
 
 # 招投标 · 域操作规范（schema）
@@ -672,7 +672,8 @@ qa_report:
 | 暗标 | Dark Bid | 技术标匿名评审方式 |
 | 综合评估法 | Comprehensive Evaluation | 商务+技术+资信综合打分评审 |
 | 双信封 | Two-Envelope | 商务标与技术标分装递交 |
-| Material | Material | 最小数据治理单元：公告、招标文件、企业资质、业绩、人员证照等（F003 §4.1） |
+| Material | Material | 最小数据治理单元：公告、招标文件、企业资质、业绩、人员证照等（F003 §4.1，契约冻结于 §13.1） |
+| 权限矩阵 | Permission Matrix | 公开读取/企业内读取/受限（匹配层）/仅审批人 四档权限（F003 §6.2，契约冻结于 §13.2） |
 | 匹配矩阵 | Match Matrix | 招标要求与企业私有资料逐项匹配的字段级结果（§11.1） |
 | 满分准入 | Full-Score Admission | 全部硬条件满足+计分项满分+证据有效+合格可用项目经理+动作就绪（§11.5） |
 | 待投标审批 | Pending Bid Approval | 满分后进入人工审批队列的状态，不等于自动投标（§12.1） |
@@ -919,6 +920,62 @@ draft
 
 ---
 
+## 十三、数据治理域（v0.5.0 新增，F003 契约冻结）
+
+> **边界声明**：本章为 R003（F003-最小数据治理与权限）的落地层——系统同时持有公开原文与企业私有资料，所有材料统一纳入 Material 治理；公开/私有严格分层隔离；raw 原文不可覆盖；所有匹配结论回链招标条款 + 企业证据。不实现完整权限系统（Iteration 3 冻结实现方案，随薄切片落地），本章只冻结契约。
+
+### 13.1 Material 契约 `[schema]`
+
+最小数据治理单元：公告、招标文件、企业资质、业绩、人员证照、证据文件。字段契约与 F003 §4.1 逐项对齐：
+
+| field_key | 中文 | 类型 | 必填 | 说明 |
+|-----------|------|:--:|:--:|------|
+| material_id | 材料ID | string | ✅ | 主键，如 MAT-PUB-xxx / MAT-PRV-xxx（前缀区分归属） |
+| material_type | 材料类型 | enum | ✅ | announcement / tender_document / qualification_cert / performance_record / personnel_cert / evidence_file |
+| source_type | 来源类型 | enum | ✅ | official_platform / agency / uploaded / internal / manual_entry |
+| owner_type | 归属类型 | enum | ✅ | public / enterprise（公开/私有严格分层） |
+| classification | 密级 | enum | ✅ | public / internal / confidential |
+| permission_scope | 权限范围 | enum | ✅ | public_read / enterprise_read / restricted / approver_only（逐材料生效） |
+| content_hash | 原文哈希 | string | ✅ | SHA-256，防篡改；不一致 = 篡改风险，阻断使用 |
+| version | 版本 | int | ✅ | 从 1 递增，不覆盖历史 |
+| imported_at | 导入时间 | datetime | ✅ | |
+| valid_until | 有效期 | date | — | 证书/证照必填；过期标 expired，不得用于满分判定 |
+| parse_status | 解析状态 | enum | ✅ | pending / parsed / partial / failed / manual_review |
+| evidence_refs | 证据文件引用 | ref[] | — | 回链 evidence_file |
+| data_owner | 数据责任人 | string | ✅ | 谁负责维护/核验 |
+| verified_at | 最后核验时间 | datetime | — | |
+| status | 状态 | enum | ✅ | active / expired / archived / invalid |
+
+### 13.2 权限矩阵 `[table]`
+
+目标态（Iteration 3 冻结实现，F003 §6.2）：
+
+| 数据 | public_read 公开读取 | enterprise_read 企业内读取 | restricted 受限（匹配层） | approver_only 仅审批人 |
+|---|---|---|---|---|
+| 公开原文/事实卡 | ✅ | ✅ | ✅ | ✅ |
+| 企业资质/业绩 | — | ✅ | ✅ | ✅ |
+| 项目经理个人信息 | — | 脱敏 | 匹配结果 | 明细 |
+| 审批/豁免/审计 | — | — | — | ✅ |
+
+- `permission_scope` 逐材料生效；权限不足 → 拒绝访问 + 审计日志。
+- 项目经理个人信息最小化：列表默认脱敏（如 张**），明细按权限。
+
+### 13.3 隔离与不可变约束 `[rule]`
+
+1. 公开数据（`owner_type=public`）与企业私有数据（`owner_type=enterprise`）**严格分层存储**（不同目录/表空间 + 权限矩阵），禁止混存。
+2. `raw` 原文**不可覆盖**：每次导入为新增版本（`version` 递增）；公告变更/澄清按 `project_id` 挂接（关联 §7.4），不覆盖历史版本。
+3. 原文哈希不一致（`content_hash` 校验失败）= 篡改风险 → 阻断使用 + 告警（F003 §7）。
+4. Git 白名单（`.gitignore`）保证企业资料、招标文件、原始抓取内容不入库（AGENTS.md §3.6）。
+
+### 13.4 缺失/过期处置 `[rule]`
+
+- 企业证书、人员资质、业绩必须有：有效期、证据文件、数据责任人；缺失字段一律 `pending_verification` / "待补/待核实"，**禁止编造**。
+- 数据缺失/无法核验 → 匹配层输出"不可判定/待补材料"，默认阻断（`blocked_missing_data`，ADR-001 §2.4），不得推断满足。
+- 数据过期（`valid_until` 已过）→ 标 `expired`，不计入满分判定（F008）。
+- 解析失败/部分解析（`parse_status ∈ {failed, partial}`）→ 人工复核，不进入匹配。
+
+---
+
 - **changelog**：本文件每次版本升级记录变更点，不可虚报（声称补齐的章节数必须与实际一致）。
 - **活文档声明**：每次管道运行后发现此 schema 不足 → 立即补充。
 - **域定制说明**：本 schema 为招投标行业流程定制版——删除智库"报告撰写/SCQA/作战地图/分析框架"整章（信息搜集 Agent 无分析产出）；新增"采集与合规"章与"Pipeline 门禁 G0-G6′"章。字段 key 与 PRD §六 严格对齐，禁止引入 PRD 之外的字段。
@@ -940,3 +997,4 @@ draft
 | 2026-08-18 | v0.3.0 | **日报准入口径重构（用户决策：放宽标准）**：①准入 = **可参与性**（deadline_signup 或 deadline_bid 任一未过 → 当天仍可报名/下载/投递 → 收录），**不再限定"当天发布"**——历史发布但截止未过的公告同样推送（§10.2）；②**已推送去重**：扫描历史日报 items 排除已推送事件，同一公告绝不重复推送（§10.3，`daily_issue.exclude_pushed`）；③截止已过 → excluded/deadline_expired 后台；截止缺失 → 复核队列 missing_deadline（替代 missing_publish_time）；④渲染文案同步（可参与公告/当日无新增可参与公告）；⑤测试 48→53 项适配新口径 |
 | 2026-08-18 | v0.3.1 | **推送卡片排版优化（参考 Google/Facebook 通知风格）**：①每条公告标序号（1. 2. …，序号+优先级标签）；②去多余空行（分组间不空行、卡片间单空行）；③九段分组结构与字段内容不变、有值才展示、文末待补充汇总保持；④条目数校验正则改 `^\d+\.`；⑤模板同步；⑥重新推送 PUSH-20260818-003 成功（本行补录，依据 .pipeline_state.yml phase_e step_03） |
 | 2026-08-25 | v0.4.0 | **资格与资源核查域 + 准入状态机域（ADR-001 范围变更落地，R002）**：①新增 §十一（资格与资源核查域）：匹配矩阵 7 字段（§11.1，含 match_result 正式枚举，登记与旧优势卡占位差异）、三类要求（§11.2）、项目经理匹配 21 字段 + 硬条件验证（§11.3，对齐 F007）、规则版本（§11.4）、满分准入公式（§11.5，对齐 F008 §6.1）；②新增 §十二（准入状态机域）：admission_status 12 态（ADR-001 §2.2）、迁移表（§12.2）、人工豁免 7 字段（§12.3，F009 §4.2）、审批记录 7 字段（§12.4，F009 §4.1）；③门禁新增 **G3.5 匹配门禁**（§6.4，F008 §6.4 定稿命名）：准入链路独立门禁，不阻断公开情报推送；④骨架树同步扩展第 9/10 章（tender_skeleton_tree.json 重新生成，scripts/build_skeleton_tree.py）；⑤全量审计通过：coverage 107/107、placeholder 0、无重复定义（见 _schema_generation_log.md）；⑥frontmatter version 0.2.0 → 0.4.0（对齐 .pipeline_state.yml 既有 v0.3.x 演进，v0.3.1 补录）；⑦兼容策略：本章为纯新增，不改动 §一~§十 既有规则与字段含义 |
+| 2026-08-25 | v0.5.0 | **数据治理域（R003，F003 契约冻结）**：①新增 §十三（数据治理域）：Material 契约 15 字段（§13.1，对齐 F003 §4.1，枚举全冻结）、权限矩阵（§13.2，F003 §6.2 目标态，Iteration 3 冻结实现）、隔离与不可变约束（§13.3：公开/私有分层、raw 不可覆盖、哈希防篡改）、缺失/过期处置（§13.4：待补/待核实、过期不计满分、解析失败人工复核）；②骨架树同步新增第 11 章（数据治理域：11.1 十五字段 + 11.2 权限矩阵 + 11.3 隔离约束 + 11.4 缺失处置，tender_skeleton_tree.json 重新生成，scripts/build_skeleton_tree.py）；③全量审计通过：coverage 125/125、placeholder 0、无重复定义（见 _schema_generation_log.md §九）；④术语表 Material 词条补源（F003 §4.1）；⑤兼容策略：本章为纯新增，不改动 §一~§十二 既有规则与字段含义；权限系统实现仍属 Iteration 3 非目标（F003 §2） |

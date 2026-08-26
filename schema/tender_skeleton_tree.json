@@ -1784,5 +1784,222 @@
         ]
       }
     ]
+  },
+  {
+    "id": "11",
+    "name": "数据治理域",
+    "kind": "section",
+    "children": [
+      {
+        "id": "11.1",
+        "name": "Material 契约字段",
+        "kind": "section",
+        "children": [
+          {
+            "id": "11.1.1",
+            "name": "材料ID",
+            "kind": "field",
+            "field_key": "material_id",
+            "type": "string",
+            "required": true,
+            "source": "系统生成/导入",
+            "note": "主键，如 MAT-PUB-xxx / MAT-PRV-xxx"
+          },
+          {
+            "id": "11.1.2",
+            "name": "材料类型",
+            "kind": "field",
+            "field_key": "material_type",
+            "type": "enum",
+            "required": true,
+            "source": "F003 契约",
+            "values": [
+              "announcement",
+              "tender_document",
+              "qualification_cert",
+              "performance_record",
+              "personnel_cert",
+              "evidence_file"
+            ]
+          },
+          {
+            "id": "11.1.3",
+            "name": "来源类型",
+            "kind": "field",
+            "field_key": "source_type",
+            "type": "enum",
+            "required": true,
+            "source": "F003 契约",
+            "values": [
+              "official_platform",
+              "agency",
+              "uploaded",
+              "internal",
+              "manual_entry"
+            ]
+          },
+          {
+            "id": "11.1.4",
+            "name": "归属类型",
+            "kind": "field",
+            "field_key": "owner_type",
+            "type": "enum",
+            "required": true,
+            "source": "F003 契约",
+            "values": [
+              "public",
+              "enterprise"
+            ],
+            "note": "公开/私有严格分层隔离"
+          },
+          {
+            "id": "11.1.5",
+            "name": "密级",
+            "kind": "field",
+            "field_key": "classification",
+            "type": "enum",
+            "required": true,
+            "source": "F003 契约",
+            "values": [
+              "public",
+              "internal",
+              "confidential"
+            ]
+          },
+          {
+            "id": "11.1.6",
+            "name": "权限范围",
+            "kind": "field",
+            "field_key": "permission_scope",
+            "type": "enum",
+            "required": true,
+            "source": "F003 契约",
+            "values": [
+              "public_read",
+              "enterprise_read",
+              "restricted",
+              "approver_only"
+            ]
+          },
+          {
+            "id": "11.1.7",
+            "name": "原文哈希",
+            "kind": "field",
+            "field_key": "content_hash",
+            "type": "string",
+            "required": true,
+            "source": "SHA-256 计算",
+            "note": "防篡改；不一致 = 篡改风险，阻断使用"
+          },
+          {
+            "id": "11.1.8",
+            "name": "版本",
+            "kind": "field",
+            "field_key": "version",
+            "type": "int",
+            "required": true,
+            "source": "系统生成",
+            "note": "从 1 递增，不覆盖历史"
+          },
+          {
+            "id": "11.1.9",
+            "name": "导入时间",
+            "kind": "field",
+            "field_key": "imported_at",
+            "type": "datetime",
+            "required": true,
+            "source": "系统生成"
+          },
+          {
+            "id": "11.1.10",
+            "name": "有效期",
+            "kind": "field",
+            "field_key": "valid_until",
+            "type": "date",
+            "required": false,
+            "source": "F003 契约",
+            "note": "证书/证照必填；过期标 expired，不计入满分"
+          },
+          {
+            "id": "11.1.11",
+            "name": "解析状态",
+            "kind": "field",
+            "field_key": "parse_status",
+            "type": "enum",
+            "required": true,
+            "source": "解析流程",
+            "values": [
+              "pending",
+              "parsed",
+              "partial",
+              "failed",
+              "manual_review"
+            ],
+            "note": "failed/partial 不进入匹配，人工复核"
+          },
+          {
+            "id": "11.1.12",
+            "name": "证据文件引用",
+            "kind": "field",
+            "field_key": "evidence_refs",
+            "type": "ref[]",
+            "required": false,
+            "source": "回链 evidence_file"
+          },
+          {
+            "id": "11.1.13",
+            "name": "数据责任人",
+            "kind": "field",
+            "field_key": "data_owner",
+            "type": "string",
+            "required": true,
+            "source": "F003 契约",
+            "note": "谁负责维护/核验"
+          },
+          {
+            "id": "11.1.14",
+            "name": "最后核验时间",
+            "kind": "field",
+            "field_key": "verified_at",
+            "type": "datetime",
+            "required": false,
+            "source": "F003 契约"
+          },
+          {
+            "id": "11.1.15",
+            "name": "状态",
+            "kind": "field",
+            "field_key": "status",
+            "type": "enum",
+            "required": true,
+            "source": "F003 契约",
+            "values": [
+              "active",
+              "expired",
+              "archived",
+              "invalid"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "11.2",
+        "name": "权限矩阵",
+        "kind": "rule",
+        "note": "公开原文/事实卡：public_read+enterprise_read+restricted+approver_only；企业资质/业绩：enterprise_read 起；项目经理个人信息：脱敏展示，明细仅审批人；审批/豁免/审计：仅 approver_only（F003 §6.2，Iteration 3 冻结目标态）"
+      },
+      {
+        "id": "11.3",
+        "name": "隔离与不可变约束",
+        "kind": "rule",
+        "note": "公开/私有严格分层存储，禁止混存；raw 原文不可覆盖，每次导入 version+1；公告变更/澄清按 project_id 挂接；原文哈希不一致 = 篡改风险，阻断使用"
+      },
+      {
+        "id": "11.4",
+        "name": "缺失/过期处置",
+        "kind": "rule",
+        "note": "企业证书/人员资质/业绩必须有：有效期、证据文件、数据责任人；缺失字段一律 pending_verification/待补/待核实，禁止编造；过期数据标 expired，不得用于满分判定"
+      }
+    ]
   }
 ]
