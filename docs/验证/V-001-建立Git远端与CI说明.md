@@ -1,7 +1,7 @@
 # V-001 建立 Git 远端与 CI —— 操作说明
 
-> 日期：2026-08-28 ｜ 状态：**已完成（推送成功，CI 结果待回填）**
-> 结果：私有仓库 `Heidi-DDM/bid-agent` 已创建并推送 main（150 对象 / 195 KiB）；origin 已配置、main 跟踪 origin/main。CI 状态需在浏览器 Actions 页确认后回填（沙箱内无法访问 api.github.com）。
+> 日期：2026-08-28 ｜ 状态：**✅ 已完成（CI 通过）**
+> 结果：私有仓库 `Heidi-DDM/bid-agent` 已创建并推送 main；origin 已配置、main 跟踪 origin/main。CI run **#33038973222**（quality workflow，push 触发）**全部通过**：66 项单测 OK、py_compile、run_golden_lab、依赖安装均成功。详见 §5 登记。
 
 ## 一、当前环境实测（2026-08-28）
 
@@ -78,8 +78,9 @@ python scripts/matching/run_golden_lab.py              # 黄金规则入口
 
 ### 5. 完成后登记
 
-- 将 CI run 链接/编号回填至 `docs/验证/R009-匹配引擎与黄金样本验证清单.md` 的 V-001 行
-- 更新 `docs/04-修改日志.md`（登记远端地址、首次推送 commit、CI 结果）
+- **2026-08-28 已回填**：CI run **#33038973222**（https://github.com/Heidi-DDM/bid-agent/actions/runs/33038973222 ，quality workflow，push 触发）—— 依赖安装 / 66 项单测 / py_compile / run_golden_lab 全部通过 ✅
+- 远端地址：https://github.com/Heidi-DDM/bid-agent （private）
+- 首次推送 commit：`d9b7f09`（建仓）；`8c5d8ac`（引擎/测试/CI 入库）；`17c902a`（workflow scope 修复）
 
 ## 三、其他可选项（如公司要求内网 Git）
 
