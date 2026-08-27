@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>异常态演示｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>异常态演示（F010 §7：5 类必含）</h2>
+          <span class="hint">覆盖：空态 / 资料过期 / 解析失败 / 权限不足 / 无合格项目经理</span>
+        </div>
+        <div id="ex-list"></div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h3 id="drawer-title" style="margin:0"></h3>
+      <button class="close" id="drawer-close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("exceptions.html", null);
+
+    /* ---------- 各异常态演示渲染 ---------- */
+    const DEMOS = {
+      /* ① 空态：资料库为空 → 不可判定/待补材料 */
+      empty_demo: `
+        <div class="empty">
+          <div class="big">🗂️</div>
+          <div style="color:var(--ink-2)">企业资料库为空（康保储能 EPC 项目）</div>
+          <p style="margin-top:6px">匹配页输出：<b>“不可判定 / 待补材料”</b> —— 系统不推断满足，也不默认满分。</p>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>要求</th><th>匹配结论</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>资质要求（NQ 类）</td><td><span class="badge warn">待补/不可判定</span></td><td>无企业资质记录 → 不可判定，默认阻断</td></tr>
+            <tr><td>项目经理要求</td><td><span class="badge warn">待补/不可判定</span></td><td>项目经理名录为空 → 无合格可用经理</td></tr>
+            <tr><td>业绩要求</td><td><span class="badge warn">待补/不可判定</span></td><td>业绩库为空 → 不可判定</td></tr>
+          </tbody>
+        </table>
+        <div class="notice" style="margin-top:10px">处置：<b>先由数据管理员导入最小资料集</b>（资质/安许证/建造师/业绩），再重跑匹配。</div>`,
+
+      /* ② 资料过期：expired 徽标 + 一票否决 */
+      expired_demo: `
+        <div class="queue-card" style="border-color:#f3c1c1;background:var(--danger-bg)">
+          <div class="q-icon" style="background:var(--danger-bg);color:var(--danger)">!</div>
+          <div class="q-body">
+            <div class="q-title">广宗县葫芦中学建设项目
+              <span class="badge danger">blocked_hard_requirement</span>
+            </div>
+            <div class="q-desc">条款：招标公告 §3.4 ｜ 企业证据：安全生产许可证 有效期至 2026-06-30</div>
+            <div style="margin-top:6px">
+              <span class="badge danger">expired</span>
+              <span style="font-size:13px;color:var(--ink-2)">资料已过期 → 不计分、不满足，硬性一票否决；须更新证书后重算。</span>
+            </div>
+          </div>
+        </div>
+        <div class="notice danger" style="margin-top:10px"><b>处置</b>：证据在条款规定时点无效 → 视为明确不满足（非缺失），进入硬性阻断；数据责任人更新证书后可重算。</div>`,
+
+      /* ③ 解析失败/部分解析 → manual_review */
+      parse_demo: `
+        <div class="queue-card" style="border-color:#e0d4f5;background:var(--review-bg)">
+          <div class="q-icon" style="background:var(--review-bg);color:var(--review)">审</div>
+          <div class="q-body">
+            <div class="q-title">阜平县高铁片区综合管网建设项目
+              <span class="badge review">manual_review</span>
+              <span class="badge gray">解析部分完成（评分办法章节）</span>
+            </div>
+            <div class="q-desc">招标文件表格版式复杂，评分办法章节解析不完整 → 不静默跳过，进入人工复核。</div>
+            <div style="margin-top:6px;display:flex;gap:8px">
+              <button class="btn sm" onclick="alert('演示：进入人工复核表单，人工补齐评分条款后重新解析。')">去人工复核</button>
+            </div>
+          </div>
+        </div>
+        <div class="notice info" style="margin-top:10px"><b>约束</b>：解析失败/部分解析 → 人工复核，不自动前进；加密固化格式（.gef/.etb）不在解析范围，不绕过保护（F005/F017）。</div>`,
+
+      /* ④ 权限不足：403 模拟 */
+      permission_demo: `
+        <div class="forbidden" style="padding:24px">
+          <div class="code">403</div>
+          <h2>权限不足</h2>
+          <p style="color:var(--ink-2)">审批层数据仅对 <b>经营负责人</b> 可见。<br>当前角色：<b>${roleLabel(getRole())}</b> —— 请在右上角切换角色体验。</p>
+          <p style="font-size:13px;color:var(--ink-3)">对应页面：<a href="approval.html">审批/豁免/审计</a>（非审批角色访问即显示本页）</p>
+        </div>
+        <div class="notice info" style="margin-top:10px"><b>权限矩阵（F003 §6.2 契约冻结）</b>：公开情报层全员可读；企业私有资料层仅数据管理员+授权角色；匹配层可写仅匹配执行者；审批层仅经营负责人。实现方案 Iteration 3 冻结。</div>`,
+
+      /* ⑤ 无合格项目经理 */
+      no_manager_demo: `
+        <div class="notice danger" style="margin-top:0"><b>无合格可用项目经理</b> — 准入判定阻断；候选 0 人通过硬条件核查，系统不生成“无中生有”的合格经理（F007 真实性红线）。</div>
+        <table class="tbl">
+          <thead><tr><th>候选</th><th>硬条件核查结论</th><th>结果</th></tr></thead>
+          <tbody>
+            ${NO_MANAGER_DEMO.candidates.map(c => `
+              <tr>
+                <td>${c.name}</td>
+                <td>${c.fail}</td>
+                <td><span class="badge ${c.tone === "danger" ? "danger" : "warn"}">${c.tone === "danger" ? "不满足" : "无法核验"}</span></td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+        <div class="notice warn" style="margin-top:10px">${NO_MANAGER_DEMO.conclusion}</div>
+        <div style="margin-top:8px"><span class="badge warn">blocked_missing_data</span> <span style="font-size:13px;color:var(--ink-2)">处置：通知人事/工程部核实 B 证与在建状态，或补充可担任经理名单。</span></div>`,
+    };
+
+    /* ---------- 渲染 ---------- */
+    const list = document.getElementById("ex-list");
+    PROTOTYPE.exceptions.forEach((ex, i) => {
+      const box = document.createElement("details");
+      box.className = "exception-demo";
+      box.id = ex.id;
+      const toneIcon = ["🕳️", "⏰", "📄", "🔒", "👷"][i];
+      box.innerHTML = `
+        <summary>
+          <span class="arrow">▶</span>${toneIcon} ${ex.title}
+          <span class="badge gray" style="margin-left:auto">异常态 ${i + 1}/5</span>
+        </summary>
+        <div class="ed-body">
+          <div class="hint" style="margin-bottom:8px">${ex.desc}</div>
+          <div class="exception-demo-view">${DEMOS[ex.demo]}</div>
+        </div>`;
+      list.appendChild(box);
+    });
+
+    /* hash 直达（首页/队列页跳转） */
+    const h = location.hash.slice(1);
+    if (h && document.getElementById(h)) {
+      document.getElementById(h).open = true;
+      document.getElementById(h).scrollIntoView({ behavior: "smooth" });
+    }
+  </script>
+</body>
+</html>

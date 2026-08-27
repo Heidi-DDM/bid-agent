@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>阻断/待补/复核队列｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>阻断项 / 待补项 / 人工复核队列</h2>
+          <span class="hint">数据缺失默认阻断；硬性缺项一票否决；解析不完整进入人工复核（F010 §4 页面7）</span>
+        </div>
+
+        <h3 style="margin-top:4px">① 硬性阻断（blocked_hard_requirement）— 一票否决</h3>
+        <div class="queue-card" style="border-color:#f3c1c1;background:var(--danger-bg)">
+          <div class="q-icon" style="background:var(--danger-bg);color:var(--danger)">✕</div>
+          <div class="q-body">
+            <div class="q-title">广宗县葫芦中学建设项目
+              <span class="badge danger">blocked_hard_requirement</span>
+              <span class="badge danger">资质过期</span>
+            </div>
+            <div class="q-desc">
+              条款：招标公告 §3.4 ｜ 要求：具备有效的企业安全生产许可证 ｜
+              证据：安全生产许可证 有效期至 2026-06-30（已过期 2 个月）→ 证据充分但明确不满足，一票否决，不得进入审批。
+            </div>
+          </div>
+          <div class="q-actions">
+            <button class="btn sm ghost" onclick="alert('演示：跳转资料库更新证书（数据管理员职责）。')">更新证书</button>
+            <a class="btn sm" href="exceptions.html#expired">查看异常态演示</a>
+          </div>
+        </div>
+
+        <h3>② 待补材料（blocked_missing_data）— 默认阻断</h3>
+        <div class="queue-card" style="border-color:#f3d9a4;background:var(--warn-bg)">
+          <div class="q-icon" style="background:var(--warn-bg);color:var(--warn)">？</div>
+          <div class="q-body">
+            <div class="q-title">ND-2025 · NQ-H-007
+              <span class="badge warn">待补材料</span>
+              <span class="badge gray">条款：招标公告 §3.13② / 资格审查表 #11</span>
+            </div>
+            <div class="q-desc">
+              缺少 2022/2023/2024 年度财务审计报告或银行资信证明（素材缺口，当年必有，待公司补充）。
+              处置：不推断满足，补齐后重跑可复现满分路径。
+            </div>
+          </div>
+          <div class="q-actions">
+            <button class="btn sm" onclick="alert('演示：登记待补材料请求 → 通知数据管理员。')">登记待补</button>
+          </div>
+        </div>
+        <div class="queue-card" style="border-color:#f3d9a4;background:var(--warn-bg)">
+          <div class="q-icon" style="background:var(--warn-bg);color:var(--warn)">？</div>
+          <div class="q-body">
+            <div class="q-title">康保县储能电站 EPC 总承包项目
+              <span class="badge warn">blocked_missing_data</span>
+              <span class="badge gray">企业资料库为空</span>
+            </div>
+            <div class="q-desc">
+              未导入任何企业资料 → 匹配页输出“不可判定/待补材料”，不得默认满足。先由数据管理员导入最小资料集。
+            </div>
+          </div>
+          <div class="q-actions"><a class="btn sm ghost" href="exceptions.html#empty">查看异常态演示</a></div>
+        </div>
+
+        <h3>③ 人工复核（manual_review）— 不静默跳过</h3>
+        <div class="queue-card" style="border-color:#e0d4f5;background:var(--review-bg)">
+          <div class="q-icon" style="background:var(--review-bg);color:var(--review)">审</div>
+          <div class="q-body">
+            <div class="q-title">ND-2025 · NQ-S-001 / NQ-S-002
+              <span class="badge review">人工复核</span>
+            </div>
+            <div class="q-desc">
+              技术标主观项待内部质量评审（NQ-S-001）；商务标/信用评分公式或报价输入不完整（NQ-S-002）。
+              评审/复核完成前不计入内部满分。
+            </div>
+          </div>
+          <div class="q-actions"><button class="btn sm" onclick="alert('演示：打开内部质量评审表单（角色：经营负责人）。')">去评审</button></div>
+        </div>
+        <div class="queue-card" style="border-color:#e0d4f5;background:var(--review-bg)">
+          <div class="q-icon" style="background:var(--review-bg);color:var(--review)">审</div>
+          <div class="q-body">
+            <div class="q-title">阜平县高铁片区综合管网建设项目
+              <span class="badge review">解析部分完成</span>
+            </div>
+            <div class="q-desc">
+              评分办法章节解析不完整（表格版式）→ 人工复核补齐，不静默跳过；.gef 固化件不在解析范围。
+            </div>
+          </div>
+          <div class="q-actions"><a class="btn sm ghost" href="exceptions.html#parse_fail">查看异常态演示</a></div>
+        </div>
+
+        <div class="notice warn" style="margin-top:12px">
+          <b>处置原则</b>：缺失 ≠ 不满足。待补与复核项处置完成后系统重算；重算通过且内部准入满足 → 进入
+          <a href="approval.html">待投标审批</a>（满分 ≠ 自动投标）。
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h3 id="drawer-title" style="margin:0"></h3>
+      <button class="close" id="drawer-close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>initPage("queue.html", "queue");</script>
+</body>
+</html>

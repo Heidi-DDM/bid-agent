@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>公司资料选择｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>公司资料选择 — 用于本项目匹配</h2>
+          <span class="hint">企业私有资料层：只维护已验证资料；缺失字段标注“待补/待核实”，不推断（F006/F007）</span>
+        </div>
+
+        <h3>① 企业资质（勾选参与匹配的资质）</h3>
+        <div id="quals"></div>
+
+        <h3>② 安全生产许可证</h3>
+        <div id="safety"></div>
+
+        <h3>③ 可投标项目经理名录（主推荐 / 备选）</h3>
+        <div id="managers"></div>
+
+        <div class="notice" style="margin-top:12px">
+          <b>硬条件核查（F007）</b>：项目经理须逐项通过 专业 / 注册证书等级 / B 证 / 社保在岗 / 业绩 / 在建冲突 核查；
+          任一不满足或无法核验 → 不计入“满分可投标”。数据责任人制 + 有效期校验 + pending_verification 状态。
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <a class="btn" href="score.html">确认选择 → 匹配与评分</a>
+          <a class="btn ghost" href="matrix.html">← 返回要求矩阵</a>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h3 id="drawer-title" style="margin:0"></h3>
+      <button class="close" id="drawer-close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("materials.html", "materials");
+
+    const quals = document.getElementById("quals");
+    PROTOTYPE.company_data.qualifications.forEach(q => {
+      const row = document.createElement("div");
+      row.className = "queue-card";
+      row.innerHTML = `
+        <div class="q-body">
+          <div class="q-title">${q.name} · <b>${q.level}</b>
+            <span class="badge ok">active</span>
+            <span class="badge gray">有效期至 ${q.valid_until}</span>
+            <span class="badge ${q.selected ? "gold" : "gray"}">${q.selected ? "已勾选参与匹配" : "未勾选"}</span>
+          </div>
+          <div class="q-desc">证据：${q.evidence} ｜ 数据责任人：数据管理员（测试期核验人暂定项目负责人）</div>
+        </div>
+        <div class="q-actions">
+          <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+            <input type="checkbox" ${q.selected ? "checked" : ""} onchange="alert('演示：切换勾选状态（原型不真实持久化）。')"> 参与匹配
+          </label>
+        </div>`;
+      quals.appendChild(row);
+    });
+
+    const safety = document.getElementById("safety");
+    const sl = PROTOTYPE.company_data.safety_license;
+    safety.innerHTML = `
+      <div class="queue-card">
+        <div class="q-body">
+          <div class="q-title">${sl.name} · ${sl.no}
+            <span class="badge ok">${sl.status}</span>
+            <span class="badge gray">有效期至 ${sl.valid_until}</span>
+          </div>
+          <div class="q-desc">OCR 结构化（本地 tesseract，不出内网）· 有效期校验通过</div>
+        </div>
+        <div class="q-actions"><span class="badge ok">自动匹配 NQ-H-002</span></div>
+      </div>`;
+
+    const managers = document.getElementById("managers");
+    PROTOTYPE.company_data.managers.forEach(m => {
+      const row = document.createElement("div");
+      row.className = "queue-card";
+      const tone = m.status === "active" ? "ok" : (m.status === "pending_verification" ? "review" : "danger");
+      row.innerHTML = `
+        <div class="q-body">
+          <div class="q-title">${m.name}（${m.id}）
+            <span class="badge ${m.role === "主推荐" ? "gold" : "gray"}">${m.role !== "—" ? m.role : ""}</span>
+            <span class="badge ${tone}">${m.status === "active" ? "active" : m.status === "unavailable" ? "unavailable" : "pending_verification"}</span>
+          </div>
+          <div class="q-desc">
+            ${m.specialty} · ${m.cert} · B 证：${m.b_cert} · 社保：${m.social_security} · 在建：${m.active_project}<br>
+            类似业绩：${m.similar_perf}
+          </div>
+        </div>
+        <div class="q-actions">
+          ${m.status === "active"
+            ? '<span class="badge ok">硬条件核查通过</span>'
+            : m.status === "unavailable"
+              ? '<span class="badge danger">不计入满分可投标</span>'
+              : '<span class="badge review">待核实</span>'}
+        </div>`;
+      managers.appendChild(row);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>首页 · 新建投标准入任务｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+
+      <!-- 首页入口：新建投标准入任务（F010 §4 页面1 验收硬性要求） -->
+      <section class="hero-entry">
+        <div>
+          <h1>新建投标准入任务</h1>
+          <p>从公开招标公告/招标文件出发，走完「要求解析 → 企业资料匹配 → 满分准入 → 人工审批」全旅程。<br>
+            系统只做规则化匹配与证据化结论，<b>是否投标由企业负责人决定</b>。</p>
+        </div>
+        <a class="btn primary-lg" href="import.html">＋ 新建投标准入任务</a>
+      </section>
+
+      <!-- 现有任务 -->
+      <section class="card">
+        <div class="card-title-row">
+          <h2>现有任务</h2>
+          <span class="hint">脱敏演示数据 · 更新至 2026-08-28</span>
+        </div>
+        <div id="project-list"></div>
+        <div class="notice" style="margin-top:6px">
+          <b>口径说明</b>：农大项目为真实脱敏事后验证样本（已投标/已施工/已验收，客户评判满分）；
+          博野 8 标段为黄金样本；阜平/广宗/康保用于演示异常态（详见「异常态演示」页）。
+        </div>
+      </section>
+
+      <!-- 角色与旅程说明 -->
+      <section class="card">
+        <h2>用户旅程（F010 §3）</h2>
+        <table class="tbl">
+          <thead><tr><th>角色</th><th>在原型中的动作</th></tr></thead>
+          <tbody>
+            <tr><td><b>投标专员</b></td><td>新建任务 → 导入公告/招标文件 → 查看要求矩阵 → 选择资料/候选经理 → 复核匹配 → 处理阻断/待补</td></tr>
+            <tr><td><b>数据管理员</b></td><td>模拟资料导入与核验（资质/业绩/项目经理名录维护）</td></tr>
+            <tr><td><b>经营负责人</b></td><td>查看满分评分面板 → 审批/驳回/豁免（右上角切换角色体验权限差异）</td></tr>
+            <tr><td><b>法务</b></td><td>查看合规说明页（数据来源分级 L0-L3、红线与审计留存）</td></tr>
+          </tbody>
+        </table>
+        <div class="notice" style="margin-top:10px">
+          <b>流程顺序（行业招投标模式）</b>：公告获取与澄清 → 资格预审/后审要求 → 编制并核验投标文件（资格、资信、保证金、报价、技术标/商务标）→
+          递交 → 开标评标 → 中标/未中标 → 归档。原型按此顺序组织步骤条。
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h3 id="drawer-title" style="margin:0"></h3>
+      <button class="close" id="drawer-close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("index.html", "index");
+
+    const list = document.getElementById("project-list");
+    PROTOTYPE.projects.forEach(p => {
+      const card = document.createElement("div");
+      card.className = "project-card";
+      const stateBadge = badge("state", p.state);
+      card.innerHTML = `
+        <div class="pc-main">
+          <div class="pc-title">${p.name} ${stateBadge}</div>
+          <div class="pc-meta">
+            <span><b>地区</b>：${p.region}</span>
+            <span><b>类型</b>：${p.type}</span>
+            ${p.deadline ? `<span><b>截止</b>：${p.deadline}</span>` : ""}
+            ${p.budget_cap ? `<span><b>最高限价</b>：${p.budget_cap}</span>` : ""}
+            <span><b>更新</b>：${p.updated}</span>
+          </div>
+          ${p.note ? `<div class="hint" style="margin-top:4px">${p.note}</div>` : ""}
+          <div class="pc-foot">
+            ${p.is_main
+              ? `<a class="btn sm" href="import.html">进入旅程（${p.id}）</a>`
+              : p.id === "FP-2024" ? `<a class="btn sm ghost" href="exceptions.html#parse_fail">查看异常态演示</a>`
+              : p.id === "GZ-2024" ? `<a class="btn sm ghost" href="exceptions.html#expired">查看异常态演示</a>`
+              : p.id === "KB-2023" ? `<a class="btn sm ghost" href="exceptions.html#empty">查看异常态演示</a>`
+              : `<span class="hint">历史对照样本（R009 黄金样本）</span>`}
+          </div>
+        </div>`;
+      list.appendChild(card);
+    });
+  </script>
+</body>
+</html>

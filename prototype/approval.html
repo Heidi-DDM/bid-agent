@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>审批/豁免/审计｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+
+      <!-- 权限不足：非审批角色访问审批页 → 403 模拟（F010 §7） -->
+      <section class="card" id="forbidden" style="display:none">
+        <div class="forbidden">
+          <div class="code">403</div>
+          <h2>权限不足</h2>
+          <p style="color:var(--ink-2)">审批层数据仅对 <b>经营负责人</b> 可见。<br>
+            当前角色：<b id="cur-role"></b> —— 请在右上角切换角色体验权限差异。</p>
+          <button class="btn" style="margin-top:14px" onclick="setRole('business_head');location.reload()">切换为经营负责人</button>
+        </div>
+      </section>
+
+      <div id="approval-main">
+        <!-- 待审批列表 -->
+        <section class="card">
+          <div class="card-title-row">
+            <h2>待投标审批（pending_bid_approval）</h2>
+            <span class="hint">满分仅进入人工审批队列，最终由企业负责人决定</span>
+          </div>
+
+          <div class="notice warn" style="margin-top:0">
+            <b>演示口径</b>：ND-2025 当前为 <code>blocked_missing_data</code>（NQ-H-007 待补）。
+            下方待审批条目为<b>补齐材料 + 完成内部评审后的构造口径</b>（admission:ND-2025:v1.0.0），仅用于演示审批/豁免/审计流程，不代表实际审批。
+          </div>
+
+          <div class="queue-card" style="border-color:#ecd9a8;background:#fafaf5">
+            <div class="q-icon" style="background:#faf3df;color:#3d2f0c">审</div>
+            <div class="q-body">
+              <div class="q-title">ND-2025 河北农业大学东校区研究生宿舍建设项目施工
+                <span class="badge gold">pending_bid_approval</span>
+              </div>
+              <div class="q-desc">
+                准入摘要：硬性 12/12 满足 · 客观计分 5/5 可复算 · 主观项内部评审完成 · 审批前动作 4/4 ready ·
+                项目经理 M-ND-01 核查通过 ｜ 准入引用 <code>admission:ND-2025:v1.0.0</code>
+              </div>
+            </div>
+            <div class="q-actions">
+              <button class="btn sm" onclick="doApprove()">审批通过</button>
+              <button class="btn sm danger" onclick="doReject()">驳回</button>
+              <button class="btn sm warn" onclick="doWaiver()">添加豁免</button>
+            </div>
+          </div>
+
+          <div id="action-result"></div>
+        </section>
+
+        <!-- 豁免表单 -->
+        <section class="card" id="waiver-form" style="display:none">
+          <h2>人工豁免（授权人 / 原因 / 证据 / 有效期）</h2>
+          <p class="sub">豁免不改变“满分”定义，只允许带着豁免项进入人工审批视野；豁免过期自动失效回阻断（ADR-001 §2.5）。</p>
+          <div class="form-grid" style="margin-top:12px">
+            <div class="form-item"><label>授权人 <span class="req">*</span></label><input type="text" id="w-auth" value="经营负责人"></div>
+            <div class="form-item"><label>豁免原因 <span class="req">*</span></label><input type="text" id="w-reason" value="审计报告在途（已受理）"></div>
+            <div class="form-item"><label>证据引用 <span class="req">*</span></label><input type="text" id="w-ev" value="受理回执 E-ND-2025-01"></div>
+            <div class="form-item"><label>有效期至 <span class="req">*</span></label><input type="date" id="w-until" value="2026-09-30"></div>
+            <div class="form-item full"><label>覆盖的阻断项</label>
+              <select class="inp" id="w-covered"><option value="NQ-H-007" selected>NQ-H-007（财务审计报告）</option><option value="NQ-S-001">NQ-S-001（技术标内部评审）</option></select>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:12px">
+            <button class="btn" onclick="submitWaiver()">提交豁免</button>
+            <button class="btn ghost" onclick="document.getElementById('waiver-form').style.display='none'">取消</button>
+          </div>
+        </section>
+
+        <!-- 审批记录与审计 -->
+        <section class="card">
+          <h2>审批记录与审计时间线（谁 / 何时 / 依据什么 / 结论）</h2>
+          <div id="approval-records"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h3 id="drawer-title" style="margin:0"></h3>
+      <button class="close" id="drawer-close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("approval.html", "approval");
+
+    /* 权限：审批层仅经营负责人可见（F010 §9 模拟登录） */
+    const role = getRole();
+    if (!canApprove(role)) {
+      document.getElementById("forbidden").style.display = "block";
+      document.getElementById("cur-role").textContent = roleLabel(role);
+    }
+
+    const result = document.getElementById("action-result");
+    const auditList = [];
+
+    function showResult(html) {
+      result.innerHTML = `<div class="notice info">${html}</div>`;
+    }
+
+    /* 审批通过 */
+    function doApprove() {
+      showResult(`
+        <b>审批通过 → approved_for_bidding</b>（角色：经营负责人 ｜ 依据 admission:ND-2025:v1.0.0）
+        <div style="margin-top:6px">审计已追加：<code>approve · 2026-08-28 · outcome=approved_for_bidding</code>。
+        注意：批准仅代表“决定投标”，系统不自动投标、不自动报价、不自动签章。</div>`);
+      auditList.unshift({ at: "2026-08-28（演示操作）", actor: "经营负责人", action: "approve", basis: "admission:ND-2025:v1.0.0", outcome: "approved_for_bidding" });
+      renderAuditLive();
+    }
+
+    /* 驳回：意见必填（F009） */
+    function doReject() {
+      const comment = prompt("驳回必须填写意见（comment 必填，否则拒绝）：", "");
+      if (comment === null) return;
+      if (!comment.trim()) {
+        showResult(`<b style="color:var(--danger)">驳回被拒绝</b>：驳回意见（comment）必填 —— 与审批流实现一致（空意见驳回被拒）。`);
+        return;
+      }
+      showResult(`<b>审批驳回 → rejected_by_approver</b>（意见：${comment.trim()}）`);
+      auditList.unshift({ at: "2026-08-28（演示操作）", actor: "经营负责人", action: "reject", basis: comment.trim(), outcome: "rejected_by_approver" });
+      renderAuditLive();
+    }
+
+    /* 豁免表单 */
+    function doWaiver() {
+      document.getElementById("waiver-form").style.display = "block";
+      document.getElementById("waiver-form").scrollIntoView({ behavior: "smooth" });
+    }
+    function submitWaiver() {
+      const auth = document.getElementById("w-auth").value.trim();
+      const reason = document.getElementById("w-reason").value.trim();
+      const ev = document.getElementById("w-ev").value.trim();
+      const until = document.getElementById("w-until").value;
+      const covered = document.getElementById("w-covered").value;
+      if (!auth || !reason || !ev || !until) {
+        alert("演示校验：授权人/原因/证据/有效期均为必填（与豁免字段契约一致）。");
+        return;
+      }
+      document.getElementById("waiver-form").style.display = "none";
+      showResult(`
+        <b>豁免已登记：W-ND-DEMO</b>（授权人：${auth} ｜ 原因：${reason} ｜ 证据：${ev} ｜ 有效期至：${until} ｜ 覆盖：${covered}）<br>
+        <span style="color:var(--ink-2)">豁免不改变满分定义；有效期过后系统自动失效并回阻断（blocked_waiver_expired）。</span>`);
+      auditList.unshift({ at: "2026-08-28（演示操作）", actor: auth, action: "add_waiver", basis: ev, outcome: `waiver:W-ND-DEMO（覆盖 ${covered}）` });
+      renderAuditLive();
+    }
+
+    function renderAuditLive() {
+      const wrap = document.getElementById("live-audit");
+      if (!wrap) return;
+      wrap.innerHTML = auditList.map(a => `
+        <div class="tl-item">
+          <div class="tl-act">${a.action} <span class="badge gray">${a.outcome}</span></div>
+          <div class="tl-meta">${a.at} · ${a.actor}</div>
+          <div class="tl-basis">依据：${a.basis}</div>
+        </div>`).join("");
+    }
+
+    /* 历史审批记录 */
+    const records = document.getElementById("approval-records");
+    PROTOTYPE.approvals.forEach(a => {
+      const box = document.createElement("div");
+      box.className = "queue-card";
+      const statusBadge =
+        a.status === "approved" ? '<span class="badge ok">approved</span>'
+        : a.status === "waived" ? '<span class="badge gold">waived（带豁免批准）</span>'
+        : a.status === "blocked_waiver_expired" ? '<span class="badge warn">豁免过期·回阻断</span>'
+        : '<span class="badge danger">非满分创建被拒绝</span>';
+      box.innerHTML = `
+        <div class="q-body">
+          <div class="q-title">${a.id} ${statusBadge} <span class="badge gray">${a.project}</span></div>
+          <div class="q-desc">${a.comment || a.note || ""}${a.approver ? ` ｜ 审批人：${a.approver} ｜ ${a.decided_at || ""}` : ""}</div>
+          ${(a.waivers || []).map(w => `
+            <div class="q-desc" style="margin-top:4px">
+              <span class="badge warn">豁免 ${w.id}</span> ${w.reason} ｜ 证据：${w.evidence} ｜ 有效期至 ${w.valid_until} ｜ 覆盖：${w.covered.join("、") || "—"}
+            </div>`).join("")}
+          <div class="timeline" style="margin-top:8px">
+            ${a.audit.map(x => `
+              <div class="tl-item">
+                <div class="tl-act">${x.action} <span class="badge gray">${x.outcome}</span></div>
+                <div class="tl-meta">${x.at} · ${x.actor}</div>
+                <div class="tl-basis">依据：${x.basis}</div>
+              </div>`).join("")}
+          </div>
+        </div>`;
+      records.appendChild(box);
+    });
+
+    /* 现场审计追加区 */
+    const live = document.createElement("div");
+    live.className = "queue-card";
+    live.style.marginTop = "12px";
+    live.innerHTML = `<div class="q-body">
+        <div class="q-title">本场演示操作审计（实时追加）<span class="badge review">live</span></div>
+        <div class="timeline" style="margin-top:8px" id="live-audit"><div class="hint">尚未操作——点击上方“审批通过 / 驳回 / 添加豁免”查看审计追加。</div></div>
+      </div>`;
+    records.appendChild(live);
+  </script>
+</body>
+</html>

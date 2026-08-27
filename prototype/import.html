@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>导入与解析｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+
+      <div class="state-banner">
+        <span class="badge info">manual_trigger</span>
+        <div>
+          <span class="state-name">测试期仅人工触发</span>
+          <span class="state-desc">— 人工粘贴公告 / 上传招标文件 / 单条 URL；不启动定时采集（scheduled 须 P0 验收 + 法务签字）。遵守 robots / 限频 / 透明 UA。</span>
+        </div>
+      </div>
+
+      <!-- 新建任务表单（模拟） -->
+      <section class="card">
+        <h2>新建投标准入任务（模拟表单）</h2>
+        <p class="sub">填写后点击「开始解析」，原型将以演示数据走通后续旅程（对应项目 ND-2025）。</p>
+        <div class="form-grid" style="margin-top:14px">
+          <div class="form-item full">
+            <label>项目名称 <span class="req">*</span></label>
+            <input type="text" id="f-name" value="河北农业大学东校区研究生宿舍建设项目施工">
+          </div>
+          <div class="form-item full">
+            <label>公告来源 URL <span class="req">*</span></label>
+            <input type="url" id="f-url" value="https://ggzy.hebei.gov.cn/（演示：河北省公共资源交易服务平台公告页）">
+          </div>
+          <div class="form-item full">
+            <label>招标文件上传（docx / pdf）</label>
+            <div class="dropzone" id="dropzone">
+              <div class="big">点击或拖拽上传招标文件</div>
+              <div class="hint">已预置演示文件：招标文件.pdf（476 页）· sha256 指纹已登记 · raw 原文不可变</div>
+            </div>
+          </div>
+          <div class="form-item full">
+            <label>公告正文粘贴（备选通道）</label>
+            <textarea id="f-body" placeholder="从公告页面复制正文粘贴到此（与上传通道二选一）…"></textarea>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <button class="btn" id="btn-parse">开始解析</button>
+          <a class="btn ghost" href="matrix.html">跳过（直接看要求矩阵）</a>
+        </div>
+        <div id="parse-progress" style="margin-top:14px"></div>
+      </section>
+
+      <!-- 原文与解析状态 -->
+      <section class="card" id="raw-panel">
+        <div class="card-title-row">
+          <h2>原文与解析状态（项目 ND-2025）</h2>
+          <span class="badge ok" id="parse-badge">parsed</span>
+        </div>
+        <table class="tbl">
+          <thead>
+            <tr><th>材料</th><th>版本</th><th>解析状态</th><th>原文指纹</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>招标公告（含资格审查要求）</td>
+              <td>v1（原始）<br><span class="hint">澄清后版本：v1.1 / v1.2（见下）</span></td>
+              <td><span class="badge ok">parsed</span></td>
+              <td class="num">sha256:e3b0…a1f9</td>
+              <td><a href="#" onclick="alert('演示：打开不可变原文视图（raw）。原文只读，不可覆盖。');return false;">查看原文</a></td>
+            </tr>
+            <tr>
+              <td>招标文件.pdf（476 页）</td>
+              <td>v1（原始）</td>
+              <td><span class="badge ok">parsed</span> <span class="hint">正文可解析</span></td>
+              <td class="num">sha256:9c42…77be</td>
+              <td><a href="#" onclick="alert('演示：打开不可变原文视图（raw）。');return false;">查看原文</a></td>
+            </tr>
+            <tr>
+              <td>澄清/补遗 ①（35 问）</td>
+              <td>v1.1（不覆盖 v1）</td>
+              <td><span class="badge ok">parsed</span> <span class="hint">OCR 成功 · 无资格实质变更</span></td>
+              <td class="num">sha256:5f11…0d2e</td>
+              <td><a href="#" onclick="alert('演示：打开澄清原文。多版本按 project_id 挂接，不覆盖历史。');return false;">查看原文</a></td>
+            </tr>
+            <tr>
+              <td>澄清/补遗 ②（细则）</td>
+              <td>v1.2（不覆盖 v1.1）</td>
+              <td><span class="badge ok">parsed</span></td>
+              <td class="num">sha256:77aa…31c0</td>
+              <td><a href="#" onclick="alert('演示：打开澄清原文。');return false;">查看原文</a></td>
+            </tr>
+            <tr>
+              <td>（对照）阜平项目招标文件</td>
+              <td>v1</td>
+              <td><span class="badge review">partial · 人工复核</span></td>
+              <td class="num">sha256:1d9f…b4e8</td>
+              <td><a href="exceptions.html#parse_fail">查看异常态演示</a></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="notice info" style="margin-top:10px">
+          <b>解析规则（F004/F005）</b>：解析失败/部分解析进入人工复核，不静默跳过；原文 raw 不可覆盖、多版本只增；
+          加密固化格式（.gef/.etb）不在解析范围，不绕过保护。解析产物仅保留公告原文事实，禁止分析断语。
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h3 id="drawer-title" style="margin:0"></h3>
+      <button class="close" id="drawer-close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("import.html", "import");
+
+    const progress = document.getElementById("parse-progress");
+    const dropzone = document.getElementById("dropzone");
+    dropzone.addEventListener("click", () => alert("演示：模拟选择文件（原型不真实上传）。"));
+
+    document.getElementById("btn-parse").addEventListener("click", () => {
+      const btn = document.getElementById("btn-parse");
+      btn.disabled = true;
+      let step = 0;
+      const steps = [
+        "登记原文（sha256 指纹 + 不可变存储）…",
+        "路由：文本 PDF → Parser（F005 链路）…",
+        "提取项目主卡：项目名称 / 招标人 / 时间线 / 最高限价…",
+        "拆分三类要求：资格 12 项 / 评分 4 项 / 动作 4 项…",
+        "解析完成：20 条要求，证据字段绑定条款引用 ✓",
+      ];
+      progress.innerHTML = `<div class="notice info">开始解析…</div>`;
+      const timer = setInterval(() => {
+        if (step < steps.length) {
+          progress.innerHTML = `<div class="notice info">${steps[step]}</div>`;
+          step++;
+        } else {
+          clearInterval(timer);
+          btn.disabled = false;
+          document.getElementById("parse-badge").textContent = "parsed（20/20 条要求）";
+          progress.innerHTML = `
+            <div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d">
+              <b>解析完成</b>：项目主卡已建立，20 条要求全部提取并可溯源（clause + 原文摘录）。
+              缺失字段一律标注“待补”，不推断。<br>
+              <a href="matrix.html" class="btn sm" style="margin-top:8px">进入招标要求矩阵 →</a>
+            </div>`;
+        }
+      }, 700);
+    });
+  </script>
+</body>
+</html>

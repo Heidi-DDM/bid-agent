@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>招标要求矩阵｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>招标要求矩阵 — 河北农业大学东校区研究生宿舍建设项目施工</h2>
+          <span class="hint">点击任意行查看字段级证据抽屉（条款引用 + 企业证据 + 原文摘录）</span>
+        </div>
+
+        <div class="tabs" id="tabs">
+          <button class="tab active" data-t="hard">硬性要求（12）</button>
+          <button class="tab" data-t="scored">评分项（4）</button>
+          <button class="tab" data-t="action">动作项（4）</button>
+        </div>
+
+        <div id="matrix-table"></div>
+
+        <div class="notice" style="margin-top:12px">
+          <b>匹配口径（F008 §6.3 / ADR-001 §2.3）</b>：
+          <span class="badge ok">满足</span> 证据充分且符合要求；
+          <span class="badge warn">待补/不可判定</span> 关键证据缺失，默认阻断，不推断满足；
+          <span class="badge review">人工复核</span> 解析不完整或主观项待内部评审；
+          <span class="badge danger">不满足</span> 证据充分但明确不符合 → 一票否决。
+          每一条结论均可回链条款与证据。
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h3 id="drawer-title" style="margin:0"></h3>
+      <button class="close" id="drawer-close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("matrix.html", "matrix");
+
+    const TYPE_TAB = {
+      hard:   { label: "硬性要求",   rows: PROTOTYPE.requirements.filter(r => r.type === "hard") },
+      scored: { label: "评分项",     rows: PROTOTYPE.requirements.filter(r => r.type === "scored") },
+      action: { label: "动作项",     rows: PROTOTYPE.requirements.filter(r => r.type === "action") },
+    };
+
+    const SUMMARY = {
+      hard:   { total: 12, ok: 11, warn: 1, review: 0, danger: 0 },
+      scored: { total: 4,  ok: 2,  warn: 0, review: 2, danger: 0 },
+      action: { total: 4,  ok: 4,  warn: 0, review: 0, danger: 0 },
+    };
+
+    function renderMatrix(type) {
+      const { rows } = TYPE_TAB[type];
+      const sum = SUMMARY[type];
+      const box = document.getElementById("matrix-table");
+      box.innerHTML = `
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <span class="badge gray">共 ${sum.total} 项</span>
+          <span class="badge ok">满足 ${sum.ok}</span>
+          ${sum.warn ? `<span class="badge warn">待补 ${sum.warn}</span>` : ""}
+          ${sum.review ? `<span class="badge review">人工复核 ${sum.review}</span>` : ""}
+          ${sum.danger ? `<span class="badge danger">不满足 ${sum.danger}</span>` : ""}
+        </div>
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:90px">编号</th>
+              <th>招标要求（原文摘录）</th>
+              <th style="width:120px">条款</th>
+              <th style="width:120px">匹配结论</th>
+              <th style="width:220px">判定说明</th>
+              ${type === "scored" ? '<th style="width:110px">满分值</th>' : ""}
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr class="clickable" data-req="${r.id}">
+                <td class="num"><b>${r.id}</b></td>
+                <td>${r.assertion}</td>
+                <td>${fmtClause(r.clause)}</td>
+                <td>${badge("match", r.match)}</td>
+                <td style="color:var(--ink-2)">${r.reason}</td>
+                ${type === "scored" ? `<td class="num">${r.max_score}${r.score != null ? `（可复算 <b>${r.score}</b>）` : ""}</td>` : ""}
+              </tr>`).join("")}
+          </tbody>
+        </table>`;
+      box.querySelectorAll("tr.clickable").forEach(tr => {
+        tr.addEventListener("click", () => {
+          const req = PROTOTYPE.requirements.find(r => r.id === tr.dataset.req);
+          openDrawer(req);
+        });
+      });
+    }
+
+    document.getElementById("tabs").addEventListener("click", e => {
+      const btn = e.target.closest(".tab");
+      if (!btn) return;
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      btn.classList.add("active");
+      renderMatrix(btn.dataset.t);
+    });
+
+    renderMatrix("hard");
+  </script>
+</body>
+</html>
