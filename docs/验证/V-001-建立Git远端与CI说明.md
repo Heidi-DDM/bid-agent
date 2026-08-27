@@ -20,6 +20,8 @@
 
 > **2026-08-28 执行记录（方式 A 已跑通）**：`gh auth status` 登录有效（账号 Heidi-DDM，HTTPS 协议，scopes 含 repo）；安全检查通过（未发现敏感文件，`验证受限材料/`、`企业资料台账20260821/` 均确认已忽略）；`gh repo create bid-agent --private` 成功（https://github.com/Heidi-DDM/bid-agent）；`git push -u origin main` 成功（150 对象 / 195 KiB，main → origin/main）。**CI 结果待回填**：浏览器打开仓库 Actions 页确认 run 状态后，按 §5 登记。
 
+> **⚠️ 2026-08-28 踩坑：推送含 workflow 文件被拒**。`git push` 含 `.github/workflows/quality.yml` 时若 token 无 `workflow` scope，GitHub 报 `refusing to allow an OAuth App to create or update workflow ... without workflow scope`。解决：系统终端执行 `gh auth refresh -h github.com -s workflow`（浏览器授权追加 scope）后重新 `git push`。`setup_remote.sh` 后续应增加 scope 预检（`gh auth status` 显示 scopes 不含 `workflow` 时先 refresh）。
+
 ### 方式 A：一键脚本（推荐）
 
 ```bash

@@ -10,7 +10,7 @@ GH_ACCOUNT="Heidi-DDM"               # 如账号不同，改这里或改用手�
 
 cd "$REPO_DIR"
 
-echo "==> [1/4] 检查 gh 登录状态"
+echo "==> [1/4] 检查 gh 登录状态与 workflow scope"
 if ! gh auth status -h github.com >/dev/null 2>&1; then
   echo "    gh 未登录或 token 失效。"
   echo "    将启动交互式登录：选择 GitHub.com → HTTPS → Login with a web browser（浏览器授权，无需输入密码）"
@@ -18,6 +18,11 @@ if ! gh auth status -h github.com >/dev/null 2>&1; then
   gh auth login -h github.com
 fi
 gh auth status -h github.com
+# GitHub 要求 token 带 workflow scope 才能创建/修改 .github/workflows/*（否则推送被拒）
+if ! gh auth status -h github.com 2>&1 | grep -q "workflow"; then
+  echo "    token 缺少 workflow scope，启动授权追加（浏览器操作，无需密码）"
+  gh auth refresh -h github.com -s workflow
+fi
 
 echo "==> [2/4] 推送前安全检查（白名单核对，禁止提交项必须被忽略）"
 git status --short | grep -E "企业资料台账20260821|验证受限材料|\.(xlsx|xls|pdf|docx|png)$" \
