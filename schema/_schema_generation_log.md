@@ -159,6 +159,27 @@
 
 ---
 
+## 十、v0.5.1 R008 行业规则补强（2026-08-26）
+
+### 10.1 触发与范围
+
+- 触发：F008 行业专家复核发现旧契约将资格、评分、动作和内部准入混为单一 `eligible_for_approval`，且缺少标段/联合体/时点、评分公式、动作阶段及澄清失效机制。
+- 范围：更新 `scripts/build_skeleton_tree.py` 的 MatchMatrix、AdmissionResult、三类要求与状态迁移说明；重新生成 `schema/tender_skeleton_tree.json` 和 `schema/schema_draft.md`；对齐 ADR-001 v1.1、F008 v1.3、F005 v1.4 和 schema v0.5.1。
+
+### 10.2 结构校验结果
+
+```text
+python3 scripts/build_skeleton_tree.py
+骨架树校验通过
+公告样例 G0/G1/G2/G3/G4 冒烟测试通过
+```
+
+- 生成树统计：243 个节点，124 个字段节点，37 个规则节点。
+- 已确认：机器可读骨架不再包含旧 `eligible_for_approval`、`manual_verified` 或“无法核验即一票否决”表述。
+- 本次为契约/结构校验，不将其表述为行业规则正确性的实证。F008 §9 规定的至少 10 个真实脱敏项目黄金样本验证仍待执行。
+
+---
+
 ## 九、三次审计记录（v0.5.0，2026-08-25，R003）
 
 > 触发原因：R003（F003-最小数据治理与权限）契约冻结——结构性改版（新增章节），按版本化规则触发全量审计。

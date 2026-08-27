@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>投标智能体项目 · 进展与概要汇报</title>
+<style>
+  :root {
+    --bg: #f8f9fb;
+    --surface: #ffffff;
+    --accent: #1a56db;
+    --accent-light: #e8f0fe;
+    --text: #1a1a2e;
+    --text-secondary: #5a5a72;
+    --border: #e2e5ea;
+    --green: #0d9488;
+    --amber: #d97706;
+    --red: #dc2626;
+    --purple: #7c3aed;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+
+  /* === Header === */
+  header {
+    text-align: center;
+    padding: 48px 0 32px;
+    border-bottom: 3px solid var(--accent);
+    margin-bottom: 40px;
+  }
+  header h1 { font-size: 32px; font-weight: 700; color: var(--accent); }
+  header .subtitle { font-size: 16px; color: var(--text-secondary); margin-top: 8px; }
+  header .meta { font-size: 13px; color: var(--text-secondary); margin-top: 12px; }
+  header .meta span { display: inline-block; margin: 0 12px; }
+
+  /* === Sections === */
+  section { margin-bottom: 40px; }
+  section h2 {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--accent);
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  section h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 20px 0 12px;
+    color: var(--text);
+  }
+  p { margin-bottom: 12px; color: var(--text-secondary); }
+
+  /* === Cards === */
+  .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .card-grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid var(--border);
+    transition: box-shadow 0.2s;
+  }
+  .card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+  .card h4 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .card .stat { font-size: 28px; font-weight: 700; color: var(--accent); }
+  .card .stat-label { font-size: 12px; color: var(--text-secondary); }
+
+  /* === Tables === */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th {
+    background: var(--accent-light);
+    color: var(--accent);
+    font-weight: 600;
+    padding: 12px 14px;
+    text-align: left;
+    font-size: 13px;
+  }
+  td { padding: 10px 14px; border-top: 1px solid var(--border); }
+  tr:hover td { background: #f5f7fa; }
+
+  /* === Tags === */
+  .tag {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .tag-red { background: #fef2f2; color: #dc2626; }
+  .tag-amber { background: #fffbeb; color: #d97706; }
+  .tag-green { background: #f0fdf4; color: #0d9488; }
+  .tag-blue { background: var(--accent-light); color: var(--accent); }
+  .tag-purple { background: #f5f3ff; color: #7c3aed; }
+
+  /* === Key Insight === */
+  .insight {
+    background: var(--accent-light);
+    border-left: 4px solid var(--accent);
+    padding: 16px 20px;
+    border-radius: 0 10px 10px 0;
+    margin: 16px 0;
+  }
+  .insight strong { color: var(--accent); }
+
+  /* === Timeline === */
+  .timeline { position: relative; padding-left: 28px; margin: 16px 0; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .tl-item { position: relative; margin-bottom: 20px; }
+  .tl-item::before {
+    content: '';
+    position: absolute;
+    left: -24px;
+    top: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--surface);
+  }
+  .tl-item .tl-date { font-size: 12px; color: var(--text-secondary); }
+  .tl-item .tl-title { font-weight: 600; font-size: 14px; }
+
+  /* === Footer === */
+  footer {
+    text-align: center;
+    padding: 32px 0;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+  .badge-done { background: #f0fdf4; color: #0d9488; }
+  .badge-pending { background: #fffbeb; color: #d97706; }
+
+  /* === Mermaid-like diagrams via CSS === */
+  .flow-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+  .flow-box {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .flow-box.green { background: #f0fdf4; border-color: #a7f3d0; color: #0d9488; }
+  .flow-box.blue { background: var(--accent-light); border-color: #bfdbfe; color: var(--accent); }
+  .flow-box.amber { background: #fffbeb; border-color: #fde68a; color: #d97706; }
+  .flow-arrow { color: var(--text-secondary); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ============ HEADER ============ -->
+<header>
+  <h1>📊 投标智能体项目</h1>
+  <div class="subtitle">工程建设投标智能化 · 项目进展与概要汇报</div>
+  <div class="meta">
+    <span>📅 2026-08-01</span>
+    <span>🏢 艾引智库</span>
+    <span>📋 报告人：梁某</span>
+  </div>
+</header>
+
+<!-- ============ 1. 项目总览 ============ -->
+<section>
+  <h2>一、项目总览</h2>
+  <p>本项目旨在为工程建设投标领域打造一套<strong>投标决策智能体</strong>产品，聚焦三个差异化方向：<strong>证据溯源</strong>（解决AI幻觉信任）、<strong>投标决策辅助</strong>（竞品空白）、<strong>Win/Loss复盘</strong>（竞品空白）。不同于市场上所有"AI标书生成工具"的定位，我们做的是<strong>"帮客户想投标"</strong>的决策层产品。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>🎯 产品定位</h4>
+      <p style="font-size:13px">不做"AI标书生成工具"<br>→ 做"投标决策智能体"</p>
+      <div style="margin-top:8px"><span class="tag tag-blue">证据溯源</span> <span class="tag tag-purple">决策辅助</span> <span class="tag tag-green">Win/Loss复盘</span></div>
+    </div>
+    <div class="card">
+      <h4>🏆 核心发现</h4>
+      <p style="font-size:13px">已识别 <strong>12+</strong> 款竞品，但全行业都卡在"标书生成工具"<br>"投标决策"和"复盘"两个JTBD完全是空白</p>
+    </div>
+    <div class="card">
+      <h4>📈 市场机会</h4>
+      <div class="stat">40万亿+</div>
+      <div class="stat-label">全国公共资源年交易额</div>
+      <p style="font-size:13px;margin-top:8px">政策强制：三部门195号文<br>2027年全国推广</p>
+    </div>
+    <div class="card">
+      <h4>⚠️ 竞争格局</h4>
+      <p style="font-size:13px">三阵营：</p>
+      <div><span class="tag tag-red">大客户重器</span> 数商云/标桥/法正</div>
+      <div><span class="tag tag-amber">创业新贵</span> 云境/喜鹊/娜川</div>
+      <div><span class="tag tag-green">低价铺量</span> 易标/快标书/智标领航</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2. 项目管线状态 ============ -->
+<section>
+  <h2>二、项目管线状态</h2>
+
+  <h3>工程招投标域 · Pipeline 进展</h3>
+  <table>
+    <tr>
+      <th style="width:30%">阶段</th>
+      <th style="width:15%">状态</th>
+      <th>产出物</th>
+    </tr>
+    <tr>
+      <td><strong>Phase A · 日常积累</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>74条原始资料(raw) + 44张证据卡</td>
+    </tr>
+    <tr>
+      <td><strong>step_01 预检</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>raw→自动补充carded</td>
+    </tr>
+    <tr>
+      <td><strong>step_02 稳定性检查</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>新域首份报告自动标记完成</td>
+    </tr>
+    <tr>
+      <td><strong>step_02.5 缺口分析</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>7维度覆盖度检查</td>
+    </tr>
+    <tr>
+      <td><strong>step_03 wiki编译</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>7维 wiki 编译文档（市场/政策/技术/竞争/用户/趋势/AI破局）</td>
+    </tr>
+    <tr>
+      <td><strong>step_04 大纲+SCQA+作战地图</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>报告大纲 + SCQA + 作战地图</td>
+    </tr>
+    <tr>
+      <td><strong>step_05 框架填写</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>5段分析框架，evidence_chain引用真实证据卡</td>
+    </tr>
+    <tr>
+      <td><strong>step_06 报告初稿</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>3版完整报告，44张证据卡全量引用</td>
+    </tr>
+    <tr>
+      <td><strong>step_07 QA审查</strong></td>
+      <td><span class="badge badge-pending">待触发</span></td>
+      <td>10维审查（等待手动审核）</td>
+    </tr>
+    <tr>
+      <td><strong>step_08 版本发布</strong></td>
+      <td><span class="badge badge-done">已完成</span></td>
+      <td>版本发布 + 旧版归档</td>
+    </tr>
+    <tr>
+      <td><strong>Phase C 执行层延伸</strong></td>
+      <td><span class="badge badge-pending">待建设</span></td>
+      <td>执行蓝图/反馈回路/原形监控/组织学习</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ============ 3. 竞品调研成果 ============ -->
+<section>
+  <h2>三、竞品调研成果</h2>
+
+  <div class="insight">
+    <strong>🔑 核心洞察：全行业空白</strong><br>
+    所有 <strong>12+ 款竞品</strong> 都卡在<strong>"标书生成工具"</strong> 层次。<br>
+    <strong>"投标决策"</strong>（该不该投、胜率多少）和<strong>"投标后复盘"</strong>（为什么输/赢）<br>
+    两个核心用户任务<strong>完全没人占领</strong>。
+  </div>
+
+  <h3>采用的调研框架</h3>
+  <div class="flow-row">
+    <span class="flow-box blue">波特五力</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box blue">SWOT-TOWS</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box blue">战略群组</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box blue">蓝海战略画布</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box green">JTBD</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box green">Kano模型</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box green">用户体验地图</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box amber">BAI四问</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box amber">情报金字塔</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-box amber">Win/Loss分析</span>
+  </div>
+  <p style="font-size:13px;color:var(--text-secondary)">三层 × 10框架体系：战略层4个 + 产品/用户层3个 + 情报层3个</p>
+
+  <h3>竞品分类定位</h3>
+  <table>
+    <tr>
+      <th>阵营</th>
+      <th>代表</th>
+      <th>打法</th>
+      <th>威胁等级</th>
+    </tr>
+    <tr>
+      <td><span class="tag tag-red">大客户重器</span></td>
+      <td>数商云、标桥(新点)、法正智能</td>
+      <td>私有化+信创+全链数字化</td>
+      <td>🟡 中（不同赛道）</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-amber">创业新贵</span></td>
+      <td>云境标书AI、喜鹊、娜川智投</td>
+      <td>垂直AI+SaaS+技术驱动</td>
+      <td>🔴 <strong>高（最直接竞品）</strong></td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-green">低价铺量</span></td>
+      <td>易标AI、快标书、智标领航</td>
+      <td>代理渠道+按字数低价</td>
+      <td>🟢 低（客群不同）</td>
+    </tr>
+  </table>
+
+  <div class="card-grid" style="margin-top:16px">
+    <div class="card">
+      <h4>📄 产出物 #1</h4>
+      <p style="font-size:13px"><strong>竞品分析报告</strong> (2026-07-28)</p>
+      <p style="font-size:13px">629行 / 41KB / 10框架完整分析<br>附录含定价表、置信度标注、官网链接</p>
+    </div>
+    <div class="card">
+      <h4>📄 产出物 #2</h4>
+      <p style="font-size:13px"><strong>竞品PPT</strong> (2026-07-28)</p>
+      <p style="font-size:13px">23页汇报演示文稿<br>包含战略群组图、Kano矩阵、蓝海画布</p>
+    </div>
+    <div class="card">
+      <h4>📄 产出物 #3</h4>
+      <p style="font-size:13px"><strong>竞品全景扫描方法论</strong> (2026-07-29)</p>
+      <p style="font-size:13px">318行 / 13KB / 可复用方法论文档<br>含操作步骤、置信度标准、检查清单</p>
+    </div>
+    <div class="card">
+      <h4>📄 产出物 #4</h4>
+      <p style="font-size:13px"><strong>工程招投标域</strong> (持续建设)</p>
+      <p style="font-size:13px">schema v4 (2600行) + 7维wiki + 3版报告<br>44张证据卡 · 74条原始资料</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4. 空白区分析 ============ -->
+<section>
+  <h2>四、空白区深度分析</h2>
+
+  <p>"投标决策"和"复盘"没人做，不是简单的"别人没发现"，而是四个叠加因素造成：</p>
+
+  <table>
+    <tr>
+      <th style="width:18%">因素</th>
+      <th>核心问题</th>
+      <th>为什么竞品做不了</th>
+      <th>为什么我们可以</th>
+    </tr>
+    <tr>
+      <td><strong>① 用户≠买单者</strong></td>
+      <td>现有产品瞄准投标专员（执行层），决策分析需要面向总监/老板</td>
+      <td>产品定位天然冲突</td>
+      <td><strong>智库天然面向决策层</strong></td>
+    </tr>
+    <tr>
+      <td><strong>② 数据冷启动</strong></td>
+      <td>需要标书外数据（中标结果、竞对情报），需主动建设和维护</td>
+      <td>SaaS工具无法承担运营成本</td>
+      <td><strong>情报建设是智库核心能力</strong></td>
+    </tr>
+    <tr>
+      <td><strong>③ 团队基因</strong></td>
+      <td>"投标决策"本质是商业分析，需要研究方法论</td>
+      <td>竞品团队技术/渠道基因、非分析基因</td>
+      <td><strong>完整研究方法论储备</strong></td>
+    </tr>
+    <tr>
+      <td><strong>④ 付费可见性</strong></td>
+      <td>标书生成省时间立刻感知，决策价值需事后验证</td>
+      <td>纯工具无法支撑分析服务定价</td>
+      <td><strong>可卖分析服务而非工具</strong></td>
+    </tr>
+  </table>
+
+  <div class="insight">
+    <strong>⚡ 结论：这不是纯技术产品能做好的。</strong><br>
+    竞品不做是因为基因不在分析。<strong>这正是智库型产品的天然阵地</strong>——<br>
+    壁垒不在于AI能力（大家都能用大模型），而在于<strong>分析框架、行业认知和研究方法论</strong>，这些是买不到的。
+  </div>
+</section>
+
+<!-- ============ 5. 三阶段路径 ============ -->
+<section>
+  <h2>五、产品路径规划</h2>
+
+  <div class="timeline">
+    <div class="tl-item">
+      <div class="tl-date">Phase 1 · 1-2个月</div>
+      <div class="tl-title">🎯 "投标可行性速评"</div>
+      <p style="font-size:13px">纯规则引擎，不需要大模型。输入招标关键参数，输出可行性评分+关键风险提示。<br>帮助投标专员快速过滤明显不适合的项目。</p>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">Phase 2 · 3-4个月</div>
+      <div class="tl-title">📊 "简易投标复盘"</div>
+      <p style="font-size:13px">半自动，结构化表单+统计分析。追踪中标率趋势、失分原因分析、下轮改进建议。<br>帮助投标团队积累"机构记忆"。</p>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">Phase 3 · 6个月+</div>
+      <div class="tl-title">🧠 "投标策略分析"</div>
+      <p style="font-size:13px">集成智能体：竞对追踪 + 历史中标分析 + 利润模型 + 报价策略建议。</p>
+    </div>
+  </div>
+
+  <div style="margin-top:16px">
+    <span class="tag tag-red">P0 立即做</span> 客户深度访谈验证空白假设 + 对齐195号文20场景 + Phase 1 MVP
+  </div>
+</section>
+
+<!-- ============ 6. 智库能力支撑 ============ -->
+<section>
+  <h2>六、智库能力支撑体系</h2>
+
+  <p>项目背后是完整的智库pipeline支撑，确保每个结论可追溯、可验证：</p>
+
+  <table>
+    <tr>
+      <th>能力</th>
+      <th>说明</th>
+      <th>应用场景</th>
+    </tr>
+    <tr>
+      <td><strong>📥 资料入库</strong> (source-intake)</td>
+      <td>自动接收链接/PDF/网页，生成结构化入库单</td>
+      <td>持续采集竞品情报、政策动态</td>
+    </tr>
+    <tr>
+      <td><strong>🔍 可信度评估</strong> (source-trust-score)</td>
+      <td>5维度评分：域权威/时效性/作者归因/利益相关/引用佐证</td>
+      <td>区分营销稿与真实数据</td>
+    </tr>
+    <tr>
+      <td><strong>📇 事实卡提取</strong> (evidence-card)</td>
+      <td>原始资料→结构化事实卡，一卡一断语，可溯源</td>
+      <td>已产出44张证据卡覆盖7维度</td>
+    </tr>
+    <tr>
+      <td><strong>🔄 去重合并</strong> (dedupe-and-merge)</td>
+      <td>三级去重（完全/近似/语义重叠）</td>
+      <td>避免重复数据干扰分析</td>
+    </tr>
+    <tr>
+      <td><strong>🔎 缺口分析</strong> (research-gap-finder)</td>
+      <td>6类缺口检测，生成补采任务</td>
+      <td>指导下一步采集方向</td>
+    </tr>
+    <tr>
+      <td><strong>📡 行业巡检</strong> (industry-weekly-watch)</td>
+      <td>6轨巡检：政策/融资/产品/公司/市场/竞品</td>
+      <td>持续监控竞品动态</td>
+    </tr>
+    <tr>
+      <td><strong>🏢 公司画像</strong> (company-profile)</td>
+      <td>9段式画像：概览/模式/产品/数据/竞品/团队/SWOT/风险/动态</td>
+      <td>深度分析云境、喜鹊等核心竞品</td>
+    </tr>
+    <tr>
+      <td><strong>📜 政策分析</strong> (policy-analysis)</td>
+      <td>7段式解读：基本信息/核心内容/影响/机会/风险/关系/行动</td>
+      <td>解读三部门195号文</td>
+    </tr>
+    <tr>
+      <td><strong>📝 报告生成</strong> (report-outline → report-draft)</td>
+      <td>从证据卡生成大纲→按大纲撰写正文，每句可追溯</td>
+      <td>已产出3版完整报告</td>
+    </tr>
+    <tr>
+      <td><strong>✅ QA审查</strong> (qa-red-team)</td>
+      <td>6维审查：引用准确/幻觉检测/逻辑一致/过度结论/来源多样/完整性</td>
+      <td>报告发布前质量把关</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ============ 7. 下一步行动 ============ -->
+<section>
+  <h2>七、下一步行动清单</h2>
+
+  <table>
+    <tr>
+      <th style="width:8%">优先级</th>
+      <th style="width:38%">行动</th>
+      <th>说明</th>
+    </tr>
+    <tr>
+      <td><span class="tag tag-red">P0</span></td>
+      <td><strong>验证"空白区假设"</strong></td>
+      <td>做5-10家客户深度访谈，确认"投标决策/复盘"的真实需求和付费意愿</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-red">P0</span></td>
+      <td><strong>对齐195号文20个AI场景</strong></td>
+      <td>确保产品合规能力可对标政策，建立"合规智能体"心智</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-red">P0</span></td>
+      <td><strong>Phase 1 MVP</strong></td>
+      <td>规则引擎实现投标可行性速评（1-2个月）</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-amber">P1</span></td>
+      <td><strong>Phase 2 简易复盘</strong></td>
+      <td>结构化表单+统计分析，帮客户积累机构记忆（3-4个月）</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-amber">P1</span></td>
+      <td><strong>建立证据溯源技术壁垒</strong></td>
+      <td>最易感知的差异化，每段内容绑定原始资料</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-green">P2</span></td>
+      <td><strong>Phase 3 投标策略分析</strong></td>
+      <td>集成竞对追踪/利润模型/报价建议（6个月+）</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-green">P2</span></td>
+      <td><strong>搭建代理/渠道体系</strong></td>
+      <td>借鉴易标模式但做品控升级</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-blue">P3</span></td>
+      <td><strong>开源社区+内容营销</strong></td>
+      <td>解析功能免费+行业报告输出</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-blue">P3</span></td>
+      <td><strong>建立情报巡检机制</strong></td>
+      <td>定期更新竞品情报动态（每2周）</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ============ 8. 方法论价值 ============ -->
+<section>
+  <h2>八、可复制的方法论价值</h2>
+
+  <p>本次竞品调研不仅是单次产出，更重要的是沉淀了<strong>可复用的方法论体系</strong>：</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>📐 三层 × 10框架体系</h4>
+      <p style="font-size:13px">战略层（4个）+ 产品/用户层（3个）+ 情报层（3个）<br>完整竞品分析管线，可复用至其他赛道</p>
+    </div>
+    <div class="card">
+      <h4>🏷️ 四层置信度标准</h4>
+      <p style="font-size:13px">🟢一手官方 / 🟡二手转述 / 🟠行业评测 / 🔴付费营销稿<br>防止营销稿数据污染分析结论</p>
+    </div>
+    <div class="card">
+      <h4>🔍 四因素空白区检验</h4>
+      <p style="font-size:13px">用户≠买单者 / 数据冷启动 / 团队基因 / 付费可见性<br>避免"别人没发现所以我们可以做"的误区</p>
+    </div>
+    <div class="card">
+      <h4>📋 7项输出检查清单</h4>
+      <p style="font-size:13px">覆盖框架数量/置信度标注/空白区检验/定位宣言/三阶段路径<br>确保每次产出质量一致</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>艾引智库 · 投标智能体项目概况汇报</p>
+  <p>2026-08-01 | 梁某</p>
+</footer>
+
+</div>
+</body>
+</html>

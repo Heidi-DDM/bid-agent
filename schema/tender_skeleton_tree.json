@@ -1202,7 +1202,7 @@
             "type": "enum",
             "required": true,
             "source": "规则匹配",
-            "note": "正式枚举替代旧优势卡占位（登记差异见审计日志）"
+            "note": "manual_review 不得视为满足；正式枚举替代旧优势卡占位"
           },
           {
             "id": "9.1.5",
@@ -1212,7 +1212,7 @@
             "type": "decimal",
             "required": false,
             "source": "规则计分",
-            "note": "计分项得分"
+            "note": "计分项得分；不可计算时为 null"
           },
           {
             "id": "9.1.6",
@@ -1233,6 +1233,26 @@
             "required": false,
             "source": "匹配结果",
             "note": "待补/待核实清单"
+          },
+          {
+            "id": "9.1.8",
+            "name": "判定时点",
+            "kind": "field",
+            "field_key": "as_of",
+            "type": "datetime",
+            "required": true,
+            "source": "招标条款/规则配置",
+            "note": "按资格预审、投标截止或明确日期核验"
+          },
+          {
+            "id": "9.1.9",
+            "name": "判定依据",
+            "kind": "field",
+            "field_key": "match_reason",
+            "type": "object",
+            "required": true,
+            "source": "规则引擎",
+            "note": "表达式、输入、证据、计算结果和人工复核原因"
           }
         ]
       },
@@ -1245,19 +1265,19 @@
             "id": "9.2.1",
             "name": "硬性要求 hard_requirement",
             "kind": "rule",
-            "note": "资格/资质/人员/业绩/信用/保证金/截止时间/联合体等；任一不满足或无法核验 → 一票否决（F008 §4.1）"
+            "note": "资格/资质/人员/业绩/信用/联合体/否决条款；须配置 failure_effect，无法核验进入待补而非明确不满足（F008 §4.1）"
           },
           {
             "id": "9.2.2",
             "name": "计分要求 scored_requirement",
             "kind": "rule",
-            "note": "商务/技术/资信评分项；每项配置满分值、匹配证据、缺失处置（F008 §4.1）"
+            "note": "商务/技术/资信/报价；每项配置公式、输入、满分、证据、去重与主观内部质量评审边界（F008 §4.2）"
           },
           {
             "id": "9.2.3",
             "name": "动作要求 action_requirement",
             "kind": "rule",
-            "note": "报名/CA/保证金/递交/开标；未完成不能进入审批（F008 §4.1）"
+            "note": "报名/CA/保证金/递交/开标按 approval_ready/submission_ready/submitted/opened 阶段核查（F008 §4.3）"
           }
         ]
       },
@@ -1543,42 +1563,82 @@
       },
       {
         "id": "9.5",
-        "name": "满分准入判定",
+        "name": "四类结论与内部满分准入",
         "kind": "section",
         "children": [
           {
             "id": "9.5.1",
-            "name": "准入判定",
+            "name": "资格/响应性核查",
             "kind": "field",
-            "field_key": "eligible_for_approval",
-            "type": "boolean",
+            "field_key": "qualification_result",
+            "type": "object",
             "required": true,
-            "source": "准入公式",
-            "note": "F008 §6.1：全硬条件满足 AND 计分项全满分 AND 动作就绪 AND 存在合格可用项目经理 AND 证据有效"
+            "source": "硬性要求匹配",
+            "note": "规则化核查，不是法律意见或最终资格审查"
           },
           {
             "id": "9.5.2",
-            "name": "阻断类型",
+            "name": "当前评分结果",
             "kind": "field",
-            "field_key": "blocked_reason",
-            "type": "enum",
-            "required": false,
-            "source": "匹配结果",
-            "values": [
-              "blocked_missing_data",
-              "blocked_hard_requirement"
-            ],
-            "note": "数据缺失默认阻断，不推断满足"
+            "field_key": "scoring_result",
+            "type": "object",
+            "required": true,
+            "source": "评分规则",
+            "note": "可计算分数、不可计算项和内部质量评审状态；不是评标委员会得分"
           },
           {
             "id": "9.5.3",
-            "name": "待补/待核实项",
+            "name": "投标准备度",
             "kind": "field",
-            "field_key": "pending_items",
-            "type": "ref[]",
+            "field_key": "operational_readiness",
+            "type": "object",
+            "required": true,
+            "source": "动作要求",
+            "note": "按 approval_ready/submission_ready/submitted/opened 阶段判断"
+          },
+          {
+            "id": "9.5.4",
+            "name": "内部准入结论",
+            "kind": "field",
+            "field_key": "internal_admission_result",
+            "type": "object",
+            "required": true,
+            "source": "内部准入规则",
+            "note": "综合四类结论的可解释结果"
+          },
+          {
+            "id": "9.5.5",
+            "name": "是否可送人工审批",
+            "kind": "field",
+            "field_key": "internal_admission_eligible",
+            "type": "boolean",
+            "required": true,
+            "source": "内部准入公式",
+            "note": "不代表自动投标或评标满分"
+          },
+          {
+            "id": "9.5.6",
+            "name": "结果新鲜度",
+            "kind": "field",
+            "field_key": "result_freshness",
+            "type": "enum",
+            "required": true,
+            "source": "版本核验",
+            "values": [
+              "current",
+              "stale"
+            ],
+            "note": "澄清、证据变更或过期后必须 stale 并重算"
+          },
+          {
+            "id": "9.5.7",
+            "name": "阻断/待补/复核项",
+            "kind": "field",
+            "field_key": "decision_items",
+            "type": "object[]",
             "required": false,
             "source": "匹配结果",
-            "note": "待补队列"
+            "note": "统一承载 blocked_missing_data、blocked_hard_requirement、not_qualified、manual_review 及责任人/截止时间"
           }
         ]
       }
@@ -1624,7 +1684,7 @@
         "id": "10.2",
         "name": "状态迁移规则",
         "kind": "rule",
-        "note": "draft→collecting→parsed→matching→blocked_missing_data/blocked_hard_requirement/not_qualified→qualified_full_score→pending_bid_approval→approved_for_bidding/rejected_by_approver→archived；迁移表见 ADR-001 §2.2；满分仅进入 pending_bid_approval，不自动投标"
+        "note": "draft→collecting→parsed→matching→blocked_missing_data/blocked_hard_requirement/not_qualified→qualified_full_score→pending_bid_approval→approved_for_bidding/rejected_by_approver→archived；qualified_full_score 仅指内部准入政策满足，非评标委员会得分；仅进入 pending_bid_approval，不自动投标"
       },
       {
         "id": "10.3",

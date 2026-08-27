@@ -1,7 +1,7 @@
 ---
 type: schema
 domain: 招投标（某建设集团 · 投标信息收集智能体）
-version: 0.5.0
+version: 0.5.1
 status: active
 generated_by: domain-schema-generator-v2
 skeleton_source: 投标智能体-智库底座复用方案_v1.md §四（招投标 Schema 骨架树细化版 v1）+ PRD_v1.md + ADR-001
@@ -9,6 +9,7 @@ audit_iterations: 3
 placeholder_hits: 0
 coverage_rate: "125/125"
 passed_gate: 2026-08-13 / 2026-08-25（R002）/ 2026-08-25（R003）
+change_status: v0.5.1 骨架树已重新生成并通过结构校验；行业黄金样本语义验证待执行
 ---
 
 # 招投标 · 域操作规范（schema）
@@ -16,7 +17,7 @@ passed_gate: 2026-08-13 / 2026-08-25（R002）/ 2026-08-25（R003）
 > 「信息搜集 Agent 的宪法」——修改此文件即修改 Agent 行为。
 > 本 schema 定义从**采集 → 清洗 → 事实卡 → 项目情报库 → 匹配与准入 → 人工审批 → 反馈校准**的完整规则，全部围绕「纯事实、可溯源、零分析断语」红线。
 > 与智库 schema 的关键差异：**无分析层**（无 7 维分析框架、无 SCQA、无报告撰写标准、无作战地图）。公开情报层只产出结构化情报，不做投/不投判断。
-> 新增边界（ADR-001，v0.4.0）：资格与资源核查层（§十一）允许**规则化匹配与计分**——但仅限可配置规则和证据化结果；投标审批（§十二）必须由企业负责人完成，系统永不自动投标/报价。
+> 新增边界（ADR-001）：资格与资源核查层（§十一）允许**规则化匹配与计分**——但仅限可配置规则和证据化结果；资格/响应性、当前评分、投标准备度和内部准入必须分别输出。投标审批（§十二）必须由企业负责人完成，系统永不自动投标/报价。
 > 关联 PRD：《投标信息收集智能体-PRD_v1.md》为开发基线，字段 key、采集模式、门禁以 PRD 为准并同步更新；范围变化以 ADR-001 为准。
 
 ---
@@ -487,11 +488,11 @@ phase_c:
 - auto_action: 生成主卡 → 挂接子卡 → 多源引用合并 → **更新 intake pipeline_status=intel** → **执行事件同步 `python3 scripts/publish/sync_events.py`（为每个已入库 intake 创建/更新 AnnouncementEvent，幂等；计算 content_hash/dedup_key；同 dedup_key 跨平台归并为一条事件 + source_links 追加）** → 验证 → 更新状态
 - check: `python3 scripts/pipeline_gates.py --intake <id>` 输出 G0/G2/G3/事件同步 全 ✅
 
-**G3.5 匹配门禁（v0.4.0 新增，准入链路）**
-- rule: 资格/资源逐项匹配完成（§11.1 匹配矩阵）；三类要求拆分完成（§11.2）；项目经理硬条件验证完成（§11.3）；准入判定 `eligible_for_approval` 计算完成且可解释（§11.5）；匹配结论全部回链招标条款（tender_clause_ref）与企业证据（evidence_refs）
-- auto_action: 缺失/无法核验 → `blocked_missing_data` 待补队列（不推断满足）；硬性否决项不满足 → `blocked_hard_requirement`；明确不满足 → `not_qualified`；全部满足 → `qualified_full_score` → `pending_bid_approval`
-- fallback: 解析不完整/资料库为空 → 人工复核（manual_review），不参与自动满分判定
-- 边界: 本门禁只判定"能否进入人工审批"，**不阻断公开情报推送（G4 独立运行）**；满分 ≠ 自动投标（ADR-001 §2.3）
+**G3.5 匹配门禁（v0.5.1 修订，准入链路）**
+- rule: 资格/资源逐项匹配完成（§11.1）；三类要求、标段/联合体、条款时点和澄清版本已锁定（§11.2）；项目经理硬条件验证完成（§11.3）；资格/评分/准备度/内部准入四类结论均可解释（§11.5）；匹配结论全部回链招标条款与企业证据。
+- auto_action: 缺失/无法核验 → `blocked_missing_data` 待补队列；资格性要求证据充分但不满足 → `not_qualified`；响应性硬要求证据充分但不满足 → `blocked_hard_requirement`；解析不完整或规则无法执行 → `manual_review`；仅内部准入政策满足且结果未失效 → `qualified_full_score` → `pending_bid_approval`。
+- fallback: `manual_review`、`not_calculable` 或 `stale` 不参与自动准入；门禁模式可停止状态迁移，诊断模式仍输出可独立判断的全部缺口。
+- 边界: 本门禁只判定“能否进入人工审批”，**不阻断公开情报推送（G4 独立运行）**；内部“满分”不等于评标委员会得分，更不等于自动投标。
 
 ### 6.4.0 门禁链硬校验（C 方案，2026-08-17 防 Agent 跳步）`[rule]`
 
@@ -778,7 +779,7 @@ qa_report:
 
 ---
 
-## 十一、资格与资源核查域（v0.4.0 新增，ADR-001 §2.1 第三层）
+## 十一、资格与资源核查域（v0.4.0 新增，v0.5.1 行业规则补强）
 
 > **边界声明**：本章为 ADR-001 显式范围变更的落地层——公开情报层红线（§四 4.4 / §八 8.3）不变，公开层仍然零分析断语；匹配/计分只允许在本章出现，且**必须**是可配置规则 + 证据化结果（每条结论回链招标条款 + 企业证据）。企业资料不足时输出"不可判定/待补材料"，**不得默认满分**（ADR-001 §2.4）。
 
@@ -791,20 +792,22 @@ qa_report:
 | matrix_id | 矩阵ID | string | ✅ | 主键，关联 project_id + 规则版本 |
 | tender_clause_ref | 要求引用 | ref[] | ✅ | 回链招标条款（F005 子卡），每条结论必回链 |
 | evidence_refs | 企业证据引用 | ref[] | ✅ | 回链 F006/F007 证据，无证据不判"满足" |
-| match_result | 匹配结果 | enum | ✅ | satisfied / partial / not_satisfied / unverifiable |
+| match_result | 匹配结果 | enum | ✅ | satisfied / partial / not_satisfied / unverifiable / manual_review |
 | score | 计分 | decimal | — | 计分项得分 |
 | max_score | 满分值 | decimal | ✅ | 计分项满分值（规则配置） |
 | missing_items | 缺失项 | ref[] | — | 待补/待核实清单 |
 
-> **差异登记（v0.4.0 审计）**：旧 §三 advantage 占位字段 `match_result`（满足/部分满足/待核实/不满足）为占位枚举（§四 4.1.9，保持不动）；本章 `match_result`（satisfied/partial/not_satisfied/unverifiable）为正式启用枚举（F008 §4.2），依据 ADR-001 影响评估"advantage 由占位升级为正式匹配矩阵"。
+> **差异登记**：旧 §三 advantage 占位字段 `match_result`（满足/部分满足/待核实/不满足）为占位枚举（§四 4.1.9，保持不动）；本章为正式匹配矩阵枚举。`manual_review` 仅表示解析不完整、规则无法执行或须人工判断，不能视为满足。
 
 ### 11.2 三类要求 `[rule]`
 
 | 类型 | 内容 | 判定 |
 |------|------|------|
-| `hard_requirement` 硬性要求 | 资格、资质、人员、业绩、信用、保证金、截止时间、联合体等 | 任一关键项不满足/缺证据 → 一票否决（F008 §4.1） |
-| `scored_requirement` 计分要求 | 商务、技术、资信等可配置评分项 | 每项定义满分值、匹配证据、缺失处置 |
-| `action_requirement` 动作要求 | 报名、CA、保证金、递交、开标 | 未完成前不能进入审批 |
+| `hard_requirement` 硬性要求 | 资格、资质、人员、业绩、信用、联合体、否决条款等 | 必须配置失败后果；无法核验为待补，不得误作不满足 |
+| `scored_requirement` 计分要求 | 商务、技术、资信、报价等评分项 | 每项定义公式、满分、输入、证据、去重和主观内部评审边界 |
+| `action_requirement` 动作要求 | 报名、CA、保证金、递交、开标 | 按 `approval_ready/submission_ready/submitted/opened` 阶段核查 |
+
+Requirement 必须带 `requirement_id`、`lot_id`、`clause_ref`、`assertion`、`rule`、`evidence_required[]`、`as_of`、`missing_action`、`logic_group/operator`、`consortium_role`、`priority`；硬性项另带 `failure_effect`。RuleSet 必须固化这些字段、评分公式/取整和招标文件或澄清版本。详情见 F008 §4。
 
 ### 11.3 项目经理匹配（ProjectManagerProfile）`[schema]`
 
@@ -838,20 +841,24 @@ qa_report:
 
 `rule_set_id` / `rule_version` / `effective_from` / `created_by`——规则版本化（F008 §4.3）：历史项目保留当时规则版本快照；规则变更留审计（谁/何时/改了什么）。
 
-### 11.5 满分准入判定 `[rule + formula]`
+### 11.5 四类结论与内部满分准入 `[rule + formula]`
 
 ```text
-eligible_for_approval =
-  all(hard_requirements == satisfied)
-  AND all(scored_requirements.score == scored_requirements.max_score)
-  AND all(action_requirements.status in [ready, completed])
+qualification_result = all(hard_requirements == satisfied)
+operational_readiness.approval_ready =
+  all(actions required_by_stage=approval_ready are ready/completed)
+internal_admission_eligible =
+  qualification_result.status == passed
+  AND scoring_result.internal_full_score_ready
+  AND operational_readiness.approval_ready
   AND exists(qualified_available_project_manager)
-  AND all(required_evidence is valid)
+  AND all(required_evidence is valid_at_as_of)
+  AND result_freshness == current
 ```
 
-- 判定结果字段：`eligible_for_approval`（boolean）；`blocked_reason`（blocked_missing_data / blocked_hard_requirement）；`pending_items[]`（待补/待核实队列）。
-- 结果展示（F008 §6.3）：总分、满分差距、阻断项、待补项、招标条款引用、企业证据引用、项目经理匹配结果（主推荐/备选）。
-- **满分仅进入 `pending_bid_approval`，绝不自动投标**（ADR-001 §2.3）。
+- 判定结果字段：`qualification_result`、`scoring_result`、`operational_readiness`、`internal_admission_result`、`internal_admission_eligible`、`result_freshness`；以及阻断/待补/复核清单。
+- `internal_full_score_ready` 是企业内部政策，不是评标委员会实际评分。报价或其他输入缺失时为 `not_calculable`；主观项仅可记录内部质量评审状态。
+- **内部准入为真才进入 `pending_bid_approval`，绝不自动投标**（ADR-001 §2.3）。
 
 ---
 
@@ -867,10 +874,10 @@ draft
   → parsed
   → matching
   → blocked_missing_data          （数据缺失/证据不足，默认阻断）
-  → blocked_hard_requirement      （硬性否决项不满足或无法核验）
+  → blocked_hard_requirement      （响应性硬要求明确不满足）
   → not_qualified                 （明确不满足资格）
-  → qualified_full_score          （满分且证据完整，等进入审批）
-  → pending_bid_approval          （满分+证据完整+至少一名可用项目经理）
+  → qualified_full_score          （内部满分准入政策满足，待送审批）
+  → pending_bid_approval          （仅进入人工审批，不代表已投标）
   → approved_for_bidding / rejected_by_approver
   → archived
 ```
@@ -883,9 +890,9 @@ draft
 | collecting → parsed | 原文入库并解析完成 | 解析失败 → 人工复核，不自动前进 |
 | parsed → matching | 匹配任务启动 | 企业资料不足 → blocked_missing_data |
 | matching → blocked_missing_data | 关键证据缺失 | 默认阻断，不推断满足 |
-| matching → blocked_hard_requirement | 硬性否决项不满足/无法核验 | 一票否决 |
+| matching → blocked_hard_requirement | 响应性硬要求证据充分但明确不满足 | 一票否决 |
 | matching → not_qualified | 明确不满足资格 | 证据充分的不满足 |
-| matching → qualified_full_score | 全部硬条件满足+计分项满分+证据有效+存在合格可用项目经理 | 满分状态 |
+| matching → qualified_full_score | F008 的内部准入政策全满足 | 非评标委员会得分 |
 | qualified_full_score → pending_bid_approval | 进入人工审批队列 | 满分不等于自动投标 |
 | pending_bid_approval → approved_for_bidding / rejected_by_approver | 投标负责人审批/驳回 | 可附人工豁免 |
 | approved_for_bidding / rejected_by_approver → archived | 归档 | 保留审计 |
@@ -998,3 +1005,4 @@ draft
 | 2026-08-18 | v0.3.1 | **推送卡片排版优化（参考 Google/Facebook 通知风格）**：①每条公告标序号（1. 2. …，序号+优先级标签）；②去多余空行（分组间不空行、卡片间单空行）；③九段分组结构与字段内容不变、有值才展示、文末待补充汇总保持；④条目数校验正则改 `^\d+\.`；⑤模板同步；⑥重新推送 PUSH-20260818-003 成功（本行补录，依据 .pipeline_state.yml phase_e step_03） |
 | 2026-08-25 | v0.4.0 | **资格与资源核查域 + 准入状态机域（ADR-001 范围变更落地，R002）**：①新增 §十一（资格与资源核查域）：匹配矩阵 7 字段（§11.1，含 match_result 正式枚举，登记与旧优势卡占位差异）、三类要求（§11.2）、项目经理匹配 21 字段 + 硬条件验证（§11.3，对齐 F007）、规则版本（§11.4）、满分准入公式（§11.5，对齐 F008 §6.1）；②新增 §十二（准入状态机域）：admission_status 12 态（ADR-001 §2.2）、迁移表（§12.2）、人工豁免 7 字段（§12.3，F009 §4.2）、审批记录 7 字段（§12.4，F009 §4.1）；③门禁新增 **G3.5 匹配门禁**（§6.4，F008 §6.4 定稿命名）：准入链路独立门禁，不阻断公开情报推送；④骨架树同步扩展第 9/10 章（tender_skeleton_tree.json 重新生成，scripts/build_skeleton_tree.py）；⑤全量审计通过：coverage 107/107、placeholder 0、无重复定义（见 _schema_generation_log.md）；⑥frontmatter version 0.2.0 → 0.4.0（对齐 .pipeline_state.yml 既有 v0.3.x 演进，v0.3.1 补录）；⑦兼容策略：本章为纯新增，不改动 §一~§十 既有规则与字段含义 |
 | 2026-08-25 | v0.5.0 | **数据治理域（R003，F003 契约冻结）**：①新增 §十三（数据治理域）：Material 契约 15 字段（§13.1，对齐 F003 §4.1，枚举全冻结）、权限矩阵（§13.2，F003 §6.2 目标态，Iteration 3 冻结实现）、隔离与不可变约束（§13.3：公开/私有分层、raw 不可覆盖、哈希防篡改）、缺失/过期处置（§13.4：待补/待核实、过期不计满分、解析失败人工复核）；②骨架树同步新增第 11 章（数据治理域：11.1 十五字段 + 11.2 权限矩阵 + 11.3 隔离约束 + 11.4 缺失处置，tender_skeleton_tree.json 重新生成，scripts/build_skeleton_tree.py）；③全量审计通过：coverage 125/125、placeholder 0、无重复定义（见 _schema_generation_log.md §九）；④术语表 Material 词条补源（F003 §4.1）；⑤兼容策略：本章为纯新增，不改动 §一~§十二 既有规则与字段含义；权限系统实现仍属 Iteration 3 非目标（F003 §2） |
+| 2026-08-26 | v0.5.1 | **R008 行业规则补强**：对齐 ADR-001 v1.1/F008 v1.3，G3.5 与 §十一/§十二改为资格/评分/准备度/内部准入四类结论；补 `manual_review`、缺失与明确不满足的唯一处置、规则时点/标段/联合体/澄清版本、阶段动作和内部满分边界。骨架树已重新生成并通过结构校验/公告冒烟测试；v1.3 行业黄金样本语义验证仍待执行，不复用 v0.5.0 的 coverage 结论。 |

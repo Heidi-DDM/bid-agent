@@ -22,6 +22,9 @@ scripts/*.html
 /archive/
 scripts/parse_lab/
 
+# 验证受限材料（证据快照/hash/授权记录，仅本地与受限共享）
+验证受限材料/
+
 # 密钥与凭据
 .env
 .env.*
@@ -49,6 +52,7 @@ dist/
 build/
 .next/
 *.egg-info/
+.venv/
 
 # 系统文件
 .DS_Store

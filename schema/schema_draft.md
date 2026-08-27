@@ -1,6 +1,6 @@
 # 招投标 Schema 骨架树（生成稿）
 
-> 生成时间：2026-08-25 14:41:21
+> 生成时间：2026-08-26 15:41:02
 > 树节点校验：通过
 
 ## 一、项目主卡字段清单
@@ -222,6 +222,8 @@
     - 9.1.5 计分（`score` / decimal / 选填）
     - 9.1.6 满分值（`max_score` / decimal / 必填）
     - 9.1.7 缺失项（`missing_items` / ref[] / 选填）
+    - 9.1.8 判定时点（`as_of` / datetime / 必填）
+    - 9.1.9 判定依据（`match_reason` / object / 必填）
   - 9.2 三类要求
     - 9.2.1 硬性要求 hard_requirement
     - 9.2.2 计分要求 scored_requirement
@@ -254,10 +256,14 @@
     - 9.4.2 规则版本（`rule_version` / string / 必填）
     - 9.4.3 生效日期（`effective_from` / date / 必填）
     - 9.4.4 创建人（`created_by` / string / 必填）
-  - 9.5 满分准入判定
-    - 9.5.1 准入判定（`eligible_for_approval` / boolean / 必填）
-    - 9.5.2 阻断类型（`blocked_reason` / enum / 选填）
-    - 9.5.3 待补/待核实项（`pending_items` / ref[] / 选填）
+  - 9.5 四类结论与内部满分准入
+    - 9.5.1 资格/响应性核查（`qualification_result` / object / 必填）
+    - 9.5.2 当前评分结果（`scoring_result` / object / 必填）
+    - 9.5.3 投标准备度（`operational_readiness` / object / 必填）
+    - 9.5.4 内部准入结论（`internal_admission_result` / object / 必填）
+    - 9.5.5 是否可送人工审批（`internal_admission_eligible` / boolean / 必填）
+    - 9.5.6 结果新鲜度（`result_freshness` / enum / 必填）
+    - 9.5.7 阻断/待补/复核项（`decision_items` / object[] / 选填）
 - 10 准入状态机域
   - 10.1 准入状态
     - 10.1.1 准入状态（`admission_status` / enum / 必填）

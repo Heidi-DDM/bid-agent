@@ -137,17 +137,23 @@ MATCH_MATRIX_FIELDS = [
     {"name": "矩阵ID", "key": "matrix_id", "type": "string", "required": True, "source": "系统生成", "note": "关联 project_id + 规则版本"},
     {"name": "要求引用", "key": "tender_clause_ref", "type": "ref[]", "required": True, "source": "回链招标条款（F005 子卡）"},
     {"name": "企业证据引用", "key": "evidence_refs", "type": "ref[]", "required": True, "source": "回链 F006/F007 证据"},
-    {"name": "匹配结果", "key": "match_result", "type": "enum", "required": True, "source": "规则匹配", "values": ["satisfied", "partial", "not_satisfied", "unverifiable"], "note": "正式枚举替代旧优势卡占位（登记差异见审计日志）"},
-    {"name": "计分", "key": "score", "type": "decimal", "required": False, "source": "规则计分", "note": "计分项得分"},
+    {"name": "匹配结果", "key": "match_result", "type": "enum", "required": True, "source": "规则匹配", "values": ["satisfied", "partial", "not_satisfied", "unverifiable", "manual_review"], "note": "manual_review 不得视为满足；正式枚举替代旧优势卡占位"},
+    {"name": "计分", "key": "score", "type": "decimal", "required": False, "source": "规则计分", "note": "计分项得分；不可计算时为 null"},
     {"name": "满分值", "key": "max_score", "type": "decimal", "required": True, "source": "规则配置", "note": "计分项满分值（F008 配置）"},
     {"name": "缺失项", "key": "missing_items", "type": "ref[]", "required": False, "source": "匹配结果", "note": "待补/待核实清单"},
+    {"name": "判定时点", "key": "as_of", "type": "datetime", "required": True, "source": "招标条款/规则配置", "note": "按资格预审、投标截止或明确日期核验"},
+    {"name": "判定依据", "key": "match_reason", "type": "object", "required": True, "source": "规则引擎", "note": "表达式、输入、证据、计算结果和人工复核原因"},
 ]
 
 
 ADMISSION_FIELDS = [
-    {"name": "准入判定", "key": "eligible_for_approval", "type": "boolean", "required": True, "source": "准入公式", "note": "F008 §6.1：全硬条件满足 AND 计分项全满分 AND 动作就绪 AND 存在合格可用项目经理 AND 证据有效"},
-    {"name": "阻断类型", "key": "blocked_reason", "type": "enum", "required": False, "source": "匹配结果", "values": ["blocked_missing_data", "blocked_hard_requirement"], "note": "数据缺失默认阻断，不推断满足"},
-    {"name": "待补/待核实项", "key": "pending_items", "type": "ref[]", "required": False, "source": "匹配结果", "note": "待补队列"},
+    {"name": "资格/响应性核查", "key": "qualification_result", "type": "object", "required": True, "source": "硬性要求匹配", "note": "规则化核查，不是法律意见或最终资格审查"},
+    {"name": "当前评分结果", "key": "scoring_result", "type": "object", "required": True, "source": "评分规则", "note": "可计算分数、不可计算项和内部质量评审状态；不是评标委员会得分"},
+    {"name": "投标准备度", "key": "operational_readiness", "type": "object", "required": True, "source": "动作要求", "note": "按 approval_ready/submission_ready/submitted/opened 阶段判断"},
+    {"name": "内部准入结论", "key": "internal_admission_result", "type": "object", "required": True, "source": "内部准入规则", "note": "综合四类结论的可解释结果"},
+    {"name": "是否可送人工审批", "key": "internal_admission_eligible", "type": "boolean", "required": True, "source": "内部准入公式", "note": "不代表自动投标或评标满分"},
+    {"name": "结果新鲜度", "key": "result_freshness", "type": "enum", "required": True, "source": "版本核验", "values": ["current", "stale"], "note": "澄清、证据变更或过期后必须 stale 并重算"},
+    {"name": "阻断/待补/复核项", "key": "decision_items", "type": "object[]", "required": False, "source": "匹配结果", "note": "统一承载 blocked_missing_data、blocked_hard_requirement、not_qualified、manual_review 及责任人/截止时间"},
 ]
 
 
@@ -365,9 +371,9 @@ TREE = [
             field(f"9.1.{i+1}", f["name"], f["key"], f["type"], f["required"], source=f["source"], note=f.get("note", "")) for i, f in enumerate(MATCH_MATRIX_FIELDS)
         ]),
         node("9.2", "三类要求", children=[
-            rule("9.2.1", "硬性要求 hard_requirement", note="资格/资质/人员/业绩/信用/保证金/截止时间/联合体等；任一不满足或无法核验 → 一票否决（F008 §4.1）"),
-            rule("9.2.2", "计分要求 scored_requirement", note="商务/技术/资信评分项；每项配置满分值、匹配证据、缺失处置（F008 §4.1）"),
-            rule("9.2.3", "动作要求 action_requirement", note="报名/CA/保证金/递交/开标；未完成不能进入审批（F008 §4.1）"),
+            rule("9.2.1", "硬性要求 hard_requirement", note="资格/资质/人员/业绩/信用/联合体/否决条款；须配置 failure_effect，无法核验进入待补而非明确不满足（F008 §4.1）"),
+            rule("9.2.2", "计分要求 scored_requirement", note="商务/技术/资信/报价；每项配置公式、输入、满分、证据、去重与主观内部质量评审边界（F008 §4.2）"),
+            rule("9.2.3", "动作要求 action_requirement", note="报名/CA/保证金/递交/开标按 approval_ready/submission_ready/submitted/opened 阶段核查（F008 §4.3）"),
         ]),
         node("9.3", "项目经理匹配", children=[
             field(f"9.3.{i+1}", f["name"], f["key"], f["type"], f["required"], source=f["source"], values=f.get("values"), note=f.get("note", "")) for i, f in enumerate(PROJECT_MANAGER_FIELDS)
@@ -380,7 +386,7 @@ TREE = [
             field("9.4.3", "生效日期", "effective_from", "date", True, source="规则配置"),
             field("9.4.4", "创建人", "created_by", "string", True, source="规则配置"),
         ]),
-        node("9.5", "满分准入判定", children=[
+        node("9.5", "四类结论与内部满分准入", children=[
             field(f"9.5.{i+1}", f["name"], f["key"], f["type"], f["required"], source=f["source"], values=f.get("values"), note=f.get("note", "")) for i, f in enumerate(ADMISSION_FIELDS)
         ]),
     ]),
@@ -388,7 +394,7 @@ TREE = [
         node("10.1", "准入状态", children=[
             field(f"10.1.{i+1}", f["name"], f["key"], f["type"], f["required"], source=f["source"], values=f["values"], note=f.get("note", "")) for i, f in enumerate(ADMISSION_STATE_FIELDS)
         ]),
-        rule("10.2", "状态迁移规则", note="draft→collecting→parsed→matching→blocked_missing_data/blocked_hard_requirement/not_qualified→qualified_full_score→pending_bid_approval→approved_for_bidding/rejected_by_approver→archived；迁移表见 ADR-001 §2.2；满分仅进入 pending_bid_approval，不自动投标"),
+        rule("10.2", "状态迁移规则", note="draft→collecting→parsed→matching→blocked_missing_data/blocked_hard_requirement/not_qualified→qualified_full_score→pending_bid_approval→approved_for_bidding/rejected_by_approver→archived；qualified_full_score 仅指内部准入政策满足，非评标委员会得分；仅进入 pending_bid_approval，不自动投标"),
         node("10.3", "人工豁免", children=[
             field(f"10.3.{i+1}", f["name"], f["key"], f["type"], f["required"], source=f["source"], note=f.get("note", "")) for i, f in enumerate(WAIVER_FIELDS)
         ]),
