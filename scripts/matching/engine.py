@@ -130,7 +130,70 @@ def _match_hard(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]],
         if _evidence(evidence, rule.get("evidence_type", "response_document"), as_of):
             return "satisfied", "响应性文件证据已核验"
         return "unverifiable", "缺少已核验的响应性文件证据"
+    if kind == "safety_officer":
+        certs = _evidence(evidence, "safety_officer_cert", as_of)
+        valid = [c for c in certs if not rule.get("require_c_cert") or c.get("cert_type") == "C"]
+        if len(valid) >= rule.get("count", 1):
+            return "satisfied", f"专职安全生产管理人员 {len(valid)} 人（≥{rule.get('count')}）且C证有效"
+        return "unverifiable", f"安全员C证有效数量 {len(valid)} 不足 {rule.get('count')} 或证据缺失"
+    if kind == "technical_team":
+        members = _evidence(evidence, "technical_team_member", as_of)
+        covered = {m.get("specialty") for m in members if m.get("specialty")}
+        wanted = set(rule.get("specialties", []))
+        if wanted.issubset(covered):
+            return "satisfied", f"技术团队覆盖专业 {sorted(covered)}（要求 {sorted(wanted)}）"
+        return "unverifiable", f"技术团队专业覆盖 {sorted(covered)}，缺 {sorted(wanted - covered)}"
+    if kind == "quote_cap":
+        quotes = [q for q in _evidence(evidence, rule.get("evidence_type", "bid_price_input"), as_of) if q.get("type") == "quoted_price"]
+        if not quotes:
+            return "unverifiable", "缺少人员录入的报价（系统不生成报价）"
+        amount = quotes[0].get("amount")
+        if amount is None:
+            return "unverifiable", "报价金额字段缺失"
+        if amount > rule.get("max_amount"):
+            return "not_satisfied", f"报价 {amount} 超过最高投标限价 {rule.get('max_amount')}"
+        return "satisfied", f"报价 {amount} 未超最高投标限价 {rule.get('max_amount')}"
+    if kind == "social_security":
+        proofs = _evidence(evidence, "social_security_proof", as_of)
+        if not proofs:
+            return "unverifiable", "缺少社保缴纳证明"
+        for p in proofs:
+            if p.get("subject") != rule.get("subject", "project_manager"):
+                continue
+            if p.get("continuous_months", 0) >= rule.get("continuous_months", 1):
+                return "satisfied", f"社保连续缴纳 {p.get('continuous_months')} 个月满足要求"
+        return "unverifiable", "社保证明未满足连续月数或主体要求"
     return "manual_review", f"规则类型 {kind!r} 尚未实现"
+
+
+def _match_similar_performance(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]], as_of: str) -> tuple[str, str]:
+    """类似业绩客观项（技术标明标）：2022-09-01 至开标日单体建筑面积≥min_area 的同类业绩。
+
+    判定口径（农大招标文件 第三章四(5) 备注 c）：
+    - 以竣工验收报告中明确的竣工时间或合同中的计划竣工日期为准（completed_at / planned_end）；
+    - 投标人业绩与项目经理业绩不可通用（subject 区分 bidder / project_manager）；
+    - 证据存在但无一满足 → unverifiable（不推断满足，不冒充评标得分）。
+    """
+    records = _evidence(evidence, rule.get("evidence_type", "similar_performance"), as_of)
+    if not records:
+        return "unverifiable", "缺少时点有效且已核验的类似业绩证据"
+    subject = rule.get("subject", "bidder")
+    since = _day(rule.get("since"))
+    point = _day(as_of)
+    min_area = rule.get("min_area", 0)
+    wanted_type = rule.get("project_type")
+    for rec in records:
+        if rec.get("subject") != subject:
+            continue
+        done = _day(rec.get("completed_at") or rec.get("planned_end"))
+        if done is None or (since and done < since) or (point and done > point):
+            continue
+        if rec.get("area") is not None and rec.get("area") < min_area:
+            continue
+        if wanted_type and rec.get("project_type") != wanted_type:
+            continue
+        return "satisfied", f"{subject} 类似业绩满足（{rec.get('project_name', '')} 面积 {rec.get('area')}㎡，竣工 {done}）"
+    return "unverifiable", f"已有类似业绩记录但无一满足条件（主体/面积/竣工窗口/类型）"
 
 
 def _match_scored(item: dict[str, Any], evidence: dict[str, list[dict[str, Any]]], as_of: str) -> tuple[str, str, int | None, bool]:
@@ -139,6 +202,12 @@ def _match_scored(item: dict[str, Any], evidence: dict[str, list[dict[str, Any]]
         if review.get("status") == "passed":
             return "satisfied", "内部质量评审已通过（不代表评标委员会得分）", item.get("max_score"), True
         return "manual_review", "待内部质量评审，不能计入内部满分", 0, False
+    rule = item.get("rule") or {}
+    if rule.get("type") == "similar_performance":
+        result, reason = _match_similar_performance(rule, evidence, as_of)
+        if result == "satisfied":
+            return "satisfied", reason, item.get("max_score"), True
+        return result, reason, None, False
     if item.get("requires_quote"):
         quotes = [q for q in evidence.get("bid_price_input", []) if q.get("type") == "quoted_price" and q.get("entered_by")]
         if not quotes:

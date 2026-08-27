@@ -130,5 +130,98 @@ class MatchingEngineTests(unittest.TestCase):
         self.assertEqual(r5["coverage"]["complete"], True)
 
 
+class NongdaRulesTests(unittest.TestCase):
+    """农大版规则（20 条）与新规则类型（安全员/技术团队/报价上限/社保/类似业绩）回归。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.REQS = json.loads((ROOT / "matching/golden_requirements_nongda.json").read_text(encoding="utf-8"))
+
+    def test_nongda_ruleset_complete_and_unique(self):
+        result = validate_requirements(self.REQS, expected_count=20)
+        self.assertTrue(result["valid"], result["errors"])
+        self.assertEqual(result["counts"], {"hard_requirement": 12, "scored_requirement": 4, "action_requirement": 4})
+
+    def test_quote_cap_rejects_above_limit(self):
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-H-012"][0]
+        over = {"bid_price_input": [{"type": "quoted_price", "amount": 130000000.0, "entered_by": "人工", "status": "valid", "verified_at": "2025-10-20"}]}
+        result = evaluate([rule], over, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "not_satisfied")
+        self.assertTrue(result["blocked"])
+
+    def test_quote_cap_accepts_within_limit(self):
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-H-012"][0]
+        ok = {"bid_price_input": [{"type": "quoted_price", "amount": 121598056.76, "entered_by": "人工", "status": "valid", "verified_at": "2025-10-20"}]}
+        result = evaluate([rule], ok, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "satisfied")
+
+    def test_safety_officer_count_insufficient(self):
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-H-005"][0]
+        ev = {"safety_officer_cert": [{"cert_type": "C", "status": "valid", "verified_at": "2025-09-01"}]}
+        result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+
+    def test_technical_team_missing_specialty(self):
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-H-006"][0]
+        ev = {"technical_team_member": [
+            {"specialty": "建筑工程", "status": "valid", "verified_at": "2025-09-01"},
+            {"specialty": "给排水", "status": "valid", "verified_at": "2025-09-01"}]}
+        result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+
+    def test_social_security_insufficient_months(self):
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-H-004"][0]
+        ev = {"social_security_proof": [{"subject": "project_manager", "continuous_months": 1, "status": "valid", "verified_at": "2025-09-01"}]}
+        result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+
+    def test_similar_performance_matches_subject(self):
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-S-003"][0]
+        ev = {"similar_performance": [
+            {"subject": "bidder", "project_name": "某医院项目", "area": 35724.0, "project_type": "房屋建筑",
+             "completed_at": "2023-10-11", "status": "valid", "verified_at": "2025-09-01"}]}
+        result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "satisfied")
+        self.assertEqual(result["matrix"][0]["score"], 2.5)
+
+    def test_similar_performance_area_too_small(self):
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-S-003"][0]
+        ev = {"similar_performance": [
+            {"subject": "bidder", "project_name": "小面积项目", "area": 15000.0, "project_type": "房屋建筑",
+             "completed_at": "2023-10-11", "status": "valid", "verified_at": "2025-09-01"}]}
+        result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+
+    def test_similar_performance_outside_window(self):
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-S-003"][0]
+        ev = {"similar_performance": [
+            {"subject": "bidder", "project_name": "窗口外项目", "area": 30000.0, "project_type": "房屋建筑",
+             "completed_at": "2022-06-01", "status": "valid", "verified_at": "2025-09-01"}]}
+        result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+
+    def test_similar_performance_subject_mismatch_not_shared(self):
+        # 投标人业绩与项目经理业绩不可通用（招标文件 第三章四(5) 备注 c）
+        rule = [r for r in self.REQS if r["requirement_id"] == "NQ-S-004"][0]
+        ev = {"similar_performance": [
+            {"subject": "bidder", "project_name": "仅投标人业绩", "area": 30000.0, "project_type": "房屋建筑",
+             "completed_at": "2023-10-11", "status": "valid", "verified_at": "2025-09-01"}]}
+        result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+
+    def test_nongda_real_evidence_no_blocked(self):
+        # 真实脱敏证据重跑：无阻断；仅财务审计素材缺口待补（当年必有 → 待公司补充）
+        from matching.engine import evaluate as ev
+        restricted = ROOT.parent / "验证受限材料/农大"
+        if not (restricted / "real_evidence_nongda.json").exists():
+            self.skipTest("受限证据未就位（本地验证用）")
+        evidence = json.loads((restricted / "real_evidence_nongda.json").read_text(encoding="utf-8"))
+        result = ev(self.REQS, evidence, as_of="2025-10-30", mode="diagnostic")
+        self.assertEqual(result["coverage"], {"executed": 20, "declared": 20, "complete": True})
+        self.assertEqual(result["blocked"], [])
+        self.assertEqual(result["operational_readiness"], "ready")
+        self.assertEqual([m["requirement_id"] for m in result["pending"]], ["NQ-H-007"])
+
+
 if __name__ == "__main__":
     unittest.main()

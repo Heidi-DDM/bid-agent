@@ -15,4 +15,5 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s scripts/tests -v
       - run: python -m py_compile scripts/matching/*.py
+      - run: python -m py_compile scripts/approval/*.py
       - run: python scripts/matching/run_golden_lab.py

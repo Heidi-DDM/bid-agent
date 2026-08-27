@@ -1,0 +1,338 @@
+[
+  {
+    "requirement_id": "NQ-H-001",
+    "req_type": "hard_requirement",
+    "category": "资质",
+    "clause_ref": "招标公告 §3.2",
+    "assertion": "建筑工程施工总承包二级及以上（不接受资质预警/异常企业）",
+    "rule": {
+      "type": "qualification",
+      "acceptable": [
+        {
+          "category": "建筑工程施工总承包",
+          "level": "二级"
+        }
+      ],
+      "evidence_type": "qualification_record"
+    },
+    "evidence_required": [
+      "qualification_record"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-002",
+    "req_type": "hard_requirement",
+    "category": "资质",
+    "clause_ref": "招标公告 §3.4 / 资格审查表 #7",
+    "assertion": "具备有效的企业安全生产许可证",
+    "rule": {
+      "type": "qualification",
+      "qualification_type": "安全生产许可证",
+      "level": "不分等级",
+      "evidence_type": "safety_license"
+    },
+    "evidence_required": [
+      "safety_license"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-003",
+    "req_type": "hard_requirement",
+    "category": "人员",
+    "clause_ref": "招标公告 §3.7 / 资格审查表 #3/#4",
+    "assertion": "项目经理：建筑工程二级及以上注册建造师 + 有效B证 + 无在建",
+    "rule": {
+      "type": "project_manager",
+      "specialty": [
+        "建筑工程"
+      ],
+      "cert_level": "二级",
+      "require_b_cert": true,
+      "require_no_active_project": true
+    },
+    "evidence_required": [
+      "manager_profile"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-004",
+    "req_type": "hard_requirement",
+    "category": "人员",
+    "clause_ref": "招标公告 §3.9 / 资格审查表 #6",
+    "assertion": "项目经理 2025-01-01 至投标截止任意连续3个月社保",
+    "rule": {
+      "type": "social_security",
+      "period_start": "2025-01-01",
+      "continuous_months": 3,
+      "subject": "project_manager"
+    },
+    "evidence_required": [
+      "social_security_proof"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-005",
+    "req_type": "hard_requirement",
+    "category": "人员",
+    "clause_ref": "招标公告 §3.10 / 资格审查表 #10",
+    "assertion": "专职安全生产管理人员 2 人（对应有效C证）",
+    "rule": {
+      "type": "safety_officer",
+      "count": 2,
+      "require_c_cert": true
+    },
+    "evidence_required": [
+      "safety_officer_cert"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-006",
+    "req_type": "hard_requirement",
+    "category": "人员",
+    "clause_ref": "招标公告 §3.13① / 资格审查表 #12",
+    "assertion": "技术团队：建筑/给排水/暖通/电气专业各至少1名",
+    "rule": {
+      "type": "technical_team",
+      "specialties": [
+        "建筑工程",
+        "给排水",
+        "暖通",
+        "电气"
+      ]
+    },
+    "evidence_required": [
+      "technical_team_member"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-007",
+    "req_type": "hard_requirement",
+    "category": "财务",
+    "clause_ref": "招标公告 §3.13② / 资格审查表 #11",
+    "assertion": "提供 2022/2023/2024 年度审计报告（或成立不足企业银行资信证明+基本账户证明）",
+    "rule": {
+      "type": "financial",
+      "years": [
+        2022,
+        2023,
+        2024
+      ]
+    },
+    "evidence_required": [
+      "financial_report",
+      "bank_credit"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-008",
+    "req_type": "hard_requirement",
+    "category": "信用",
+    "clause_ref": "招标公告 §3.11",
+    "assertion": "投标人及拟派项目经理自2022-09-01起未被列入失信被执行人",
+    "rule": {
+      "type": "credit",
+      "checks": [
+        "credit_china",
+        "court_debtor"
+      ],
+      "subject": [
+        "bidder",
+        "project_manager"
+      ]
+    },
+    "evidence_required": [
+      "credit_check_report"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-009",
+    "req_type": "hard_requirement",
+    "category": "联合体",
+    "clause_ref": "招标公告 §3.3",
+    "assertion": "不接受联合体投标",
+    "rule": {
+      "type": "consortium",
+      "allowed": false
+    },
+    "evidence_required": [
+      "consortium_declaration"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-010",
+    "req_type": "hard_requirement",
+    "category": "响应性",
+    "clause_ref": "须知 3.3.1 / 投标函附录",
+    "assertion": "投标有效期 120 日历天",
+    "rule": {
+      "type": "response",
+      "evidence_type": "bid_validity_commitment",
+      "days": 120
+    },
+    "evidence_required": [
+      "bid_validity_commitment"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-011",
+    "req_type": "hard_requirement",
+    "category": "保证金",
+    "clause_ref": "须知 3.4.1",
+    "assertion": "保证金 200000 元，银行汇票/电汇/支票/银行保函/电子保函/保证保险，截止前到账",
+    "rule": {
+      "type": "bid_bond",
+      "amount": 200000,
+      "forms": [
+        "银行汇票",
+        "银行电汇",
+        "支票",
+        "银行保函",
+        "电子保函",
+        "保证保险"
+      ]
+    },
+    "evidence_required": [
+      "bid_bond"
+    ]
+  },
+  {
+    "requirement_id": "NQ-H-012",
+    "req_type": "hard_requirement",
+    "category": "响应性",
+    "clause_ref": "须知 3.2.4 / 评标办法",
+    "assertion": "报价不超过最高投标限价 12471.590889 万元，唯一报价+格式签章合规",
+    "rule": {
+      "type": "quote_cap",
+      "max_amount": 124715908.89,
+      "evidence_type": "bid_price_input"
+    },
+    "evidence_required": [
+      "bid_price_input"
+    ]
+  },
+  {
+    "requirement_id": "NQ-S-001",
+    "req_type": "scored_requirement",
+    "category": "技术标",
+    "clause_ref": "第三章 四(2) 技术标暗标+明标",
+    "assertion": "技术标 30%（暗标80分+明标20分）",
+    "rule": {
+      "type": "scoring"
+    },
+    "max_score": 100,
+    "score_nature": "subjective",
+    "internal_review": {
+      "status": "pending"
+    },
+    "evidence_required": []
+  },
+  {
+    "requirement_id": "NQ-S-002",
+    "req_type": "scored_requirement",
+    "category": "商务标/信用",
+    "clause_ref": "第三章 四(3)(4)",
+    "assertion": "商务标 64% + 信用 6%（基准价 A×C，信用门槛 85 分）",
+    "rule": {
+      "type": "scoring"
+    },
+    "max_score": 70,
+    "score_nature": "objective",
+    "requires_quote": true,
+    "score_formula": {
+      "kind": "manual"
+    },
+    "evidence_required": [
+      "bid_price_input"
+    ]
+  },
+  {
+    "requirement_id": "NQ-S-003",
+    "req_type": "scored_requirement",
+    "category": "技术标明标/类似业绩",
+    "clause_ref": "第三章 四(5) 技术标明标评审内容 2",
+    "assertion": "投标人具有一项及以上类似项目：2022-09-01 至开标日单体建筑面积≥2万㎡房屋建筑类业绩（提供中标通知书/合同/竣工验收报告，以竣工时间或合同计划竣工日期为准）",
+    "rule": {
+      "type": "similar_performance",
+      "subject": "bidder",
+      "count": 1,
+      "min_area": 20000,
+      "since": "2022-09-01",
+      "project_type": "房屋建筑"
+    },
+    "max_score": 2.5,
+    "score_nature": "objective",
+    "score_formula": {
+      "kind": "fixed_max"
+    },
+    "evidence_required": [
+      "similar_performance"
+    ]
+  },
+  {
+    "requirement_id": "NQ-S-004",
+    "req_type": "scored_requirement",
+    "category": "技术标明标/类似业绩",
+    "clause_ref": "第三章 四(5) 技术标明标评审内容 3",
+    "assertion": "拟投入本项目项目经理具有一项及以上类似项目（限以项目经理身份参与，口径同 NQ-S-003）",
+    "rule": {
+      "type": "similar_performance",
+      "subject": "project_manager",
+      "count": 1,
+      "min_area": 20000,
+      "since": "2022-09-01",
+      "project_type": "房屋建筑"
+    },
+    "max_score": 2.5,
+    "score_nature": "objective",
+    "score_formula": {
+      "kind": "fixed_max"
+    },
+    "evidence_required": [
+      "similar_performance"
+    ]
+  },
+  {
+    "requirement_id": "NQ-A-001",
+    "req_type": "action_requirement",
+    "category": "报名",
+    "required_by_stage": "approval_ready",
+    "clause_ref": "招标公告 §4.1",
+    "assertion": "完成招标文件获取（2025-09-30~10-13）",
+    "action_status": "completed",
+    "evidence_required": [],
+    "evidence_ref_note": "事后验证：该项目已中标，动作于 2025-10-30 前实际完成"
+  },
+  {
+    "requirement_id": "NQ-A-002",
+    "req_type": "action_requirement",
+    "category": "保证金到账",
+    "required_by_stage": "approval_ready",
+    "clause_ref": "须知 3.4.1",
+    "assertion": "保证金 20 万到账（截止 2025-10-30 09:00 前）",
+    "action_status": "completed",
+    "evidence_required": [],
+    "evidence_ref_note": "事后验证：该项目已中标，动作于 2025-10-30 前实际完成"
+  },
+  {
+    "requirement_id": "NQ-A-003",
+    "req_type": "action_requirement",
+    "category": "递交",
+    "required_by_stage": "submission_ready",
+    "clause_ref": "招标公告 §5.1",
+    "assertion": "递交投标文件（2025-10-30 09:00 前）",
+    "action_status": "completed",
+    "evidence_required": [],
+    "evidence_ref_note": "事后验证：该项目已中标，动作于 2025-10-30 前实际完成"
+  },
+  {
+    "requirement_id": "NQ-A-004",
+    "req_type": "action_requirement",
+    "category": "开标",
+    "required_by_stage": "opened",
+    "clause_ref": "须知 4.1.5",
+    "assertion": "完成开标/解密",
+    "action_status": "completed",
+    "evidence_required": [],
+    "evidence_ref_note": "事后验证：该项目已中标，动作于 2025-10-30 前实际完成"
+  }
+]
