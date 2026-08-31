@@ -28,6 +28,7 @@ scripts/parse_lab/
 # 密钥与凭据
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.p12
@@ -42,6 +43,7 @@ daily/
 日志/
 logs/
 *.log
+runtime/objects/
 
 # 构建产物与依赖
 node_modules/
