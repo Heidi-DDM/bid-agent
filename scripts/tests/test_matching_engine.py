@@ -130,6 +130,30 @@ class MatchingEngineTests(unittest.TestCase):
         self.assertEqual(r5["coverage"]["complete"], True)
 
 
+    def test_scored_without_score_formula_is_manual_review(self):
+        # R021 真库回归（2026-09-02）：自动锚点抽取的 scored requirement 无评分细则
+        # （score_formula/max_score 列 NULL，DB 行转 dict 后为 None）→ engine 不得崩
+        # （None.get AttributeError），落 manual_review「评分公式或输入不完整」等人工补公式
+        item = {
+            "requirement_id": "RQ-S-NULL-SF",
+            "req_type": "scored_requirement",
+            "category": "企业业绩",
+            "clause_ref": "评标办法 第三章 四(5)",
+            "assertion": "单体建筑面积≥2万平方米的房屋建筑类业绩，每项得 2.5 分，最高 5 分",
+            "rule": {"type": "generic", "anchor_key": "scored"},
+            "evidence_required": [],
+            "score_formula": None,
+            "max_score": None,
+            "score_nature": None,
+        }
+        result = evaluate([item], {}, as_of="2024-05-15", mode="diagnostic")
+        m = result["matrix"][0]
+        self.assertEqual(m["match_result"], "manual_review")
+        self.assertIn("评分公式", m["match_reason"])
+        self.assertIsNone(m["score"])
+        self.assertTrue(result["review"])
+
+
 class NongdaRulesTests(unittest.TestCase):
     """农大版规则（20 条）与新规则类型（安全员/技术团队/报价上限/社保/类似业绩）回归。"""
 

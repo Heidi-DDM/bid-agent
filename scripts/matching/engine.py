@@ -215,7 +215,7 @@ def _match_scored(item: dict[str, Any], evidence: dict[str, list[dict[str, Any]]
     for kind in item.get("evidence_required", []):
         if not _evidence(evidence, kind, as_of):
             return "unverifiable", f"缺少时点有效的计分证据: {kind}", None, False
-    score = item.get("max_score") if item.get("score_formula", {}).get("kind") == "fixed_max" else None
+    score = item.get("max_score") if (item.get("score_formula") or {}).get("kind") == "fixed_max" else None
     if score is None:
         return "manual_review", "评分公式或输入不完整，需人工复核", None, False
     return "satisfied", f"客观项可复算 {score}/{item.get('max_score')}", score, score == item.get("max_score")
