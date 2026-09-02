@@ -198,9 +198,17 @@ worker 领取任务使用数据库锁和租约；超时任务由恢复器重新�
 
 权限按 F003 `permission_scope` 再过滤，不能仅依赖前端隐藏按钮。每次拒绝访问写入 `audit_events`，个人信息默认脱敏。
 
+### 5.1 正式认证（R024，替换开发期 X-Role/X-Actor）
+
+- 身份来源：`POST /api/v1/auth/login`（`{username, password}`）签发 Bearer token；业务路由一律从 `Authorization: Bearer <token>` 解析角色与操作者。开发期 `X-Role/X-Actor` 头仅当 `AUTH_DEV_HEADERS=true` 时作为回退（仅限开发/测试环境），正式环境必须移除该配置（fail-closed：未配置即不信任任何头）。
+- Token：HMAC-SHA256 签名（`AUTH_TOKEN_SECRET`），载荷含 `sub`（登录名）、`role`、`name`（显示名）、`iat`、`exp`（默认 8h）。验签失败/过期一律按匿名拒绝并审计，不区分错误细节（避免探测）。
+- 账号：`AUTH_USERS` 环境变量配置（`login:pbkdf2$迭代$salt$hash:role:显示名`，`;` 分隔；显示名不含 `:`/`;`），密码仅存 pbkdf2-sha256 哈希，不入 Git（`runtime/.env`）。
+- 最小权限与越权审计：RBAC 矩阵（§5 表）保持为唯一授权依据；`require_role` 的审计 actor 一律取 token 登录名（开发回退取 X-Actor），拒绝访问写入 `audit_events`（`auth.*`/`forbidden`）。`GET /api/v1/auth/me` 供前端初始化当前身份；登录成功/失败均留审计。
+- 认证端点本身不校验角色（任何人可尝试登录）；其余业务端点未认证按 `anonymous` 拒绝（403 + 审计）。
+
 ## 6. 错误码
 
-至少统一：`invalid_request`、`forbidden`、`not_found`、`duplicate_material`、`hash_mismatch`、`unsupported_format`、`parse_failed`、`manual_review_required`、`invalid_state_transition`、`dependency_unavailable`、`internal_error`。
+至少统一：`invalid_request`、`unauthorized`（R024 登录/未认证）、`forbidden`、`not_found`、`duplicate_material`、`hash_mismatch`、`unsupported_format`、`parse_failed`、`manual_review_required`、`invalid_state_transition`、`dependency_unavailable`、`internal_error`。
 
 ## 7. 验收与测试
 
@@ -218,3 +226,4 @@ worker 领取任务使用数据库锁和租约；超时任务由恢复器重新�
 | 2026-08-31 | v1.1 | 对齐原型主流程：增加搜索/结构化推送入口，明确解析完成自动触发一次匹配、结果页只读、补录核验后重算及前后端页面/API 映射；移除投标专员逐项目选择资料和直接发起匹配。 |
 | 2026-08-31 | v1.2 | 补充 §2.2 接口数据契约：按最新原型 `prototype/data.js` 字段对齐各接口请求/响应 schema（搜索推送、选择解析、自动匹配、风险缺失、补录重算、审批审计、资料库后台）；枚举对齐 STATE_META/MATCH_META/ROLES；明确驳回 comment 必填、审批创建满分门槛、结果页只读等约束。 |
 | 2026-09-01 | v1.3 | 增加 F025 知识库检索/索引可观测接口与候选证据契约；禁止检索接口隐式触发匹配或返回准入判定。 |
+| 2026-09-02 | v1.4 | §5.1 正式认证（R024）：Bearer token 登录替换开发期 X-Role/X-Actor 头（AUTH_DEV_HEADERS 显式开关回退）；账号 pbkdf2 哈希存 AUTH_USERS、HMAC token、匿名拒绝留审计；`/auth/login`、`/auth/me` 契约。 |

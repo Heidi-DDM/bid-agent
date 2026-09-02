@@ -73,11 +73,12 @@ def recalculate(
     body: RecalculateBody,
     request_id: str = Depends(get_request_id),
     role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
     """补录核验后重算：以新证据版本创建新匹配任务，旧结果标记 stale；幂等（F020 §2.2.5）。"""
-    require_role(role, "match", "write", session=session, actor=body.actor or role, object_ref=project_id)
-    actor = body.actor or role
+    require_role(role, "match", "write", session=session, actor=actor, object_ref=project_id)
+    actor = body.actor or actor
     materials = _project_materials(session, project_id)
     run = api_service.latest_match_run(session, project_id)
     if not orchestration.can_recalculate(materials, run):

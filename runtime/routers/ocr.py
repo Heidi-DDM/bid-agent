@@ -93,7 +93,7 @@ def review_ocr(
     actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
-    require_role(role, "ocr", "review", session=session, actor=body.reviewer, object_ref=evidence_id)
+    require_role(role, "ocr", "review", session=session, actor=actor, object_ref=evidence_id)
     evidence = session.get(EvidenceFile, evidence_id)
     if evidence is None:
         raise ApiError("not_found", f"OCR 证据不存在: {evidence_id}")

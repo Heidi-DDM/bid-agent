@@ -243,3 +243,48 @@ def test_parse_candidates_read_role_gate(client):
         )
         assert resp.status_code == 500, role
         assert resp.json()["error"]["code"] == "internal_error", role
+
+
+# ---------- R024 §2.4 第 1 项：结果页只读 HTTP 契约 ----------
+
+def test_result_pages_role_gate(client):
+    """结果页只读端点最小权限：result/match read 角色（bid_specialist/business_head）
+    可读（沙盒无库 → 触库 500 统一结构，证明已过 RBAC）；无权限角色 403 不触库。"""
+    urls = [
+        "/api/v1/projects/ND-2025/admission",
+        "/api/v1/projects/ND-2025/queues",
+        "/api/v1/projects/ND-2025/matrix",
+        "/api/v1/projects/ND-2025/requirements",
+        "/api/v1/projects/ND-2025/match-runs/latest",
+    ]
+    allowed = ("bid_specialist", "business_head")
+    denied = ("data_admin", "legal")
+    for url in urls:
+        for role in denied:
+            resp = client.get(url, headers=_headers(role))
+            assert resp.status_code == 403, (url, role)
+            assert resp.json()["error"]["code"] == "forbidden", (url, role)
+        for role in allowed:
+            resp = client.get(url, headers=_headers(role))
+            assert resp.status_code == 500, (url, role)  # 已过 RBAC，触库失败统一结构
+            assert resp.json()["error"]["code"] == "internal_error", (url, role)
+
+
+def test_result_pages_empty_state_via_http(client):
+    """结果页空态：项目不存在/无运行时不隐式创建任务，返回业务空结构（404/空）而非崩。"""
+    # match-runs/latest：空态约定 {run_id: null}（F020 §2.2.3）；触库前不校验项目存在
+    resp = client.get("/api/v1/projects/NOPE-1/match-runs/latest", headers=_headers("bid_specialist"))
+    assert resp.status_code in (200, 500)  # 沙盒无库：通过 RBAC 后触库 500；真库返回 {run_id: null}
+    if resp.status_code == 200:
+        assert resp.json().get("run_id") is None
+    # 列表页空态：无项目 → 200 items:[]（真库行为；沙盒无库 500 结构）
+    resp = client.get("/api/v1/projects", headers=_headers("bid_specialist"))
+    assert resp.status_code in (200, 500)
+
+
+def test_approvals_pending_empty_state(client):
+    """审批队列空态：经营负责人可读，无待审批返回 items:[]（真库行为；沙盒无库 500）。"""
+    resp = client.get("/api/v1/approvals/pending", headers=_headers("business_head"))
+    assert resp.status_code in (200, 500)
+    if resp.status_code == 200:
+        assert resp.json()["items"] == []

@@ -74,12 +74,13 @@ def approve(
     body: ApproveBody,
     request_id: str = Depends(get_request_id),
     role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
-    """审批通过（终态不可重复决策）。"""
-    require_role(role, "approval", "approve", session=session, actor=body.approver, object_ref=project_id)
+    """审批通过（终态不可重复决策）。审计 actor=登录者（R024 §5.1 越权审计）。"""
+    require_role(role, "approval", "approve", session=session, actor=actor, object_ref=project_id)
     data = api_service.decide_approval(
-        session, project_id=project_id, role=role, actor=body.approver,
+        session, project_id=project_id, role=role, actor=body.approver or actor,
         decision="approved", comment=body.comment, basis=body.basis,
     )
     data["request_id"] = request_id
@@ -92,12 +93,13 @@ def reject(
     body: RejectBody,
     request_id: str = Depends(get_request_id),
     role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
-    """驳回（comment 必填，F020 §2.2.6）。"""
-    require_role(role, "approval", "approve", session=session, actor=body.approver, object_ref=project_id)
+    """驳回（comment 必填，F020 §2.2.6）。审计 actor=登录者。"""
+    require_role(role, "approval", "approve", session=session, actor=actor, object_ref=project_id)
     data = api_service.decide_approval(
-        session, project_id=project_id, role=role, actor=body.approver,
+        session, project_id=project_id, role=role, actor=body.approver or actor,
         decision="rejected", comment=body.comment, basis=body.basis,
     )
     data["request_id"] = request_id
@@ -110,12 +112,13 @@ def add_waiver(
     body: WaiverBody,
     request_id: str = Depends(get_request_id),
     role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
-    """豁免登记（四字段必填；过期自动失效回阻断，F020 §2.2.6）。"""
-    require_role(role, "approval", "approve", session=session, actor=body.authorizer, object_ref=project_id)
+    """豁免登记（四字段必填；过期自动失效回阻断，F020 §2.2.6）。审计 actor=登录者。"""
+    require_role(role, "approval", "approve", session=session, actor=actor, object_ref=project_id)
     data = api_service.add_waiver(
-        session, project_id=project_id, role=role, actor=body.authorizer,
+        session, project_id=project_id, role=role, actor=body.authorizer or actor,
         reason=body.reason, evidence_refs=body.evidence_refs,
         valid_until=body.valid_until, covered_items=body.covered_items,
     )

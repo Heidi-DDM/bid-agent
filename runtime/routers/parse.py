@@ -64,9 +64,10 @@ def review_candidate(
     body: ReviewBody,
     request_id: str = Depends(get_request_id),
     role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
-    require_role(role, "tender_document", "write", session=session, actor=body.reviewer,
+    require_role(role, "tender_document", "write", session=session, actor=actor,
                  object_ref=candidate_id)
     # 定位候选 → 取出 material 版本信息
     from runtime.db.models import ParseCandidate
@@ -111,13 +112,14 @@ def confirm_parse(
     body: ConfirmBody,
     request_id: str = Depends(get_request_id),
     role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
     """全部规则候选人工确认 → 写入 RuleSet/Requirement + 主卡 FieldTrace → parsed。
 
     前置：无 pending 候选；存在 rejected → 409（需先驳回处理/修正）；规则集已存在 → 409。
     """
-    require_role(role, "tender_document", "write", session=session, actor=body.actor,
+    require_role(role, "tender_document", "write", session=session, actor=actor,
                  object_ref=material_id)
     material = api_service.get_material_or_404(session, material_id)
     if material.project_id != project_id:

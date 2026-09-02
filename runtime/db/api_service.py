@@ -485,7 +485,7 @@ def expire_waivers(session: Session, project_id: str) -> int:
         audit(session, actor="system", action="expire_waivers",
               basis=f"valid_until={waiver.valid_until.isoformat()}",
               outcome="blocked_waiver_expired", object_ref=project_id)
-        # 待审审批 -> blocked_waiver_expired（F009 §6.3）
+        # 待审审批 -> blocked_waiver_expired（F009 §6.3）；项目态同步回阻断
         approval = session.scalar(
             select(Approval).where(
                 Approval.project_id == project_id, Approval.state == "pending"
@@ -493,6 +493,9 @@ def expire_waivers(session: Session, project_id: str) -> int:
         )
         if approval is not None:
             approval.state = "blocked_waiver_expired"
+        project = session.get(Project, project_id)
+        if project is not None and project.admission_status == "pending_bid_approval":
+            project.admission_status = "blocked_waiver_expired"
     session.commit()
     return len(rows)
 

@@ -8,6 +8,7 @@ from typing import Any, Optional
 # 错误码 -> HTTP 状态（F020 §6 至少覆盖以下 11 类 + R025 新增）
 ERROR_CODES: dict[str, int] = {
     "invalid_request": 400,
+    "unauthorized": 401,          # R024：未认证/凭据无效（F020 §5.1 认证）
     "forbidden": 403,
     "not_found": 404,
     "duplicate_material": 409,

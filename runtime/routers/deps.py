@@ -1,4 +1,7 @@
-# F020：API 路由公共依赖（request_id / RBAC / 数据库会话）
+# F020：API 路由公共依赖（request_id / RBAC / 数据库会话 / 认证）
+# R024/F020 §5.1：身份来源 = Authorization: Bearer token（正式）；仅当
+# AUTH_DEV_HEADERS=true（开发/测试）回退 X-Actor / X-Role 头。未认证一律
+# anonymous（fail-closed）→ RBAC 拒绝 + 审计。
 from __future__ import annotations
 
 import logging
@@ -8,13 +11,13 @@ from typing import Iterator
 from fastapi import Depends, Header, Request
 from sqlalchemy.orm import Session
 
+from runtime.core import auth as auth_core
 from runtime.core import rbac
 from runtime.core.config import database_url
 from runtime.core.errors import ApiError
 
 logger = logging.getLogger("runtime.routers.deps")
 
-# 简易身份：X-Actor / X-Role 头（开发期契约；正式鉴权接入 R024 认证时替换）
 _ROLE_HEADER = "x-role"
 
 
@@ -35,16 +38,38 @@ def db_session() -> Iterator[Session]:
     engine.dispose()
 
 
-def current_actor(x_actor: str | None = Header(default=None)) -> str:
-    return x_actor or "anonymous"
+def _bearer_or_headers(request: Request) -> dict[str, str] | None:
+    """正式认证优先；开发回退（AUTH_DEV_HEADERS=true）读 X-Actor/X-Role 头。"""
+    identity = auth_core.bearer_identity(request)
+    if identity is not None:
+        return identity
+    if auth_core.dev_headers_enabled():
+        role = request.headers.get("x-role")
+        actor = request.headers.get("x-actor")
+        try:
+            role = rbac.normalize_role(role)
+        except ValueError:
+            role = None
+        if role is None:
+            return None
+        return {"login": actor or role, "role": role, "name": actor or role}
+    return None
 
 
-def current_role(x_role: str | None = Header(default=None)) -> str:
-    """校验角色合法性；未知角色按 anonymous 处理（fail-closed，后续 RBAC 拒绝）。"""
-    try:
-        return rbac.normalize_role(x_role)
-    except ValueError:
-        return "anonymous"
+def current_identity(request: Request) -> dict[str, str] | None:
+    """当前请求身份 {login, role, name}；未认证返回 None（调用方按 anonymous 处理）。"""
+    return _bearer_or_headers(request)
+
+
+def current_actor(request: Request) -> str:
+    identity = _bearer_or_headers(request)
+    return identity["login"] if identity else auth_core.ANONYMOUS
+
+
+def current_role(request: Request) -> str:
+    """校验角色合法性；未知/未认证按 anonymous 处理（fail-closed，RBAC 拒绝）。"""
+    identity = _bearer_or_headers(request)
+    return identity["role"] if identity else auth_core.ANONYMOUS
 
 
 def require_role(
@@ -90,9 +115,9 @@ def get_db() -> Iterator[Session]:
     yield from db_session()
 
 
-def get_role(x_role: str | None = Header(default=None)) -> str:
-    return current_role(x_role)
+def get_role(request: Request) -> str:
+    return current_role(request)
 
 
-def get_actor(x_actor: str | None = Header(default=None)) -> str:
-    return current_actor(x_actor)
+def get_actor(request: Request) -> str:
+    return current_actor(request)
