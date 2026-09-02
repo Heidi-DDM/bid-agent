@@ -15,8 +15,14 @@ from typing import Callable, Optional
 
 CHUNK_SIZE = 1024 * 1024
 
-# 允许的对象类型（F019 §4）
-ALLOWED_MATERIAL_TYPES = {"announcement", "tender_document", "evidence", "other"}
+# 允许的对象类型（F019 §4；与 runtime/db/material_service.MATERIAL_TYPES 对齐，
+# 否则 qualification_cert/performance_record/personnel_cert/evidence_file 等企业资料
+# 在 ingest 层会被误拒，违反 F019 §6"F006-F009 对象均可创建"。）
+ALLOWED_MATERIAL_TYPES = {
+    "announcement", "tender_document", "qualification_cert",
+    "performance_record", "personnel_cert", "evidence_file",
+    "evidence", "other",  # 兼容早期调用方
+}
 
 # 常见恶意/可执行扩展名，一律拒绝（病毒/格式检查入口）
 FORBIDDEN_SUFFIXES = {
@@ -132,10 +138,10 @@ def ingest(
     if final.exists():
         # 内容重复：返回既有版本，不新建
         return UploadResult(
-            stored=StoredObject(object_uri=str(final), content_hash=digest, size_bytes=size,
+            stored=StoredObject(object_uri=rel, content_hash=digest, size_bytes=size,
                                 version=version, material_type=material_type),
             created=False,
-            duplicate_of=str(final),
+            duplicate_of=rel,
         )
 
     if virus_check is not None:
@@ -153,7 +159,7 @@ def ingest(
         raise
 
     return UploadResult(
-        stored=StoredObject(object_uri=str(final), content_hash=digest, size_bytes=size,
+        stored=StoredObject(object_uri=rel, content_hash=digest, size_bytes=size,
                             version=version, material_type=material_type),
         created=True,
     )

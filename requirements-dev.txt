@@ -1,10 +1,12 @@
 # R018/F018 运行时与测试依赖（锁定版本策略见 runtime/README.md §依赖）
 # 本地安装：python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 fastapi>=0.115,<1
+python-multipart>=0.0.9,<1   # F020：multipart 文件上传（FastAPI Form/File 必需）
 uvicorn[standard]>=0.30,<1
 SQLAlchemy>=2.0,<3
 alembic>=1.13,<2
 psycopg[binary]>=3.2,<4
+pgvector>=0.3,<1                 # F025：knowledge_embeddings 向量列与余弦检索（pgvector 扩展）
 pydantic>=2.7,<3
 pydantic-settings>=2.2,<3
 pytest>=8,<9

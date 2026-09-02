@@ -25,6 +25,9 @@ scripts/parse_lab/
 # 验证受限材料（证据快照/hash/授权记录，仅本地与受限共享）
 验证受限材料/
 
+# 验收产物（可重新生成，不入 Git；生成命令见 scripts/rag_acceptance/）
+reports/
+
 # 密钥与凭据
 .env
 .env.*
@@ -43,6 +46,7 @@ daily/
 日志/
 logs/
 *.log
+*.pid
 runtime/objects/
 
 # 构建产物与依赖

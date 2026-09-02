@@ -4,6 +4,11 @@
 
 import os
 
+# API/worker 启动时自动加载 runtime/.env（README §3；测试运行与已有环境变量优先，不覆盖）
+from .envfile import load_dotenv_if_dev
+
+load_dotenv_if_dev()
+
 # F018 §3 环境配置清单
 REQUIRED_ENV = (
     "DATABASE_URL",
@@ -58,7 +63,67 @@ def bind_host() -> str:
 
 
 def bind_port() -> int:
-    return int(_env("BIND_PORT", "8000"))  # type: ignore[return-value]
+    return int(_env("BIND_PORT", "8000"))
+
+
+# ---------- RAG 知识库（F025 / docs/07 方案 §3.1） ----------
+
+
+def pgvector_enabled() -> bool:
+    """pgvector 向量索引开关；关闭时不得创建成功索引/检索任务。"""
+    return _env("PGVECTOR_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def embedding_model() -> str | None:
+    return _env("EMBEDDING_MODEL")
+
+
+def embedding_dim() -> int:
+    return int(_env("EMBEDDING_DIM", "1024"))
+
+
+def reranker_enabled() -> bool:
+    return _env("RERANKER_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def reranker_model() -> str | None:
+    return _env("RERANKER_MODEL")
+
+
+def rag_top_k() -> int:
+    return int(_env("RAG_TOP_K", "20"))
+
+
+def rag_chunk_size() -> int:
+    return int(_env("RAG_CHUNK_SIZE", "600"))
+
+
+def rag_chunk_overlap() -> int:
+    return int(_env("RAG_CHUNK_OVERLAP", "80"))
+
+
+# ---------- DeepSeek（仅 public_read 数据，F025 §5 / ADR-002 §2.3） ----------
+
+
+def deepseek_enabled() -> bool:
+    return _env("DEEPSEEK_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def deepseek_public_only() -> bool:
+    """public-only 开关：false 时 /readyz 失败且外部抽取被拒绝（fail-closed）。"""
+    return _env("DEEPSEEK_PUBLIC_ONLY", "true").strip().lower() in ("1", "true", "yes", "on")
+
+
+def deepseek_base_url() -> str | None:
+    return _env("DEEPSEEK_BASE_URL")
+
+
+def deepseek_model() -> str | None:
+    return _env("DEEPSEEK_MODEL", "deepseek-chat")
+
+
+def deepseek_api_key() -> str | None:
+    return _env("DEEPSEEK_API_KEY")  # type: ignore[return-value]
 
 
 def job_running_timeout_seconds() -> int:

@@ -31,9 +31,10 @@ def create_job(
     input_ref: str,
     project_id: Optional[str] = None,
     max_attempts: int = 3,
+    idempotency_key: Optional[str] = None,
 ) -> tuple[AnalysisJob, bool]:
     """创建任务；幂等键重复时返回既有任务（created=False）。"""
-    key = job_logic.build_idempotency_key(kind, input_ref, project_id)
+    key = idempotency_key or job_logic.build_idempotency_key(kind, input_ref, project_id)
     existing = session.scalar(
         select(AnalysisJob).where(AnalysisJob.idempotency_key == key)
     )
@@ -127,6 +128,8 @@ def finish_job(
     job = session.get(AnalysisJob, job_id)
     if job is None:
         return
+    if job.status != job_logic.RUNNING:
+        raise ValueError(f"仅 running 任务可结束，当前 {job.status}")
     if outcome == "completed":
         job.status = job_logic.COMPLETED
     elif outcome == "failed":
@@ -142,9 +145,13 @@ def finish_job(
 def fail_then_retryable(session: Session, job_id: str, error_code: str, error_message: str) -> None:
     """执行失败但未耗尽重试次数：退回 retryable，等待重新领取。"""
     job = session.get(AnalysisJob, job_id)
-    if job is None or job.status == job_logic.COMPLETED:
+    if job is None or job.status in job_logic.TERMINAL_STATES:
         return
-    job.status = job_logic.RETRYABLE
+    job.status = (
+        job_logic.FAILED
+        if job.attempts >= job.max_attempts
+        else job_logic.RETRYABLE
+    )
     job.error_code = error_code
     job.error_message = error_message
     job.updated_at = _dt.datetime.now(_dt.timezone.utc)
