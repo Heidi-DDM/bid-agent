@@ -94,6 +94,66 @@ def get_material_or_404(session: Session, material_id: str) -> Material:
     return material
 
 
+def schedule_post_parse(session: Session, *, project_id: str) -> dict:
+    """人工复核确认（parse_status=parsed）后的编排（R021-5 / F021 §2 第 7 步）。
+
+    1) 为项目内已 parsed 且可索引的材料自动创建 knowledge_index 任务（幂等 index:… 键）；
+    2) 尚无匹配 run 时创建一次 match.run（幂等 kind+input_ref+project_id 键）。
+
+    F021 §2 第 7 步：投标专员确认后项目进入 parsed，编排器随后自动创建一次匹配任务，
+    项目状态进入 matching；重复轮询/刷新不得重复触发。返回 {"index_jobs", "match_job"}。
+    """
+    from runtime.core import orchestration
+    from runtime.rag import service as rag_service
+    from runtime.db import worker_service
+    from runtime.db.models import Material
+
+    materials = session.scalars(
+        select(Material).where(Material.project_id == project_id)
+    ).all()
+    material_dicts = [
+        {
+            "material_id": m.material_id,
+            "material_type": m.material_type,
+            "parse_status": m.parse_status,
+            "version": m.version,
+        }
+        for m in materials
+    ]
+
+    # 1) 知识索引：已解析材料 → L2/L3 索引任务（幂等；向量不可用时不伪造成功）
+    from typing import cast
+
+    from runtime.db.models import AnalysisJob
+
+    index_jobs: list[str] = []
+    for material_id, version in orchestration.materials_needing_index(material_dicts):
+        job, created = rag_service.create_index_job(
+            session, material_id=material_id, version=version, project_id=project_id
+        )
+        index_jobs.append(cast(AnalysisJob, job).job_id)
+        audit(session, actor="system", action="knowledge.index_triggered",
+              basis=f"material={material_id}:v{version}",
+              outcome="created" if created else "idempotent_reuse",
+              object_ref=project_id)
+
+    # 2) 首次匹配：尚无 run 才触发（F020 §2.1 幂等）
+    run = latest_match_run(session, project_id)
+    existing_runs = 1 if run is not None else 0
+    match_job: str | None = None
+    if orchestration.should_trigger_first_match(material_dicts, existing_runs):
+        job, created = worker_service.create_job(
+            session, kind="match.run", input_ref=project_id, project_id=project_id
+        )
+        match_job = job.job_id
+        audit(session, actor="system", action="match.auto_trigger",
+              basis=f"parse.confirmed project_id={project_id}",
+              outcome="created" if created else "idempotent_reuse",
+              object_ref=project_id)
+    session.commit()
+    return {"index_jobs": index_jobs, "match_job": match_job}
+
+
 def create_project(session: Session, *, project_id: str, project_name: str,
                    actor: str) -> Project:
     """创建项目（幂等：已存在返回既有）。"""

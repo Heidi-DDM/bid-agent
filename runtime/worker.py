@@ -54,79 +54,144 @@ def process_one(session, runner_id: str, stale_seconds: int) -> bool:
 
 
 def _on_parse_completed(session, project_id: str | None) -> None:
-    """解析完成编排：先创建 knowledge_index 任务（方案 §3.5 第 1 步），
-    再在满足前置时创建一次 match.run 任务。
+    """解析完成编排（兼容入口，R021-5 后统一走 api_service.schedule_post_parse）。
 
-    幂等：knowledge_index 幂等键（index:... SHA-256）与 match.run 幂等键
-    （kind+input_ref+project_id）保证同一输入不重复建任务；结果页 GET 查询不创建 run（F020 §2.1/§7）。
+    实际调度发生在人工复核确认（confirm API → parse_status=parsed）之后：
+    schedule_post_parse 按幂等键创建 knowledge_index（index:…）与 match.run
+    （kind+input_ref+project_id）；结果页 GET 查询不创建 run（F020 §2.1/§7）。
     """
     if not project_id:
         return
-    from runtime.core import orchestration
-    from runtime.db import api_service, worker_service
-    from runtime.db.models import Material
+    from runtime.db import api_service
+
+    scheduled = api_service.schedule_post_parse(session, project_id=project_id)
+    if scheduled["index_jobs"] or scheduled["match_job"]:
+        logger.info(
+            "解析完成编排 project_id=%s index_jobs=%s match_job=%s",
+            project_id, scheduled["index_jobs"], scheduled["match_job"],
+        )
+
+
+def _execute_parse_tender_document(session, input_ref: str | None,
+                                   project_id: str | None = None) -> None:
+    """parse.tender_document 执行器（R021-5 / F021 §2 第 3-6 步）：
+
+    不可变原文（material_versions.object_uri）→ route_document（PDF 逐页/DOCX 解包/
+    扫描件 OCR）→ extract_rule_candidates + extract_main_card → store_candidates 幂等落库
+    （kind 分流 rule_candidate / main_card_field）→ material.parse_status=manual_review。
+
+    人工确认（confirm API）后才写 RuleSet/Requirement 并触发索引+匹配（F021 §2 第 7 步），
+    本执行器不自动写规则、不伪造成功。input_ref = material_id（取最新版本）。
+    """
+    if not input_ref:
+        raise ValueError("parse.tender_document 任务缺少 input_ref（material_id）")
+    from pathlib import Path
 
     from sqlalchemy import select
 
-    materials = session.scalars(
-        select(Material).where(Material.project_id == project_id)
-    ).all()
-    material_dicts = [
-        {
-            "material_id": m.material_id,
-            "material_type": m.material_type,
-            "parse_status": m.parse_status,
-            "version": m.version,
-        }
-        for m in materials
-    ]
-    # 1) 知识索引：解析完成 → 为每个已解析材料创建索引任务（幂等；向量不可用时不伪造成功）
-    from runtime.rag import service as rag_service
+    from runtime.core.config import object_store_root
+    from runtime.db import api_service, parse_service
+    from runtime.db.models import Material, MaterialVersion
+    from runtime.parsing.extractor import extract_main_card, extract_rule_candidates
+    from runtime.parsing.router import route_document
 
-    index_jobs: list[str] = []
-    for material_id, version in orchestration.materials_needing_index(material_dicts):
-        job, created = rag_service.create_index_job(
-            session, material_id=material_id, version=version, project_id=project_id
-        )
-        index_jobs.append(job.job_id)
-        api_service.audit(session, actor="system", action="knowledge.index_triggered",
-                          basis=f"material={material_id}:v{version}",
-                          outcome="created" if created else "idempotent_reuse",
-                          object_ref=project_id)
-    if index_jobs:
-        session.commit()
-        logger.info("解析完成创建索引任务 project_id=%s jobs=%s", project_id, index_jobs)
-
-    # 2) 首次匹配（既有编排，F020 §2.1）
-    run = api_service.latest_match_run(session, project_id)
-    existing_runs = 1 if run is not None else 0
-    if not orchestration.should_trigger_first_match(material_dicts, existing_runs):
-        logger.info("不触发首次匹配 project_id=%s（前置不满足）", project_id)
-        return
-    job, created = worker_service.create_job(
-        session, kind="match.run", input_ref=project_id, project_id=project_id
+    material = session.scalar(
+        select(Material)
+        .where(Material.material_id == input_ref)
+        .order_by(Material.version.desc())
+        .limit(1)
     )
-    api_service.audit(session, actor="system", action="match.auto_trigger",
-                      basis=f"parse.completed project_id={project_id}",
-                      outcome="created" if created else "idempotent_reuse",
-                      object_ref=project_id)
+    if material is None:
+        raise ValueError(f"材料不存在: {input_ref}")
+    mv = session.get(MaterialVersion, (material.material_id, material.version))
+    if mv is None:
+        raise RuntimeError(f"material_versions 缺不可变记录 {material.material_id}:v{material.version}")
+    path = Path(object_store_root()) / mv.object_uri
+    if not path.is_file():
+        raise RuntimeError(f"原文缺失: {path}（索引/解析不得伪造产物）")
+
+    route = route_document(str(path))
+    if route.kind in ("unsupported", "error") or not route.pages:
+        raise RuntimeError(f"文档路由失败 kind={route.kind} error={route.error}")
+
+    project = material.project_id or project_id or ""
+    rule_cands = extract_rule_candidates(
+        route.pages, project_id=project, material_id=material.material_id,
+        content_hash=material.content_hash,
+    )
+    field_cands = extract_main_card(route.pages)
+    c_r, s_r = parse_service.store_candidates(
+        session, project_id=project, material_id=material.material_id,
+        version=material.version, kind="rule_candidate",
+        candidates=[c.to_dict() for c in rule_cands],
+    )
+    c_f, s_f = parse_service.store_candidates(
+        session, project_id=project, material_id=material.material_id,
+        version=material.version, kind="main_card_field",
+        candidates=[c.to_dict() for c in field_cands],
+    )
+    if c_r == 0 and c_f == 0:
+        raise RuntimeError(
+            f"材料 {material.material_id}:v{material.version} 未产出任何候选"
+            "（全部与既有候选重复且未落库？禁止静默通过）"
+        )
+    parse_service.mark_material_manual_review(
+        session, material_id=material.material_id, version=material.version,
+        note=f"解析候选已生成 rule={c_r} main_card={c_f}，等待人工复核确认（F021 §2.7）",
+    )
+    api_service.audit(
+        session, actor="system", action="parse.candidates_stored",
+        basis=f"material={material.material_id}:v{material.version} kind={route.kind}",
+        outcome=f"rule_created={c_r} rule_skipped={s_r} field_created={c_f} field_skipped={s_f}",
+        object_ref=material.project_id or project_id,
+    )
     session.commit()
-    logger.info("解析完成自动触发首次匹配 job_id=%s created=%s", job.job_id, created)
+    logger.info(
+        "招标文件解析完成 material=%s:%s kind=%s rules=%s(+%s) fields=%s(+%s) → manual_review",
+        material.material_id, material.version, route.kind,
+        c_r, s_r, c_f, s_f,
+    )
+
+
+def _pages_from_material_version(session, material_id: str, version: int) -> list:
+    """从不可变原文（material_versions.object_uri）重路由出 ParsedPage 列表。
+
+    knowledge_index 的解析产物来源：parse 候选只存结构化结果，不存整页文本；
+    页文本一律以不可变原文为准重路由（内容哈希在 index_material 内复核），
+    避免引入新的页文本持久化表（v1 从简）。
+    """
+    from pathlib import Path
+
+    from runtime.core.config import object_store_root
+    from runtime.db.models import MaterialVersion
+    from runtime.parsing.router import route_document
+
+    mv = session.get(MaterialVersion, (material_id, version))
+    if mv is None:
+        raise RuntimeError(f"material_versions 缺不可变记录 {material_id}:v{version}")
+    path = Path(object_store_root()) / mv.object_uri
+    if not path.is_file():
+        raise RuntimeError(f"原文缺失: {path}（无法重建解析产物）")
+    route = route_document(str(path))
+    if route.kind in ("unsupported", "error") or not route.pages:
+        raise RuntimeError(f"文档路由失败 kind={route.kind} error={route.error}")
+    return route.pages
 
 
 def _execute_knowledge_index(session, input_ref: str | None) -> None:
-    """knowledge_index 执行器：材料版本 → chunk + embedding（方案 §8.1）。
+    """knowledge_index 执行器：材料版本 → 解析产物 → chunk + embedding（方案 §8.1）。
 
-    解析产物（parsed_pages）由 F021/F022 解析器写入后传入；当前解析器未接入时
-    抛 IndexingError → 任务 retryable/manual_review，不伪造成功（F025 §8.1）。
+    解析产物由不可变原文重路由重建（_pages_from_material_version）；缺失/路由失败
+    抛 IndexingError/RuntimeError → 任务 retryable/manual_review，不伪造成功（F025 §8.1）。
     """
     if not input_ref or ":" not in input_ref:
         raise ValueError("knowledge_index 任务 input_ref 必须为 material_id:version")
     material_id, version = input_ref.rsplit(":", 1)
+    pages = _pages_from_material_version(session, material_id, int(version))
     from runtime.rag.indexer import IndexingError, index_material
 
     try:
-        result = index_material(session, material_id, int(version))
+        result = index_material(session, material_id, int(version), parsed_pages=pages)
     except IndexingError as exc:
         raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc
     from runtime.db import api_service
@@ -141,10 +206,14 @@ def _execute_knowledge_index(session, input_ref: str | None) -> None:
 
 
 def _execute(session, kind: str, input_ref: str | None, project_id: str | None = None) -> None:
-    """任务执行器：knowledge_index 执行真实索引；match.* 执行 RAG→核验→规则引擎链路；
-    其余保持占位（R021-R024 接入）。"""
+    """任务执行器：knowledge_index 执行真实索引（解析产物重路由）；
+    parse.tender_document 执行 原文路由→条款/主卡候选→manual_review（R021-5）；
+    match.* 执行 RAG→核验→规则引擎链路；其余保持占位（R022-R024 接入）。"""
     if kind == "knowledge_index":
         _execute_knowledge_index(session, input_ref)
+        return
+    if kind == "parse.tender_document":
+        _execute_parse_tender_document(session, input_ref, project_id)
         return
     if kind == "match.run":
         _execute_match_run(session, project_id, mode="gate")

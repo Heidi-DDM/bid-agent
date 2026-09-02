@@ -177,6 +177,19 @@ def test_openapi_registers_f020_routes(client):
         assert path in paths, path
 
 
+def test_openapi_registers_parse_routes(client):
+    # R021-4：解析候选列表 / 人工复核 / 全部确认（写规则集+字段溯源+状态流转）
+    resp = client.get("/openapi.json")
+    assert resp.status_code == 200
+    paths = resp.json()["paths"]
+    for path in [
+        "/api/v1/parse/projects/{project_id}/materials/{material_id}/candidates",
+        "/api/v1/parse/candidates/{candidate_id}/review",
+        "/api/v1/parse/projects/{project_id}/materials/{material_id}/confirm",
+    ]:
+        assert path in paths, path
+
+
 def test_openapi_registers_rag_routes(client):
     resp = client.get("/openapi.json")
     assert resp.status_code == 200
@@ -187,3 +200,46 @@ def test_openapi_registers_rag_routes(client):
         "/api/v1/retrieval-runs/{retrieval_run_id}",
     ]:
         assert path in paths, path
+
+
+# ---------- R021-4 解析复核 RBAC（F021 §2.7：投标专员复核/确认；写 = tender_document write） ----------
+
+def test_parse_review_requires_tender_doc_write(client):
+    # 仅 bid_specialist 有 tender_document write；其余角色复核候选一律 403
+    for role in ("data_admin", "business_head", "legal"):
+        resp = client.post(
+            "/api/v1/parse/candidates/C-1/review",
+            headers=_headers(role),
+            json={"decision": "approved", "reviewer": "x"},
+        )
+        assert resp.status_code == 403, role
+        assert resp.json()["error"]["code"] == "forbidden", role
+
+
+def test_parse_confirm_requires_tender_doc_write(client):
+    # 确认（写 RuleSet/Requirement）同样仅投标专员可执行
+    for role in ("data_admin", "business_head", "legal"):
+        resp = client.post(
+            "/api/v1/parse/projects/ND-2025/materials/MAT-1/confirm",
+            headers=_headers(role),
+            json={"actor": "x"},
+        )
+        assert resp.status_code == 403, role
+
+
+def test_parse_candidates_read_role_gate(client):
+    # tender_document read：bid_specialist/business_head/legal 可读（沙盒无库 → 500）；
+    # data_admin 无 tender_document 权限 → 403（不触库）
+    for role in ("data_admin",):
+        resp = client.get(
+            "/api/v1/parse/projects/ND-2025/materials/MAT-1/candidates",
+            headers=_headers(role),
+        )
+        assert resp.status_code == 403, role
+    for role in ("bid_specialist", "business_head", "legal"):
+        resp = client.get(
+            "/api/v1/parse/projects/ND-2025/materials/MAT-1/candidates",
+            headers=_headers(role),
+        )
+        assert resp.status_code == 500, role
+        assert resp.json()["error"]["code"] == "internal_error", role

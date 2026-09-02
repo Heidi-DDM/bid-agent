@@ -80,6 +80,42 @@ class AnalysisJob(Base):
 # ============================================================
 
 
+class ParseCandidate(Base):
+    """R021/F021 §2.7：招标解析候选与人工复核表（public_data schema）。
+
+    解析器产出 RuleCandidate/MainCardCandidate 暂存本表，投标专员复核
+    （approved/rejected/revised）后才写入 RuleSet/Requirement/FieldTrace；
+    复核前不产生任何规则与字段（F021 人工确认门禁）。
+    """
+
+    __tablename__ = "parse_candidates"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "material_id", "version",
+                         name="uq_parse_candidates_idem"),
+        Index("ix_parse_candidates_material", "material_id", "version"),
+        Index("ix_parse_candidates_project", "project_id"),
+        Index("ix_parse_candidates_status", "status"),
+        {"schema": "public_data"},
+    )
+    candidate_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    material_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    # rule_candidate / main_card_field
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    # pending / approved / rejected / revised
+    reviewer: Mapped[str | None] = mapped_column(String(128))
+    revised_payload: Mapped[dict | None] = mapped_column(JSONB)
+    review_note: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class Project(Base):
     """F019 §3 projects：多版本材料按 project_id 挂接（F003 §4.2）。"""
 
@@ -172,7 +208,7 @@ class FieldTrace(Base):
     clause: Mapped[str] = mapped_column(Text, nullable=False)  # 条款引用
     source_link: Mapped[str | None] = mapped_column(String(512))
     assertion: Mapped[str] = mapped_column(Text, nullable=False)  # 原文断言
-    confidence: Mapped[float | None] = mapped_column(Float)
+    confidence: Mapped[str | None] = mapped_column(String(16))  # F005 §4.3 enum: confirmed/high/medium/low
     source_hash: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
