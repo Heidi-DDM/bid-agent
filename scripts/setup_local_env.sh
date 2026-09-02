@@ -41,6 +41,43 @@ log()  { printf '\033[1;34m[setup]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ok]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[err]\033[0m %s\n' "$*" >&2; exit 1; }
 
+setup_pgvector() {
+  # R025：pgvector 扩展（knowledge_embeddings 向量列依赖；Homebrew postgresql@17 不内置）。
+  # 必须在 alembic 迁移（0004 使用 vector 类型）之前执行；Homebrew pgvector 装到独立 prefix，
+  # 需把 vector.so 与扩展 SQL 软链到 PostgreSQL 目录，再以管理员在应用库 CREATE EXTENSION。
+  local ph="$1"
+  if ! brew list pgvector >/dev/null 2>&1; then
+    log "安装 pgvector（Homebrew，需联网，约 1 分钟）..."
+    yes | brew install pgvector
+  else
+    ok "pgvector 已安装"
+  fi
+  local PGLIB PGSHARE PGVEC so f PG_MAJOR
+  PGLIB="$(pg_config --pkglibdir)"
+  PGSHARE="$(pg_config --sharedir)/extension"
+  PGVEC="$(brew --prefix pgvector)"
+  PG_MAJOR="$(pg_config --version | sed -E 's/PostgreSQL ([0-9]+).*/\1/')"
+  # Homebrew pgvector 的库产物：macOS 为 vector.dylib、Linux 为 vector.so。
+  # 任一存在即视为已链接，避免误判缺失后重复链接/误报 die。
+  if [[ ! -f "$PGLIB/vector.so" && ! -f "$PGLIB/vector.dylib" ]]; then
+    # 限定本机 PG 大版本目录（pgvector 同时提供 @17/@18 产物，避免链错版本）
+    so="$(find "$PGVEC" -type f \( -name 'vector.so' -o -name 'vector.dylib' \) -path "*postgresql@${PG_MAJOR}*" 2>/dev/null | head -1 || true)"
+    if [[ -n "$so" ]]; then
+      ln -sf "$so" "$PGLIB/$(basename "$so")"
+    else
+      die "未找到 pgvector 的库文件 vector.so/vector.dylib（$PGVEC），请检查 brew install pgvector 输出"
+    fi
+  fi
+  for f in "$PGVEC"/share/postgresql@*/extension/vector* "$PGVEC"/share/postgresql/extension/vector*; do
+    [[ -f "$f" ]] && ln -sf "$f" "$PGSHARE/$(basename "$f")"
+  done
+  psql $ph -w -d bid_agent -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null \
+    || die "CREATE EXTENSION vector 失败，请检查 vector.so 链接与 PG 日志"
+  psql $ph -w -d bid_agent -tAc "SELECT 1 FROM pg_extension WHERE extname='vector'" | grep -q 1 \
+    || die "pgvector 扩展创建失败"
+  ok "pgvector 扩展就绪（bid_agent 库，vector 类型可用于 0004 迁移）"
+}
+
 setup_postgres() {
   if command -v psql >/dev/null 2>&1; then
     ok "PostgreSQL 已安装: $(psql --version)"
@@ -118,6 +155,9 @@ setup_postgres() {
   else
     ok "数据库 bid_agent 已存在（端口 ${PG_PORT}）"
   fi
+
+  # pgvector 扩展必须在 alembic 迁移（0004）之前就绪
+  setup_pgvector "$PH"
 }
 
 setup_python() {
@@ -139,20 +179,49 @@ run_migration() {
   ok "迁移完成，当前版本: $(.venv/bin/alembic current 2>/dev/null | tail -1)"
 }
 
+worker_is_running() {
+  local pid state command
+  [[ -f logs/worker.pid ]] || return 1
+  pid="$(tr -d '[:space:]' < logs/worker.pid)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  # kill -0 对 macOS 上尚未回收的僵尸进程也可能返回成功；同时校验状态
+  # 和命令行，避免旧 PID 或被复用的 PID 阻止 worker 重启。
+  state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')"
+  [[ -n "$state" && "$state" != Z* ]] || return 1
+  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$command" == *"runtime.worker"* ]]
+}
+
 start_services() {
-  log "启动 API（uvicorn，127.0.0.1:8000）..."
-  nohup .venv/bin/uvicorn runtime.api:app --host 127.0.0.1 --port 8000 > logs/api.log 2>&1 &
-  echo $! > logs/api.pid
-  log "启动 worker（python -m runtime.worker）..."
-  nohup .venv/bin/python -m runtime.worker > logs/worker.log 2>&1 &
-  echo $! > logs/worker.pid
+  # 进程须使用项目 .venv 依赖：清除外部 PYTHONPATH（如 Hermes/CI 会话注入），
+  # 否则 python3.14 会 import 到其他解释器版本的包（ABI 崩溃，API 起不来）。
+  unset PYTHONPATH
+  # API：以 8000 端口监听为准（pid 文件可能因启动失败残留而与实际进程脱节）
+  local api_pid
+  api_pid="$(lsof -tiTCP:8000 -sTCP:LISTEN -P 2>/dev/null | head -1 || true)"
+  if [[ -n "$api_pid" ]] && kill -0 "$api_pid" 2>/dev/null; then
+    echo "$api_pid" > logs/api.pid
+    ok "API 已在运行 (pid $api_pid)，跳过启动"
+  else
+    log "启动 API（uvicorn，127.0.0.1:8000）..."
+    nohup .venv/bin/uvicorn runtime.api:app --host 127.0.0.1 --port 8000 > logs/api.log 2>&1 &
+    echo $! > logs/api.pid
+  fi
+  if worker_is_running; then
+    ok "worker 已在运行 (pid $(cat logs/worker.pid))，跳过启动"
+  else
+    log "启动 worker（python -m runtime.worker）..."
+    nohup .venv/bin/python -m runtime.worker > logs/worker.log 2>&1 &
+    echo $! > logs/worker.pid
+  fi
   sleep 3
   if [[ -f logs/api.pid ]] && kill -0 "$(cat logs/api.pid)" 2>/dev/null; then
     ok "API 进程运行中 (pid $(cat logs/api.pid))"
   else
     die "API 启动失败，见 logs/api.log"
   fi
-  if [[ -f logs/worker.pid ]] && kill -0 "$(cat logs/worker.pid)" 2>/dev/null; then
+  if worker_is_running; then
     ok "worker 进程运行中 (pid $(cat logs/worker.pid))"
   else
     die "worker 启动失败，见 logs/worker.log"
@@ -160,12 +229,28 @@ start_services() {
 }
 
 stop_services() {
-  for f in logs/api.pid logs/worker.pid; do
-    if [[ -f "$f" ]]; then
-      kill "$(cat "$f")" 2>/dev/null || true
-      rm -f "$f"
-    fi
-  done
+  # API：杀 8000 端口监听进程（pid 文件可能与实际进程脱节）
+  local api_pid
+  api_pid="$(lsof -tiTCP:8000 -sTCP:LISTEN -P 2>/dev/null | head -1 || true)"
+  if [[ -n "$api_pid" ]]; then
+    kill "$api_pid" 2>/dev/null || true
+    # 等待端口释放（uvicorn 优雅关闭需要时间），避免 start 误判"已在运行"
+    for _ in $(seq 1 10); do
+      lsof -tiTCP:8000 -sTCP:LISTEN -P >/dev/null 2>&1 || break
+      sleep 0.5
+    done
+  fi
+  if worker_is_running; then
+    local worker_pid
+    worker_pid="$(tr -d '[:space:]' < logs/worker.pid)"
+    kill "$worker_pid" 2>/dev/null || true
+    # 等待优雅退出完成，避免紧接着 start 时旧 PID 仍被误认为存活。
+    for _ in $(seq 1 20); do
+      worker_is_running || break
+      sleep 0.25
+    done
+  fi
+  rm -f logs/api.pid logs/worker.pid
   ok "服务已停止"
 }
 
@@ -179,7 +264,13 @@ health_check() {
 
 status_check() {
   for f in logs/api.pid logs/worker.pid; do
-    if [[ -f "$f" ]] && kill -0 "$(cat "$f")" 2>/dev/null; then
+    local running=1
+    if [[ "$f" == logs/worker.pid ]]; then
+      worker_is_running && running=0
+    elif [[ -f "$f" ]] && kill -0 "$(cat "$f")" 2>/dev/null; then
+      running=0
+    fi
+    if [[ "$running" -eq 0 ]]; then
       echo "$f: 运行中 (pid $(cat "$f"))"
     else
       echo "$f: 未运行"
