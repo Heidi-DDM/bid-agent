@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>导入与解析｜投标智能体原型</title>
+  <title>选择深入与文件解析｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -23,8 +23,8 @@
 
       <!-- 新建任务表单（模拟） -->
       <section class="card">
-        <h2>新建投标准入任务（模拟表单）</h2>
-        <p class="sub">填写后点击「开始解析」，原型将以演示数据走通后续旅程（对应项目 ND-2025）。</p>
+        <h2>选择深入的招标项目并上传完整文件</h2>
+        <p class="sub">结构化推送只用于浏览公告事实；点击进入本页后，必须人工上传完整招标文件，系统才开始解析和后续自动匹配（对应项目 ND-2025）。</p>
         <div class="form-grid" style="margin-top:14px">
           <div class="form-item full">
             <label>项目名称 <span class="req">*</span></label>
@@ -35,20 +35,20 @@
             <input type="url" id="f-url" value="https://ggzy.hebei.gov.cn/（演示：河北省公共资源交易服务平台公告页）">
           </div>
           <div class="form-item full">
-            <label>招标文件上传（docx / pdf）</label>
+            <label>完整招标文件上传（docx / pdf） <span class="req">*</span></label>
             <div class="dropzone" id="dropzone">
               <div class="big">点击或拖拽上传招标文件</div>
-              <div class="hint">已预置演示文件：招标文件.pdf（476 页）· sha256 指纹已登记 · raw 原文不可变</div>
+              <div class="hint">已预置演示文件：招标文件.pdf（476 页）· sha256 指纹已登记 · raw 原文不可变；不上传完整文件不进入匹配。</div>
             </div>
           </div>
           <div class="form-item full">
-            <label>公告正文粘贴（备选通道）</label>
+            <label>公告正文（结构化推送已自动带入，只读）</label>
             <textarea id="f-body" placeholder="从公告页面复制正文粘贴到此（与上传通道二选一）…"></textarea>
           </div>
         </div>
         <div style="display:flex;gap:10px;margin-top:14px">
           <button class="btn" id="btn-parse">开始解析</button>
-          <a class="btn ghost" href="matrix.html">跳过（直接看要求矩阵）</a>
+          <a class="btn ghost" href="index.html">返回结构化推送</a>
         </div>
         <div id="parse-progress" style="margin-top:14px"></div>
       </section>
@@ -130,9 +130,18 @@
 
     const progress = document.getElementById("parse-progress");
     const dropzone = document.getElementById("dropzone");
-    dropzone.addEventListener("click", () => alert("演示：模拟选择文件（原型不真实上传）。"));
+    let fullFileUploaded = false;
+    dropzone.addEventListener("click", () => {
+      fullFileUploaded = true;
+      dropzone.innerHTML = '<div class="big">已选择：招标文件.pdf（476 页） ✓</div><div class="hint">sha256 指纹已登记 · raw 原文不可变</div>';
+      progress.innerHTML = '<div class="notice info">完整招标文件已登记，下一步可开始解析。</div>';
+    });
 
     document.getElementById("btn-parse").addEventListener("click", () => {
+      if (!fullFileUploaded) {
+        progress.innerHTML = '<div class="notice warn"><b>尚未上传完整招标文件</b>：请先点击上传区域登记文件，未上传前不启动解析和企业资料匹配。</div>';
+        return;
+      }
       const btn = document.getElementById("btn-parse");
       btn.disabled = true;
       let step = 0;
@@ -140,8 +149,8 @@
         "登记原文（sha256 指纹 + 不可变存储）…",
         "路由：文本 PDF → Parser（F005 链路）…",
         "提取项目主卡：项目名称 / 招标人 / 时间线 / 最高限价…",
-        "拆分三类要求：资格 12 项 / 评分 4 项 / 动作 4 项…",
-        "解析完成：20 条要求，证据字段绑定条款引用 ✓",
+        "拆分招标条款与响应要求：资格 12 项 / 评分 4 项 / 动作 4 项…",
+        "解析完成：20 条要求，自动启动企业已解析资料匹配 ✓",
       ];
       progress.innerHTML = `<div class="notice info">开始解析…</div>`;
       const timer = setInterval(() => {
@@ -155,8 +164,8 @@
           progress.innerHTML = `
             <div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d">
               <b>解析完成</b>：项目主卡已建立，20 条要求全部提取并可溯源（clause + 原文摘录）。
-              缺失字段一律标注“待补”，不推断。<br>
-              <a href="matrix.html" class="btn sm" style="margin-top:8px">进入招标要求矩阵 →</a>
+              系统已自动读取已解析且已核验的企业资质、业绩和人员资料执行一次匹配；缺失字段一律标注“待补”，不推断。<br>
+              <a href="matrix.html" class="btn sm" style="margin-top:8px">查看解析与自动匹配结果 →</a>
             </div>`;
         }
       }, 700);

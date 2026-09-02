@@ -4,23 +4,22 @@
    ============================================================ */
 
 const STEPS = [
-  { id: "index",     label: "新建任务",   page: "index.html" },
-  { id: "import",    label: "导入与解析", page: "import.html" },
-  { id: "matrix",    label: "要求矩阵",   page: "matrix.html" },
-  { id: "materials", label: "资料选择",   page: "materials.html" },
-  { id: "score",     label: "匹配与评分", page: "score.html" },
-  { id: "queue",     label: "队列处置",   page: "queue.html" },
-  { id: "approval",  label: "审批与审计", page: "approval.html" },
+  { id: "index",     label: "搜索与推送", page: "index.html" },
+  { id: "import",    label: "选择与解析", page: "import.html" },
+  { id: "matrix",    label: "自动匹配",   page: "matrix.html" },
+  { id: "score",     label: "风险与缺失", page: "score.html" },
+  { id: "queue",     label: "人工补录",   page: "queue.html" },
+  { id: "approval",  label: "人工审核",   page: "approval.html" },
 ];
 
 const NAV = [
-  { label: "首页 · 新建任务", page: "index.html" },
-  { label: "导入与解析", page: "import.html" },
-  { label: "要求矩阵", page: "matrix.html" },
-  { label: "资料选择", page: "materials.html" },
-  { label: "匹配与评分", page: "score.html" },
-  { label: "阻断/待补/复核", page: "queue.html" },
-  { label: "审批/豁免/审计", page: "approval.html" },
+  { label: "搜索与推送", page: "index.html" },
+  { label: "选择与解析", page: "import.html" },
+  { label: "自动匹配", page: "matrix.html" },
+  { label: "企业资料库（后台）", page: "materials.html" },
+  { label: "风险与缺失", page: "score.html" },
+  { label: "人工补录", page: "queue.html" },
+  { label: "人工审核", page: "approval.html" },
   { label: "异常态演示", page: "exceptions.html" },
 ];
 

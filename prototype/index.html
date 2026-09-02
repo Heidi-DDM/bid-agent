@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>首页 · 新建投标准入任务｜投标智能体原型</title>
+  <title>搜索与结构化推送｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -13,44 +13,59 @@
     <div class="main">
       <div class="steps"></div>
 
-      <!-- 首页入口：新建投标准入任务（F010 §4 页面1 验收硬性要求） -->
+      <!-- 入口：联网搜索招标数据并结构化推送 -->
       <section class="hero-entry">
         <div>
-          <h1>新建投标准入任务</h1>
-          <p>从公开招标公告/招标文件出发，走完「要求解析 → 企业资料匹配 → 满分准入 → 人工审批」全旅程。<br>
-            系统只做规则化匹配与证据化结论，<b>是否投标由企业负责人决定</b>。</p>
+          <h1>搜索招标数据</h1>
+          <p>联网搜索公开招标公告，先以结构化事实推送；只有人工选中的项目，才进入完整招标文件解析与企业资料自动匹配。<br>
+            系统只做事实提取、规则匹配和风险提示，<b>是否投标由企业负责人决定</b>。</p>
         </div>
-        <a class="btn primary-lg" href="import.html">＋ 新建投标准入任务</a>
+        <a class="btn primary-lg" href="#search-panel">开始搜索</a>
+      </section>
+
+      <section class="card" id="search-panel">
+        <div class="card-title-row">
+          <h2>联网搜索（测试期手动触发）</h2>
+          <span class="badge info">manual_trigger</span>
+        </div>
+        <div class="form-grid" style="margin-top:12px">
+          <div class="form-item"><label>关键词</label><input id="search-keyword" type="text" value="房屋建筑施工"></div>
+          <div class="form-item"><label>地区</label><select id="search-region" class="inp"><option>河北省</option><option>保定市</option><option>邢台市</option><option>张家口市</option></select></div>
+          <div class="form-item full"><label>来源范围</label><div class="hint">河北省公共资源交易服务平台（已登记来源）；遵守 robots、限频和透明 UA，不抓取登录或付费内容。</div></div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px;align-items:center">
+          <button class="btn" id="btn-search">搜索并生成结构化推送</button>
+          <span class="hint">搜索结果只记录公告原文事实，不给出投标建议。</span>
+        </div>
+        <div id="search-result" style="margin-top:12px"></div>
       </section>
 
       <!-- 现有任务 -->
       <section class="card">
         <div class="card-title-row">
-          <h2>现有任务</h2>
-          <span class="hint">脱敏演示数据 · 更新至 2026-08-28</span>
+          <h2>结构化推送</h2>
+          <span class="hint">公告事实卡 · 更新至 2026-08-28</span>
         </div>
         <div id="project-list"></div>
         <div class="notice" style="margin-top:6px">
-          <b>口径说明</b>：农大项目为真实脱敏事后验证样本（已投标/已施工/已验收，客户评判满分）；
-          博野 8 标段为黄金样本；阜平/广宗/康保用于演示异常态（详见「异常态演示」页）。
+            <b>流程说明</b>：先查看结构化公告事实，再人工选择要深入的项目并上传完整招标文件；未上传完整文件前，不启动资格和人员匹配。
         </div>
       </section>
 
       <!-- 角色与旅程说明 -->
       <section class="card">
-        <h2>用户旅程（F010 §3）</h2>
+        <h2>当前流程</h2>
         <table class="tbl">
           <thead><tr><th>角色</th><th>在原型中的动作</th></tr></thead>
           <tbody>
-            <tr><td><b>投标专员</b></td><td>新建任务 → 导入公告/招标文件 → 查看要求矩阵 → 选择资料/候选经理 → 复核匹配 → 处理阻断/待补</td></tr>
-            <tr><td><b>数据管理员</b></td><td>模拟资料导入与核验（资质/业绩/项目经理名录维护）</td></tr>
-            <tr><td><b>经营负责人</b></td><td>查看满分评分面板 → 审批/驳回/豁免（右上角切换角色体验权限差异）</td></tr>
+            <tr><td><b>投标专员</b></td><td>搜索/查看结构化推送 → 选择深入项目 → 上传完整招标文件 → 查看解析与自动匹配 → 处理风险与缺失</td></tr>
+            <tr><td><b>数据管理员</b></td><td>维护并核验企业资质、业绩、人员等基础资料；匹配时自动读取已生效资料</td></tr>
+            <tr><td><b>经营负责人</b></td><td>查看人工补录后的结果 → 人工审核是否进入投标</td></tr>
             <tr><td><b>法务</b></td><td>查看合规说明页（数据来源分级 L0-L3、红线与审计留存）</td></tr>
           </tbody>
         </table>
         <div class="notice" style="margin-top:10px">
-          <b>流程顺序（行业招投标模式）</b>：公告获取与澄清 → 资格预审/后审要求 → 编制并核验投标文件（资格、资信、保证金、报价、技术标/商务标）→
-          递交 → 开标评标 → 中标/未中标 → 归档。原型按此顺序组织步骤条。
+          <b>流程顺序</b>：联网搜索与结构化推送 → 人工选择深入 → 上传完整招标文件 → 文件解析 → 自动匹配已解析企业资料 → 展示风险/缺失 → 人工补录 → 人工审核。
         </div>
       </section>
     </div>
@@ -75,6 +90,12 @@
   <script>
     initPage("index.html", "index");
 
+    document.getElementById("btn-search").addEventListener("click", () => {
+      const keyword = document.getElementById("search-keyword").value.trim() || "（未填写关键词）";
+      const region = document.getElementById("search-region").value;
+      document.getElementById("search-result").innerHTML = `<div class="notice info"><b>已完成搜索</b>：${region} · ${keyword} · 返回 5 条公告事实卡。结果已结构化保存，待人工选择深入项目。</div>`;
+    });
+
     const list = document.getElementById("project-list");
     PROTOTYPE.projects.forEach(p => {
       const card = document.createElement("div");
@@ -93,7 +114,7 @@
           ${p.note ? `<div class="hint" style="margin-top:4px">${p.note}</div>` : ""}
           <div class="pc-foot">
             ${p.is_main
-              ? `<a class="btn sm" href="import.html">进入旅程（${p.id}）</a>`
+              ? `<a class="btn sm" href="import.html">选择深入并上传文件（${p.id}）</a>`
               : p.id === "FP-2024" ? `<a class="btn sm ghost" href="exceptions.html#parse_fail">查看异常态演示</a>`
               : p.id === "GZ-2024" ? `<a class="btn sm ghost" href="exceptions.html#expired">查看异常态演示</a>`
               : p.id === "KB-2023" ? `<a class="btn sm ghost" href="exceptions.html#empty">查看异常态演示</a>`

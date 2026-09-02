@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>阻断/待补/复核队列｜投标智能体原型</title>
+  <title>人工补录｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,11 +15,11 @@
 
       <section class="card">
         <div class="card-title-row">
-          <h2>阻断项 / 待补项 / 人工复核队列</h2>
-          <span class="hint">数据缺失默认阻断；硬性缺项一票否决；解析不完整进入人工复核（F010 §4 页面7）</span>
+          <h2>人工补录与重算</h2>
+          <span class="hint">自动匹配结果中的缺失项在此补录；补录完成后由人工确认并重新执行匹配。</span>
         </div>
 
-        <h3 style="margin-top:4px">① 硬性阻断（blocked_hard_requirement）— 一票否决</h3>
+        <h3 style="margin-top:4px">① 高风险项（blocked_hard_requirement）— 证据充分但不满足</h3>
         <div class="queue-card" style="border-color:#f3c1c1;background:var(--danger-bg)">
           <div class="q-icon" style="background:var(--danger-bg);color:var(--danger)">✕</div>
           <div class="q-body">
@@ -33,12 +33,12 @@
             </div>
           </div>
           <div class="q-actions">
-            <button class="btn sm ghost" onclick="alert('演示：跳转资料库更新证书（数据管理员职责）。')">更新证书</button>
+            <button class="btn sm ghost" onclick="alert('演示：已生成资料更新任务，交由数据管理员核验。')">发起资料更新</button>
             <a class="btn sm" href="exceptions.html#expired">查看异常态演示</a>
           </div>
         </div>
 
-        <h3>② 待补材料（blocked_missing_data）— 默认阻断</h3>
+        <h3>② 缺失材料（blocked_missing_data）— 默认阻断</h3>
         <div class="queue-card" style="border-color:#f3d9a4;background:var(--warn-bg)">
           <div class="q-icon" style="background:var(--warn-bg);color:var(--warn)">？</div>
           <div class="q-body">
@@ -51,9 +51,7 @@
               处置：不推断满足，补齐后重跑可复现满分路径。
             </div>
           </div>
-          <div class="q-actions">
-            <button class="btn sm" onclick="alert('演示：登记待补材料请求 → 通知数据管理员。')">登记待补</button>
-          </div>
+          <div class="q-actions"><button class="btn sm" onclick="document.getElementById('supplement-form').style.display='block';document.getElementById('supplement-form').scrollIntoView({behavior:'smooth'})">补录材料</button></div>
         </div>
         <div class="queue-card" style="border-color:#f3d9a4;background:var(--warn-bg)">
           <div class="q-icon" style="background:var(--warn-bg);color:var(--warn)">？</div>
@@ -69,7 +67,7 @@
           <div class="q-actions"><a class="btn sm ghost" href="exceptions.html#empty">查看异常态演示</a></div>
         </div>
 
-        <h3>③ 人工复核（manual_review）— 不静默跳过</h3>
+        <h3>③ 风险复核（manual_review）— 不静默跳过</h3>
         <div class="queue-card" style="border-color:#e0d4f5;background:var(--review-bg)">
           <div class="q-icon" style="background:var(--review-bg);color:var(--review)">审</div>
           <div class="q-body">
@@ -81,7 +79,7 @@
               评审/复核完成前不计入内部满分。
             </div>
           </div>
-          <div class="q-actions"><button class="btn sm" onclick="alert('演示：打开内部质量评审表单（角色：经营负责人）。')">去评审</button></div>
+          <div class="q-actions"><button class="btn sm" onclick="alert('演示：已登记人工复核任务，完成后回填结论。')">登记复核</button></div>
         </div>
         <div class="queue-card" style="border-color:#e0d4f5;background:var(--review-bg)">
           <div class="q-icon" style="background:var(--review-bg);color:var(--review)">审</div>
@@ -96,9 +94,20 @@
           <div class="q-actions"><a class="btn sm ghost" href="exceptions.html#parse_fail">查看异常态演示</a></div>
         </div>
 
+        <section class="supplement-panel" id="supplement-form" style="display:none">
+          <h3 style="margin-top:0">补录 NQ-H-007：财务审计报告 / 银行资信证明</h3>
+          <div class="form-grid" style="margin-top:10px">
+            <div class="form-item"><label>材料类型 <span class="req">*</span></label><select class="inp"><option>2022-2024 年度审计报告</option><option>银行资信证明 + 基本账户证明</option></select></div>
+            <div class="form-item"><label>核验状态 <span class="req">*</span></label><select class="inp"><option>待人工核验</option><option>已核验</option></select></div>
+            <div class="form-item full"><label>上传材料 <span class="req">*</span></label><div class="dropzone" onclick="alert('演示：选择补录文件（原型不真实上传）。')"><div class="big">点击上传补录材料</div><div class="hint">原文保留、生成新版本，不覆盖原始材料</div></div></div>
+            <div class="form-item full"><label>核验备注</label><textarea placeholder="记录核验人、依据和待确认字段"></textarea></div>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:12px"><button class="btn" onclick="alert('演示：补录已登记为 pending_verification，核验通过后重新执行匹配。')">保存并提交核验</button><button class="btn ghost" onclick="document.getElementById('supplement-form').style.display='none'">取消</button></div>
+        </section>
+
         <div class="notice warn" style="margin-top:12px">
-          <b>处置原则</b>：缺失 ≠ 不满足。待补与复核项处置完成后系统重算；重算通过且内部准入满足 → 进入
-          <a href="approval.html">待投标审批</a>（满分 ≠ 自动投标）。
+          <b>处置原则</b>：缺失不等于不满足。补录并完成核验后重新执行匹配；结果满足审核条件后，才进入
+          <a href="approval.html">人工审核</a>。
         </div>
       </section>
     </div>

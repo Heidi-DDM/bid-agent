@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>匹配与评分｜投标智能体原型</title>
+  <title>风险与缺失｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -16,73 +16,72 @@
       <div class="state-banner" style="border-color:#f3d9a4;background:#fffbeb">
         <span class="badge warn">blocked_missing_data</span>
         <div>
-          <span class="state-name">内部准入：未满足（待补材料阻断）</span>
-          <span class="state-desc">— 缺失关键证据默认阻断（NQ-H-007），不推断满足；补齐材料并完成内部评审后可复算。</span>
+          <span class="state-name">自动匹配完成：存在风险与缺失</span>
+          <span class="state-desc">— 匹配只执行一次；缺失关键证据默认阻断（NQ-H-007），不推断满足。请进入人工补录。</span>
         </div>
       </div>
 
-      <!-- 评分面板 -->
+      <!-- 匹配结果摘要 -->
       <section class="score-hero">
         <div class="score-ring">
           <div class="inner">
-            <div class="val">11/12</div>
-            <div class="cap">硬性条件满足</div>
+            <div class="val">1 项</div>
+            <div class="cap">关键缺失</div>
           </div>
         </div>
         <div class="info">
           <h2>河北农业大学东校区研究生宿舍建设项目施工（ND-2025）</h2>
-          <p class="sub" style="margin-top:2px">规则版本 golden_requirements_nongda.json v1.0.0 · as_of 2025-10-30 · 事后验证样本（实际已中标）</p>
+          <p class="sub" style="margin-top:2px">招标文件解析完成 · 已读取企业已解析资料 · 自动匹配结果（规则版本 v1.0.0）</p>
           <div class="rows">
             <div><span class="k">资格/响应性核查：</span><span class="v">pending（11/12 满足，1 待补）</span></div>
-            <div><span class="k">当前评分：</span><span class="v">not_full（客观项 5/5 可复算，主观项待内部评审）</span></div>
-            <div><span class="k">投标准备度：</span><span class="v">ready（审批前动作 4/4）</span></div>
-            <div><span class="k">内部准入：</span><span class="v" style="color:var(--warn)">未满足 → 不得进入审批</span></div>
+            <div><span class="k">风险项：</span><span class="v">2 项人工复核（技术标、商务标/信用）</span></div>
+            <div><span class="k">缺失项：</span><span class="v" style="color:var(--warn)">1 项待补（近三年财务审计报告或银行资信证明）</span></div>
+            <div><span class="k">当前状态：</span><span class="v" style="color:var(--warn)">阻断，补录后重新匹配</span></div>
             <div><span class="k">项目经理：</span><span class="v">M-ND-01（主推荐）硬条件核查通过</span></div>
             <div><span class="k">报价：</span><span class="v">121,598,056.76 元 ≤ 限价 124,715,908.89 元</span></div>
           </div>
           <div class="notice info" style="margin-top:10px;margin-bottom:0">
-            <b>满分 ≠ 自动投标</b>：内部“满分准入”仅是把项目送入人工审批队列的保守政策，不是评标委员会得分，
-            更不代表已投标。是否投标由企业负责人审批决定。
+            <b>结果说明</b>：系统展示条款、企业证据和缺失原因，不把缺失推断为满足；补录后由人工确认并重新执行匹配。
           </div>
         </div>
       </section>
 
       <!-- 四类结论 -->
       <section class="card">
-        <h2>四类结论（F008 §2 / ADR-001 §2.3）</h2>
+        <h2>匹配结果摘要（F008 / ADR-001）</h2>
         <table class="tbl" style="margin-top:8px">
           <thead><tr><th>结论</th><th>结果</th><th>说明</th></tr></thead>
           <tbody>
             <tr><td><b>① 资格/响应性核查</b></td><td><span class="badge warn">pending</span></td><td>11/12 满足；NQ-H-007（财务审计）证据缺失 → 待补，不推断</td></tr>
-            <tr><td><b>② 当前评分（内部口径）</b></td><td><span class="badge review">not_full</span></td><td>客观项 NQ-S-003/004 可复算 5/5；主观项 NQ-S-001/002 待内部质量评审</td></tr>
-            <tr><td><b>③ 投标准备度</b></td><td><span class="badge ok">ready</span></td><td>审批前动作 4/4（报名/文件获取、保证金到账）completed；递交/开标不作为审批前提</td></tr>
-            <tr><td><b>④ 内部准入</b></td><td><span class="badge warn">未满足</span></td><td>存在待补 + 待评审项 → 状态 blocked_missing_data，不进审批队列</td></tr>
+            <tr><td><b>② 风险项</b></td><td><span class="badge review">2 项人工复核</span></td><td>技术标主观项、商务标/信用评分公式或输入待人工确认</td></tr>
+            <tr><td><b>③ 缺失项</b></td><td><span class="badge warn">1 项待补</span></td><td>NQ-H-007 财务审计报告或银行资信证明缺失，默认阻断</td></tr>
+            <tr><td><b>④ 下一步</b></td><td><span class="badge info">人工补录</span></td><td>补齐材料后重新执行匹配，再提交人工审核</td></tr>
           </tbody>
         </table>
       </section>
 
       <!-- 硬条件与计分 -->
       <section class="card">
-        <h2>硬性条件（12 项）</h2>
+        <h2>逐条匹配明细（12 项硬性要求）</h2>
         <div class="bar"><i style="width:91.7%;background:var(--accent)"></i></div>
         <table class="tbl" style="margin-top:10px">
           <tbody id="hard-rows"></tbody>
         </table>
 
-        <h3>评分项（内部可复算 5/5；主观项不计入内部满分）</h3>
+        <h3>评分与风险项（仅展示解析结果，不自动作投标决定）</h3>
         <table class="tbl">
           <tbody id="scored-rows"></tbody>
         </table>
 
-        <h3>审批前动作（4/4）</h3>
+        <h3>动作项状态</h3>
         <table class="tbl">
           <tbody id="action-rows"></tbody>
         </table>
       </section>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <a class="btn" href="queue.html">查看阻断/待补/复核队列 →</a>
-        <a class="btn ghost" href="materials.html">← 调整资料选择</a>
+        <a class="btn" href="queue.html">进入人工补录 →</a>
+        <a class="btn ghost" href="matrix.html">← 查看自动匹配</a>
         <a class="btn ghost" href="exceptions.html#no_manager">对照：无合格项目经理异常态</a>
       </div>
     </div>

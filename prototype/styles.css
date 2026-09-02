@@ -149,6 +149,10 @@ a:hover { text-decoration: underline; }
 .card .sub { color: var(--ink-3); font-size: 13px; }
 .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
 .card-title-row h2 { margin: 0; }
+.supplement-panel {
+  margin-top: 14px; padding: 16px; border: 1px solid #cfe0ef; border-radius: 8px;
+  background: #fbfdff;
+}
 
 /* ---------- 徽标 ---------- */
 .badge {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>公司资料选择｜投标智能体原型</title>
+  <title>企业资料库｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,17 +15,17 @@
 
       <section class="card">
         <div class="card-title-row">
-          <h2>公司资料选择 — 用于本项目匹配</h2>
-          <span class="hint">企业私有资料层：只维护已验证资料；缺失字段标注“待补/待核实”，不推断（F006/F007）</span>
+          <h2>企业资料库（已解析资料）</h2>
+          <span class="hint">这是数据管理员维护的基础资料状态页；项目匹配自动读取 active 资料，不需要逐项目勾选。</span>
         </div>
 
-        <h3>① 企业资质（勾选参与匹配的资质）</h3>
+        <h3>① 企业资质（自动匹配来源）</h3>
         <div id="quals"></div>
 
         <h3>② 安全生产许可证</h3>
         <div id="safety"></div>
 
-        <h3>③ 可投标项目经理名录（主推荐 / 备选）</h3>
+        <h3>③ 可投标项目经理名录（系统自动筛选主推荐 / 备选）</h3>
         <div id="managers"></div>
 
         <div class="notice" style="margin-top:12px">
@@ -34,8 +34,8 @@
         </div>
 
         <div style="display:flex;gap:10px;margin-top:14px">
-          <a class="btn" href="score.html">确认选择 → 匹配与评分</a>
-          <a class="btn ghost" href="matrix.html">← 返回要求矩阵</a>
+          <a class="btn" href="matrix.html">返回自动匹配结果</a>
+          <a class="btn ghost" href="queue.html">去人工补录</a>
         </div>
       </section>
     </div>
@@ -69,15 +69,11 @@
           <div class="q-title">${q.name} · <b>${q.level}</b>
             <span class="badge ok">active</span>
             <span class="badge gray">有效期至 ${q.valid_until}</span>
-            <span class="badge ${q.selected ? "gold" : "gray"}">${q.selected ? "已勾选参与匹配" : "未勾选"}</span>
+            <span class="badge ${q.selected ? "gold" : "gray"}">${q.selected ? "active · 自动纳入匹配" : "inactive · 不纳入匹配"}</span>
           </div>
           <div class="q-desc">证据：${q.evidence} ｜ 数据责任人：数据管理员（测试期核验人暂定项目负责人）</div>
         </div>
-        <div class="q-actions">
-          <label style="display:flex;gap:6px;align-items:center;font-size:13px">
-            <input type="checkbox" ${q.selected ? "checked" : ""} onchange="alert('演示：切换勾选状态（原型不真实持久化）。')"> 参与匹配
-          </label>
-        </div>`;
+        <div class="q-actions"><span class="badge ${q.selected ? "ok" : "gray"}">${q.selected ? "已解析并核验" : "未启用"}</span></div>`;
       quals.appendChild(row);
     });
 

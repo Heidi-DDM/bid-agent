@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>招标要求矩阵｜投标智能体原型</title>
+  <title>解析与自动匹配｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,8 +15,8 @@
 
       <section class="card">
         <div class="card-title-row">
-          <h2>招标要求矩阵 — 河北农业大学东校区研究生宿舍建设项目施工</h2>
-          <span class="hint">点击任意行查看字段级证据抽屉（条款引用 + 企业证据 + 原文摘录）</span>
+          <h2>解析与自动匹配 — 河北农业大学东校区研究生宿舍建设项目施工</h2>
+          <span class="hint">解析完成后自动执行一次；企业资料来自已解析且已核验的资料库，不在此页重新选择。</span>
         </div>
 
         <div class="tabs" id="tabs">
@@ -28,12 +28,16 @@
         <div id="matrix-table"></div>
 
         <div class="notice" style="margin-top:12px">
-          <b>匹配口径（F008 §6.3 / ADR-001 §2.3）</b>：
+          <b>自动匹配口径（F008 §6.3 / ADR-001 §2.3）</b>：
           <span class="badge ok">满足</span> 证据充分且符合要求；
           <span class="badge warn">待补/不可判定</span> 关键证据缺失，默认阻断，不推断满足；
           <span class="badge review">人工复核</span> 解析不完整或主观项待内部评审；
           <span class="badge danger">不满足</span> 证据充分但明确不符合 → 一票否决。
           每一条结论均可回链条款与证据。
+        </div>
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+          <a class="btn" href="score.html">查看风险与缺失 →</a>
+          <a class="btn ghost" href="import.html">← 返回文件解析</a>
         </div>
       </section>
     </div>
