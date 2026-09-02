@@ -336,10 +336,28 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
                 f"executed={result['coverage'].get('executed')}",
         object_ref=project_id,
     )
+
+    # 6) 准入结果生成（F023 §2 第 6 步 / R024）：gate 运行 → AdmissionResult 不可变快照
+    #    + 旧结果置 stale + 项目准入状态迁移（qualified_full_score/blocked_*）。
+    #    mode=gate 才生成——诊断运行不驱动准入状态（F023 §2 第 4 步）。
+    admission = None
+    if mode == "gate":
+        from runtime.db.admission_service import generate_admission_result
+
+        admission = generate_admission_result(
+            session,
+            run=run,
+            engine_result=result,
+            requirements=req_dicts,
+            evidence=evidence,
+        )
+
     session.commit()
     logger.info(
-        "匹配完成 project_id=%s run=%s coverage=%s retrieval=%s",
+        "匹配完成 project_id=%s run=%s coverage=%s retrieval=%s admission=%s",
         project_id, run.run_id, result["coverage"], run.retrieval_run_id,
+        f"{admission.result_id}:{admission.internal_admission_result.get('status')}"
+        if admission else None,
     )
 
 

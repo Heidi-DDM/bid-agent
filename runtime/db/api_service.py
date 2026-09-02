@@ -378,6 +378,10 @@ def create_approval(session: Session, *, project_id: str, role: str, actor: str,
         admission_result_ref=admission_result_ref or f"admission:{project_id}:{result.result_id}",
     )
     session.add(approval)
+    # F023 §5：qualified_full_score → pending_bid_approval（进入人工审批队列的迁移点）
+    project = session.get(Project, project_id)
+    if project is not None:
+        project.admission_status = "pending_bid_approval"
     audit(session, actor=actor, action="create_approval",
           basis=approval.admission_result_ref, outcome="pending_bid_approval",
           object_ref=project_id)
@@ -422,6 +426,10 @@ def decide_approval(session: Session, *, project_id: str, role: str, actor: str,
         raise ApiError("invalid_request", f"不支持的决策: {decision}")
     approval.decided_at = datetime.now(timezone.utc)
     approval.state = "decided"
+    # F023 §5：pending_bid_approval → approved_for_bidding / rejected_by_approver
+    project = session.get(Project, project_id)
+    if project is not None:
+        project.admission_status = outcome
     audit(session, actor=actor, action=decision,
           basis=basis or approval.admission_result_ref, outcome=outcome,
           object_ref=project_id)

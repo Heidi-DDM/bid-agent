@@ -63,11 +63,12 @@ def _rule_set(session, project_id="ND-2025", rule_set_id="RS-1") -> None:
 def _requirement(session, requirement_id="NQ-H-001", as_of="2025-10-30", **kw) -> None:
     rule = kw.pop("rule", {"type": "qualification", "qualification_type": "建筑工程施工总承包",
                            "level": "二级"})
+    failure_effect = kw.pop("failure_effect", "not_qualified")
     session.add(Requirement(
         requirement_id=requirement_id, rule_set_id="RS-1", req_type="hard_requirement",
         category="资质", clause_ref="第三章四(1)", assertion="具备建筑工程施工总承包二级及以上资质",
         rule=rule, evidence_required=["qualification_record"],
-        missing_action="blocked_missing_data", failure_effect="not_qualified",
+        missing_action="blocked_missing_data", failure_effect=failure_effect,
         as_of=as_of, **kw,
     ))
     session.commit()
@@ -292,3 +293,349 @@ def test_approval_allowed_with_rag_snapshot(session):
     )
     assert data["state"] == "pending_bid_approval"
     assert data["admission_result_ref"].endswith("AR-1")
+
+
+# ---------- R024：admission_results 生成执行器（F023 §2 第 6 步 / F008 §4.6） ----------
+
+def _fake_evaluate_factory(hard_results: dict[str, str]):
+    """按 requirement_id → match_result 映射产出 engine_result（全 hard 场景）。"""
+
+    def fn(requirements, evidence, *, as_of, mode="gate", lot_id=None):
+        matrix, blocked, pending, review = [], [], [], []
+        for item in requirements:
+            result = hard_results.get(item["requirement_id"], "satisfied")
+            reason = {
+                "satisfied": "核验通过",
+                "not_satisfied": "证据充分但明确不满足",
+                "unverifiable": "关键证据缺失或无法核验",
+                "manual_review": "需人工复核",
+            }[result]
+            entry = {
+                "requirement_id": item["requirement_id"], "req_type": item["req_type"],
+                "clause_ref": item["clause_ref"], "match_result": result,
+                "match_reason": reason, "score": None,
+            }
+            matrix.append(entry)
+            if result == "not_satisfied":
+                blocked.append(entry)
+            elif result == "unverifiable":
+                pending.append(entry)
+            elif result == "manual_review":
+                review.append(entry)
+        hard = [m for m in matrix if m["req_type"] == "hard_requirement"]
+        hard_ids = {m["requirement_id"] for m in hard}
+        qualification = (
+            "failed" if any(m["requirement_id"] in hard_ids for m in blocked)
+            else ("pending" if any(m["requirement_id"] in hard_ids for m in pending)
+                  else "passed")
+        )
+        return {
+            "as_of": as_of, "mode": mode, "lot_id": lot_id, "matrix": matrix,
+            "coverage": {"executed": len(matrix), "declared": len(requirements),
+                         "complete": len(matrix) == len(requirements)},
+            "blocked": blocked, "pending": pending, "review": review,
+            "qualification_result": qualification,
+            "scoring_result": "full", "operational_readiness": "ready",
+            "internal_admission_eligible": (
+                not blocked and not pending and not review
+                and len(matrix) == len(requirements)
+            ),
+        }
+
+    return fn
+
+
+def _admissions(session, project_id="ND-2025"):
+    return session.scalars(
+        select(AdmissionResult)
+        .where(AdmissionResult.project_id == project_id)
+        .order_by(AdmissionResult.created_at)
+    ).all()
+
+
+def test_match_run_generates_full_score_admission(session):
+    _project(session)
+    _rule_set(session)
+    _requirement(session)
+    _qualification(session)
+    _chunk(session)
+
+    _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate, retrieve_fn=_fake_retrieve)
+
+    results = _admissions(session)
+    assert len(results) == 1
+    ar = results[0]
+    assert ar.run_id.startswith("MR-")
+    assert ar.internal_admission_eligible is True
+    assert ar.result_freshness == "current"
+    assert ar.qualification_result["status"] == "passed"
+    assert ar.qualification_result["satisfied"] == 1
+    assert ar.qualification_result["total"] == 1
+    assert ar.internal_admission_result["status"] == "qualified_full_score"
+    assert ar.blocked_items == [] and ar.pending_items == [] and ar.review_items == []
+    # 项目准入状态迁移：matching 前态 None → qualified_full_score（ADR-001 §2.2）
+    project = session.get(Project, "ND-2025")
+    assert project.admission_status == "qualified_full_score"
+    events = session.scalars(select(AuditEvent)).all()
+    assert any(
+        e.action == "admission.generated" and e.outcome.startswith("eligible=True")
+        for e in events
+    )
+
+
+def test_match_run_blocked_missing_maps_project_state(session):
+    _project(session)
+    _rule_set(session)
+    _requirement(session)
+    _qualification(session)
+
+    _execute_match_run(
+        session, "ND-2025",
+        evaluate_fn=_fake_evaluate_factory({"NQ-H-001": "unverifiable"}),
+    )
+
+    results = _admissions(session)
+    assert len(results) == 1
+    ar = results[0]
+    assert ar.internal_admission_eligible is False
+    assert ar.internal_admission_result["status"] == "blocked_missing_data"
+    assert ar.pending_items and ar.pending_items[0]["req"] == "NQ-H-001"
+    assert ar.blocked_items == []
+    project = session.get(Project, "ND-2025")
+    assert project.admission_status == "blocked_missing_data"
+
+
+def test_match_run_hard_failure_splits_qualification_vs_response(session):
+    # 资格性失败（failure_effect=not_qualified）→ not_qualified
+    _project(session)
+    _rule_set(session)
+    _requirement(session, requirement_id="NQ-H-001", failure_effect="not_qualified")
+    _qualification(session)
+    _execute_match_run(
+        session, "ND-2025",
+        evaluate_fn=_fake_evaluate_factory({"NQ-H-001": "not_satisfied"}),
+    )
+    ar = _admissions(session)[0]
+    assert ar.internal_admission_result["status"] == "not_qualified"
+    assert session.get(Project, "ND-2025").admission_status == "not_qualified"
+
+    # 响应性硬失败（failure_effect=blocked_hard_requirement）→ blocked_hard_requirement
+    _project(session, project_id="ND-2025-B")
+    _rule_set(session, project_id="ND-2025-B", rule_set_id="RS-B")
+    session.add(Requirement(
+        requirement_id="NQ-R-001", rule_set_id="RS-B", req_type="hard_requirement",
+        category="响应性", clause_ref="第三章四(1)",
+        assertion="响应性硬要求", rule={"type": "response", "evidence_type": "response_document"},
+        evidence_required=["response_document"], missing_action="blocked_hard_requirement",
+        failure_effect="blocked_hard_requirement", as_of="2025-10-30",
+    ))
+    session.commit()
+    _execute_match_run(
+        session, "ND-2025-B",
+        evaluate_fn=_fake_evaluate_factory({"NQ-R-001": "not_satisfied"}),
+    )
+    ar_b = _admissions(session, project_id="ND-2025-B")[0]
+    assert ar_b.internal_admission_result["status"] == "blocked_hard_requirement"
+    assert session.get(Project, "ND-2025-B").admission_status == "blocked_hard_requirement"
+
+
+def test_match_run_recalculate_marks_previous_stale(session):
+    _project(session)
+    _rule_set(session)
+    _requirement(session)
+    _qualification(session)
+
+    _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate)
+    _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate)
+
+    results = _admissions(session)
+    assert len(results) == 2
+    assert results[0].result_freshness == "stale"      # 旧快照失效（F023 §4）
+    assert results[1].result_freshness == "current"
+    events = session.scalars(select(AuditEvent)).all()
+    assert any(e.action == "admission.mark_stale" for e in events)
+
+
+def test_full_score_admission_enters_pending_bid_approval_and_decides(session):
+    """满分生成 → 审批队列（pending_bid_approval）→ 审批通过（approved_for_bidding）全链。"""
+    from runtime.core import rbac
+    from runtime.db import api_service
+
+    _project(session)
+    _rule_set(session)
+    _requirement(session)
+    _qualification(session)
+    _chunk(session)
+    _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate, retrieve_fn=_fake_retrieve)
+
+    ar = _admissions(session)[0]
+    assert ar.internal_admission_eligible is True
+    project = session.get(Project, "ND-2025")
+    assert project.admission_status == "qualified_full_score"
+
+    data = api_service.create_approval(
+        session, project_id="ND-2025", role=rbac.BUSINESS_HEAD, actor="经营负责人",
+        admission_result_ref=f"admission:ND-2025:{ar.result_id}",
+    )
+    assert data["state"] == "pending_bid_approval"
+    session.expire_all()
+    assert session.get(Project, "ND-2025").admission_status == "pending_bid_approval"
+
+    decided = api_service.decide_approval(
+        session, project_id="ND-2025", role=rbac.BUSINESS_HEAD, actor="经营负责人",
+        decision="approved", comment="资料齐备，同意投标",
+    )
+    assert decided["outcome"] == "approved_for_bidding"
+    assert session.get(Project, "ND-2025").admission_status == "approved_for_bidding"
+
+
+# ---------- R024 生成器白盒：结论结构/分流（engine_result 直接注入） ----------
+
+def _mk_run(session, run_id="MR-G1") -> MatchRun:
+    session.add(MatchRun(
+        run_id=run_id, project_id="ND-2025", rule_set_id="RS-1", as_of="2025-10-30",
+        mode="gate", coverage={"executed": 1, "declared": 1, "complete": True},
+        status="completed", retrieval_run_id="rr-1", index_version="iv-1",
+        candidate_chunk_ids=["CH-1"],
+        structured_verification={"rag_degraded": None, "checked": [], "removed_material_ids": []},
+        evidence_snapshot_hash="e" * 64,
+    ))
+    session.flush()
+    return session.get(MatchRun, run_id)
+
+
+def _req_dict(requirement_id="NQ-H-001", *, req_type="hard_requirement", max_score=None,
+              failure_effect="not_qualified", rule=None):
+    return {
+        "requirement_id": requirement_id, "req_type": req_type, "category": "资质",
+        "clause_ref": "第三章四(1)", "assertion": f"{requirement_id} 的条款断言",
+        "rule": rule or {"type": "qualification", "qualification_type": "建筑工程施工总承包",
+                         "level": "二级"},
+        "evidence_required": ["qualification_record"], "failure_effect": failure_effect,
+        "as_of": "2025-10-30", "max_score": max_score, "score_nature": None,
+        "score_formula": None, "action_status": None,
+    }
+
+
+def _hard_entry(requirement_id="NQ-H-001", result="satisfied", reason="核验通过"):
+    return {
+        "requirement_id": requirement_id, "req_type": "hard_requirement",
+        "clause_ref": "第三章四(1)", "match_result": result, "match_reason": reason,
+        "score": None,
+    }
+
+
+def _engine_result(matrix, *, blocked=None, pending=None, review=None):
+    blocked = [e for e in matrix if e["match_result"] == "not_satisfied"] if blocked is None else blocked
+    pending = [e for e in matrix if e["match_result"] == "unverifiable"] if pending is None else pending
+    review = [e for e in matrix if e["match_result"] == "manual_review"] if review is None else review
+    hard = [e for e in matrix if e["req_type"] == "hard_requirement"]
+    hard_ids = {e["requirement_id"] for e in hard}
+    qualification = (
+        "failed" if any(e["requirement_id"] in hard_ids for e in blocked)
+        else ("pending" if any(e["requirement_id"] in hard_ids for e in pending) else "passed")
+    )
+    return {
+        "matrix": matrix,
+        "coverage": {"executed": len(matrix), "declared": len(matrix), "complete": True},
+        "blocked": blocked, "pending": pending, "review": review,
+        "qualification_result": qualification, "scoring_result": "full",
+        "operational_readiness": "ready",
+        "internal_admission_eligible": not blocked and not pending and not review,
+    }
+
+
+def test_generate_admission_whitelist_full_score(session):
+    from runtime.db.admission_service import generate_admission_result
+
+    _project(session)
+    run = _mk_run(session)
+    req = _req_dict()
+    ar = generate_admission_result(
+        session, run=run, engine_result=_engine_result([_hard_entry()]),
+        requirements=[req], evidence={},
+    )
+    session.commit()
+    assert ar.result_id.startswith("AR-")
+    assert ar.internal_admission_eligible is True
+    assert ar.qualification_result == {
+        "status": "passed", "satisfied": 1, "total": 1,
+        "items": [_queue_item_like(_hard_entry(), req)],
+    }
+    assert ar.internal_admission_result["status"] == "qualified_full_score"
+    assert ar.manager_matches == []
+    assert len(ar.explanation) >= 6
+
+
+def _queue_item_like(entry, req):
+    return {
+        "req": entry["requirement_id"], "clause": entry["clause_ref"],
+        "text": req["assertion"], "match_result": entry["match_result"],
+        "req_type": entry["req_type"], "failure_effect": req["failure_effect"],
+    }
+
+
+def test_generate_admission_review_only_stays_matching(session):
+    """manual_review-only 结果：不谎报为缺失/失败，项目态保持 matching 待人工复核。"""
+    from runtime.db.admission_service import generate_admission_result
+
+    _project(session)
+    run = _mk_run(session)
+    req = _req_dict()
+    entry = _hard_entry(result="manual_review", reason="规则类型尚未实现，需人工复核")
+    ar = generate_admission_result(
+        session, run=run,
+        engine_result=_engine_result([entry], blocked=[], pending=[], review=[entry]),
+        requirements=[req], evidence={},
+    )
+    session.commit()
+    assert ar.internal_admission_eligible is False
+    assert ar.internal_admission_result["status"] == "manual_review"
+    assert ar.review_items and ar.review_items[0]["req"] == "NQ-H-001"
+    project = session.get(Project, "ND-2025")
+    assert project.admission_status == "matching"  # 不谎报为缺失或失败
+
+
+def test_generate_admission_scored_aggregation(session):
+    """计分项聚合：total/max/gap/internal_full_score_ready（F008 §4.6 可计算口径）。"""
+    from runtime.db.admission_service import generate_admission_result
+
+    _project(session)
+    run = _mk_run(session)
+    scored_req = _req_dict(
+        "NQ-S-001", req_type="scored_requirement", max_score=5.0,
+        rule={"type": "similar_performance", "subject": "bidder", "count": 1},
+    )
+    scored_entry = {
+        "requirement_id": "NQ-S-001", "req_type": "scored_requirement",
+        "clause_ref": "第三章四(1)", "match_result": "satisfied",
+        "match_reason": "业绩满足", "score": 3.0,
+    }
+    ar = generate_admission_result(
+        session, run=run,
+        engine_result=_engine_result([scored_entry]),
+        requirements=[scored_req], evidence={},
+    )
+    session.commit()
+    assert ar.total_score == 3.0
+    assert ar.max_total_score == 5.0
+    assert len(ar.score_gap_items) == 1
+    assert ar.score_gap_items[0]["gap"] == 2.0
+    assert ar.scoring_result["objective_score"] == 3.0
+    assert ar.scoring_result["objective_max"] == 5.0
+    assert ar.scoring_result["internal_full_score_ready"] is False
+
+
+def test_generate_admission_diagnostic_mode_rejected(session):
+    from runtime.core.errors import ApiError
+    from runtime.db.admission_service import generate_admission_result
+
+    _project(session)
+    run = _mk_run(session)
+    run.mode = "diagnostic"
+    session.flush()
+    with pytest.raises(ValueError):
+        generate_admission_result(
+            session, run=run, engine_result=_engine_result([_hard_entry()]),
+            requirements=[_req_dict()], evidence={},
+        )
