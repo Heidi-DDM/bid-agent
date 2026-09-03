@@ -87,7 +87,11 @@ def build_enterprise_evidence(
             "evidence_refs": _get(q, "evidence_refs") or [],
         }
         if _snapshot_eligible(record, as_of):
-            evidence.setdefault("qualification_record", []).append(record)
+            # F022 §3：安全生产许可证为独立 evidence kind（engine evidence_type=safety_license）
+            if "安全生产" in str(_get(q, "category") or ""):
+                evidence.setdefault("safety_license", []).append(record)
+            else:
+                evidence.setdefault("qualification_record", []).append(record)
     for p in performances or []:
         scale = _get(p, "scale_metrics") or {}
         record = {
@@ -108,6 +112,15 @@ def build_enterprise_evidence(
         if _snapshot_eligible(record, as_of):
             evidence.setdefault("similar_performance", []).append(record)
     for m in managers or []:
+        active = _get(m, "active_projects")
+        # JSONB 列若因导入缺陷存成字符串 '[]'（normalize 污染历史数据）→ 容错为空列表
+        if isinstance(active, str):
+            try:
+                import json as _json
+
+                active = _json.loads(active) if active.strip() else []
+            except ValueError:
+                active = []
         record = {
             "material_id": _get(m, "material_id"),
             "manager_id": _get(m, "manager_id"),
@@ -115,7 +128,8 @@ def build_enterprise_evidence(
             "specialty": [_get(m, "specialty")] if _get(m, "specialty") else [],
             "cert_level": _get(m, "cert_level"),
             "cert_valid_until": _iso(_get(m, "cert_valid_until")),
-            "active_projects": _get(m, "active_projects") or [],
+            "b_cert": _get(m, "b_cert_no"),  # R022-③：安全B证编号（0008 补齐）；缺失=None→engine require_b_cert 判 unverifiable
+            "active_projects": active or [],
             "availability": _get(m, "availability"),
             "status": _get(m, "status"),
             "verified_at": _iso(_get(m, "verified_at")),
@@ -126,11 +140,27 @@ def build_enterprise_evidence(
         if _snapshot_eligible(record, as_of):
             evidence.setdefault("manager_profile", []).append(record)
     for p in personnel or []:
+        cert_level = _get(p, "cert_level")
+        is_safety_officer = str(cert_level or "").upper().startswith("C") or "安全" in str(_get(p, "specialty") or "")
+        if is_safety_officer:
+            # engine safety_officer 判定：cert_type=C（F022 §3：C 证专职安全员）
+            record = {
+                "material_id": _get(p, "material_id"),
+                "personnel_id": _get(p, "personnel_id"),
+                "cert_type": str(cert_level or "").upper()[:1] or "C",
+                "status": _get(p, "status"),
+                "verified_at": _iso(_get(p, "verified_at")),
+                "valid_from": _iso(_get(p, "valid_from")),
+                "valid_until": _iso(_get(p, "valid_until")),
+            }
+            if _snapshot_eligible(record, as_of):
+                evidence.setdefault("safety_officer_cert", []).append(record)
+            continue
         record = {
             "material_id": _get(p, "material_id"),
             "personnel_id": _get(p, "personnel_id"),
             "specialty": _get(p, "specialty"),
-            "cert_level": _get(p, "cert_level"),
+            "cert_level": cert_level,
             "status": _get(p, "status"),
             "verified_at": _iso(_get(p, "verified_at")),
             "valid_from": _iso(_get(p, "valid_from")),

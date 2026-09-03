@@ -153,6 +153,87 @@ def _execute_parse_tender_document(session, input_ref: str | None,
     )
 
 
+def _execute_ocr_route(session, input_ref: str | None) -> None:
+    """ocr.route 执行器（R022-② / F022 §2 第 4-6 步）：
+
+    企业资料材料（不可变原文）→ Document Router 分流（文本 PDF/DOCX 直接
+    抽取；扫描件 tesseract OCR 逐页置信度）→ EvidenceFile 落库
+    （page_no/ocr_confidence/source_hash），低置信（<0.6）或损坏/不支持 →
+    review_status=pending_review 进人工复核队列；文本直读 → 无需复核。
+
+    不静默入库（F022 §5）：路由失败/无产物抛错 → 任务 retryable/failed，
+    不伪造成功。input_ref = material_id（取最新版本）。"""
+    if not input_ref:
+        raise ValueError("ocr.route 任务缺少 input_ref（material_id）")
+    from pathlib import Path
+
+    from sqlalchemy import select
+
+    from runtime.core.config import object_store_root
+    from runtime.db import api_service
+    from runtime.db.models import EvidenceFile, Material, MaterialVersion
+    from runtime.parsing.router import route_document
+
+    material = session.scalar(
+        select(Material)
+        .where(Material.material_id == input_ref)
+        .order_by(Material.version.desc())
+        .limit(1)
+    )
+    if material is None:
+        raise ValueError(f"材料不存在: {input_ref}")
+    mv = session.get(MaterialVersion, (material.material_id, material.version))
+    if mv is None:
+        raise RuntimeError(f"material_versions 缺不可变记录 {material.material_id}:v{material.version}")
+    path = Path(object_store_root()) / mv.object_uri
+    if not path.is_file():
+        raise RuntimeError(f"原文缺失: {path}（OCR 不得伪造产物）")
+
+    route = route_document(str(path))
+    if route.kind in ("unsupported", "error") or not route.pages:
+        # 损坏/不支持 → 不静默跳过：任务失败可重试，人工可在 review-queue 看到
+        raise RuntimeError(f"OCR 文档路由失败 kind={route.kind} error={route.error} note={route.note}")
+
+    needs_review = route.needs_review or (route.confidence is not None and route.confidence < 0.6)
+    page = next((p for p in route.pages), None)
+    existing = session.scalar(
+        select(EvidenceFile).where(
+            EvidenceFile.material_id == material.material_id,
+            EvidenceFile.source_hash == material.content_hash,
+        )
+    )
+    if existing is not None:
+        logger.info("OCR 结果已存在 evidence=%s material=%s（幂等跳过）",
+                    existing.evidence_id, material.material_id)
+        session.commit()
+        return
+    ev = EvidenceFile(
+        evidence_id=f"E-{_dt.datetime.now(_dt.timezone.utc).strftime('%s')}-ocr",
+        material_id=material.material_id,
+        file_type=material.material_type or "证书扫描件",
+        object_uri=mv.object_uri,
+        source_hash=material.content_hash,
+        page_no=page.page_no if page else None,
+        ocr_confidence=route.confidence,
+        classification=material.classification or "internal",
+        uploaded_by="system:ocr",
+        review_status="pending_review" if needs_review else None,
+        review_note=(f"kind={route.kind} 低置信度需人工复核" if needs_review else None),
+    )
+    session.add(ev)
+    api_service.audit(
+        session, actor="system", action="ocr.route.completed",
+        basis=f"material={material.material_id}:v{material.version} kind={route.kind}",
+        outcome=f"evidence={ev.evidence_id} confidence={route.confidence} "
+                f"review={'pending' if needs_review else 'none'}",
+        object_ref=material.project_id or material.material_id,
+    )
+    session.commit()
+    logger.info("OCR 路由完成 material=%s kind=%s confidence=%s review=%s",
+                material.material_id, route.kind, route.confidence,
+                "pending_review" if needs_review else "none")
+
+
 def _pages_from_material_version(session, material_id: str, version: int) -> list:
     """从不可变原文（material_versions.object_uri）重路由出 ParsedPage 列表。
 
@@ -214,6 +295,9 @@ def _execute(session, kind: str, input_ref: str | None, project_id: str | None =
         return
     if kind == "parse.tender_document":
         _execute_parse_tender_document(session, input_ref, project_id)
+        return
+    if kind == "ocr.route":
+        _execute_ocr_route(session, input_ref)
         return
     if kind == "match.run":
         _execute_match_run(session, project_id, mode="gate")

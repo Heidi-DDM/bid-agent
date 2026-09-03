@@ -3,6 +3,7 @@
 # GET  /api/v1/enterprise/safety-license
 # GET  /api/v1/enterprise/managers
 # POST /api/v1/qualifications、/performances、/personnel、/evidences（资料维护，缺证据默认 pending_verification）
+# R022 追加：批量导入（xlsx/结构化记录）、核验队列、批量核验/驳回/重导入、过期扫描
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -13,8 +14,32 @@ from sqlalchemy.orm import Session
 from runtime.routers.deps import get_actor, get_db, get_role, get_request_id, require_role
 from runtime.core.errors import ApiError
 from runtime.db import api_service
+from runtime.db import enterprise_service
 
 router = APIRouter(prefix="/api/v1", tags=["enterprise"])
+
+
+class ImportBatchBody(BaseModel):
+    """R022 批量导入批次：一个 kind 一请求（结构化记录数组，与 r006/r007
+    演练产物同构；xlsx 由前端/脚本转成该结构后调用，避免 runtime 引入 openpyxl）。"""
+    kind: str = Field(..., description="qualifications/performances/personnel/managers")
+    rows: list[dict] = Field(..., min_length=1)
+    category: str | None = Field(None, description="personnel 子类：registered_builder/technical_title/post_certificate")
+    source: str = Field("manual", description="来源标注（文件名/批次号）")
+    data_owner: str = Field(..., description="数据责任人（缺省行级覆盖）")
+    material_id: str | None = None
+
+
+class VerifyBody(BaseModel):
+    kind: str = Field(...)
+    ids: list[str] = Field(..., min_length=1)
+    action: str = Field(..., pattern="^(approve|reject)$")
+    comment: str | None = None
+
+
+class ReimportBody(BaseModel):
+    kind: str = Field(...)
+    ids: list[str] = Field(..., min_length=1)
 
 
 class QualificationBody(BaseModel):
@@ -269,3 +294,104 @@ def create_evidence(
                       outcome="recorded", object_ref=ev.evidence_id)
     session.commit()
     return {"request_id": request_id, "evidence_id": ev.evidence_id}
+
+
+# ── R022 批量导入与核验（F022 §2 / 08-清单 §2.2）────────────────
+
+@router.post("/enterprise/import")
+def import_batch(
+    body: ImportBatchBody,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+) -> dict:
+    """批量导入企业资料（数据管理员；缺证据默认 pending_verification）。"""
+    require_role(role, "enterprise", "write", session=session, actor=actor)
+    kind = body.kind
+    if kind == "qualifications":
+        result = enterprise_service.import_qualifications(
+            session, body.rows, data_owner=body.data_owner, actor=actor,
+            source=body.source, material_id=body.material_id)
+    elif kind == "performances":
+        result = enterprise_service.import_performances(
+            session, body.rows, data_owner=body.data_owner, actor=actor,
+            source=body.source, material_id=body.material_id)
+    elif kind == "personnel":
+        if not body.category:
+            raise ApiError("invalid_request", "personnel 导入必须提供 category（registered_builder/technical_title/post_certificate）")
+        result = enterprise_service.import_personnel(
+            session, body.rows, category=body.category,
+            data_owner=body.data_owner, actor=actor, source=body.source)
+    elif kind == "managers":
+        result = enterprise_service.import_managers(
+            session, body.rows, data_owner=body.data_owner, actor=actor,
+            source=body.source)
+    else:
+        raise ApiError("invalid_request",
+                       f"未知导入类型: {kind}（允许 qualifications/performances/personnel/managers）")
+    session.commit()
+    return {"request_id": request_id, "import": result}
+
+
+@router.get("/enterprise/verification-queue")
+def verification_queue(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+    kind: str | None = None,
+    status: str = "pending_verification",
+) -> dict:
+    """核验队列：待核验（默认）/已驳回/已过期记录（数据管理员/经营负责人）。"""
+    require_role(role, "enterprise", "read", session=session, actor=role)
+    queue = enterprise_service.list_verification_queue(
+        session, kind=kind, status=status)
+    return {"request_id": request_id, "status": status, "count": len(queue),
+            "items": queue}
+
+
+@router.post("/enterprise/verify")
+def verify_batch(
+    body: VerifyBody,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+) -> dict:
+    """批量核验：approve（pending→active，填 verified_at；无证据拒绝）/ reject。"""
+    require_role(role, "enterprise", "verify", session=session, actor=actor)
+    result = enterprise_service.verify_records(
+        session, kind=body.kind, ids=body.ids, action=body.action,
+        actor=actor, comment=body.comment)
+    session.commit()
+    return {"request_id": request_id, "verify": result}
+
+
+@router.post("/enterprise/reimport")
+def reimport_batch(
+    body: ReimportBody,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+) -> dict:
+    """重导入：rejected/expired → pending_verification（新核验周期，审计留痕）。"""
+    require_role(role, "enterprise", "write", session=session, actor=actor)
+    result = enterprise_service.reimport_records(
+        session, kind=body.kind, ids=body.ids, actor=actor)
+    session.commit()
+    return {"request_id": request_id, "reimport": result}
+
+
+@router.post("/enterprise/expire-overdue")
+def expire_overdue(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+) -> dict:
+    """手动触发过期扫描：active 且 valid_until 已过的记录置 expired（数据管理员）。"""
+    require_role(role, "enterprise", "verify", session=session, actor=actor)
+    count = enterprise_service.expire_overdue(session)
+    session.commit()
+    return {"request_id": request_id, "expired": count}

@@ -70,16 +70,20 @@ def ocr_review_queue(
     role: str = Depends(get_role),
     session: Session = Depends(get_db),
 ) -> dict:
+    """人工复核队列（F022 §2.6）：review_status=pending_review 或低置信未复核。"""
     require_role(role, "ocr", "review", session=session, actor=role)
     rows = session.scalars(
         select(EvidenceFile).where(
-            (EvidenceFile.ocr_confidence.is_(None)) | (EvidenceFile.ocr_confidence < 0.8)
+            (EvidenceFile.review_status == "pending_review")
+            | ((EvidenceFile.review_status.is_(None))
+               & (EvidenceFile.ocr_confidence.is_(None) | (EvidenceFile.ocr_confidence < 0.8)))
         ).order_by(EvidenceFile.created_at)
     ).all()
     return {"request_id": request_id, "items": [
         {"evidence_id": row.evidence_id, "material_id": row.material_id,
          "ocr_confidence": row.ocr_confidence, "page_no": row.page_no,
-         "file_type": row.file_type}
+         "file_type": row.file_type, "review_status": row.review_status,
+         "review_note": row.review_note}
         for row in rows
     ]}
 
@@ -93,13 +97,21 @@ def review_ocr(
     actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
+    """人工复核写回（F022 §2.6/§5）：approved/rejected/revised 落到 evidence 状态+留痕。"""
     require_role(role, "ocr", "review", session=session, actor=actor, object_ref=evidence_id)
     evidence = session.get(EvidenceFile, evidence_id)
     if evidence is None:
         raise ApiError("not_found", f"OCR 证据不存在: {evidence_id}")
-    api_service.audit(session, actor=body.reviewer or actor, action="ocr.review",
-                      basis=f"evidence_id={evidence_id}", outcome=body.outcome,
-                      object_ref=evidence_id)
+    reviewer = body.reviewer or actor
+    from datetime import datetime, timezone
+
+    evidence.review_status = body.outcome  # approved / rejected / manual_review
+    evidence.reviewed_by = reviewer
+    evidence.reviewed_at = datetime.now(timezone.utc)
+    evidence.review_note = body.comment or evidence.review_note
+    api_service.audit(session, actor=reviewer, action="ocr.review",
+                      basis=f"evidence_id={evidence_id} material={evidence.material_id}",
+                      outcome=body.outcome, object_ref=evidence_id)
     session.commit()
     return {"request_id": request_id, "evidence_id": evidence_id,
             "status": body.outcome}

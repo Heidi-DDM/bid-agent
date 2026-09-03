@@ -202,6 +202,55 @@ def test_openapi_registers_rag_routes(client):
         assert path in paths, path
 
 
+def test_openapi_registers_r022_enterprise_routes(client):
+    # R022：批量导入 / 核验队列 / 批量核验 / 重导入 / 过期扫描
+    resp = client.get("/openapi.json")
+    assert resp.status_code == 200
+    paths = resp.json()["paths"]
+    for path in [
+        "/api/v1/enterprise/import",
+        "/api/v1/enterprise/verification-queue",
+        "/api/v1/enterprise/verify",
+        "/api/v1/enterprise/reimport",
+        "/api/v1/enterprise/expire-overdue",
+    ]:
+        assert path in paths, path
+
+
+def test_r022_import_requires_enterprise_write(client):
+    # 批量导入写企业资料：data_admin 允许；bid_specialist/legal 403（不触库）
+    body = {"kind": "qualifications", "rows": [{"category": "X", "level": "一级"}],
+            "data_owner": "项目负责人"}
+    resp = client.post("/api/v1/enterprise/import", json=body,
+                       headers=_headers("bid_specialist"))
+    assert resp.status_code == 403, resp.text
+    resp2 = client.post("/api/v1/enterprise/import", json=body,
+                        headers=_headers("legal"))
+    assert resp2.status_code == 403, resp2.text
+
+
+def test_r022_verify_requires_enterprise_verify(client):
+    # 核验动作：仅 data_admin（enterprise verify）；投标专员 403
+    body = {"kind": "qualifications", "ids": ["Q-x"], "action": "approve"}
+    resp = client.post("/api/v1/enterprise/verify", json=body,
+                       headers=_headers("bid_specialist"))
+    assert resp.status_code == 403, resp.text
+
+
+def test_r022_verification_queue_readable_by_admin_and_head(client):
+    # 核验队列读门禁：enterprise:read 仅 data_admin（RBAC F020 §5）；
+    # business_head（审批人）/legal 均 403（不触库）。沙盒无库时 data_admin 过权限检查
+    # 后触库失败 → 500 统一错误结构（与既有 test_enterprise_data_allowed_for_data_admin 约定一致）
+    resp = client.get("/api/v1/enterprise/verification-queue",
+                      headers=_headers("data_admin"))
+    assert resp.status_code == 500, resp.text
+    assert resp.json()["error"]["code"] == "internal_error"
+    for role in ("business_head", "legal"):
+        resp = client.get("/api/v1/enterprise/verification-queue",
+                          headers=_headers(role))
+        assert resp.status_code == 403, f"{role}: {resp.text}"
+
+
 # ---------- R021-4 解析复核 RBAC（F021 §2.7：投标专员复核/确认；写 = tender_document write） ----------
 
 def test_parse_review_requires_tender_doc_write(client):

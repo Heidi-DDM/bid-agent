@@ -102,6 +102,46 @@ def test_manager_profile_mapping():
     assert records[0]["valid_until"] == "2027-01-01"
 
 
+def test_manager_active_projects_string_jsonb_tolerated():
+    """JSONB 列被 normalize 污染成字符串 '[]' 的历史数据 → 容错为空列表（R022 回归）。"""
+    evidence = matching.build_enterprise_evidence(
+        managers=[{
+            "manager_id": "PM-0001", "display_name": "张**", "specialty": "建筑工程",
+            "cert_level": "一级", "b_cert_no": "冀建安B(2023)0001",
+            "active_projects": "[]", "availability": "available", "status": "active",
+            "verified_at": "2025-01-10",
+        }],
+        as_of="2025-10-30",
+    )
+    records = evidence.get("manager_profile", [])
+    assert records and records[0]["active_projects"] == []
+
+
+def test_safety_license_and_safety_officer_split():
+    """R022：安全生产许可证单列 safety_license；C 证安全员单列 safety_officer_cert。"""
+    evidence = matching.build_enterprise_evidence(
+        qualifications=[
+            {"category": "建筑工程施工总承包", "level": "特级", "status": "active",
+             "verified_at": "2025-09-15", "evidence_refs": ["E1"]},
+            {"category": "安全生产许可证", "level": "不分等级", "status": "active",
+             "verified_at": "2025-09-15", "evidence_refs": ["E2"]},
+        ],
+        personnel=[
+            {"personnel_id": "P1", "specialty": "安全", "cert_level": "C",
+             "status": "active", "verified_at": "2025-09-20"},
+            {"personnel_id": "P2", "specialty": "暖通", "cert_level": "中级",
+             "status": "active", "verified_at": "2025-09-20"},
+        ],
+        as_of="2025-10-30",
+    )
+    assert len(evidence.get("qualification_record", [])) == 1
+    assert len(evidence.get("safety_license", [])) == 1
+    assert evidence["safety_license"][0]["category"] == "安全生产许可证"
+    assert len(evidence.get("safety_officer_cert", [])) == 1
+    assert evidence["safety_officer_cert"][0]["cert_type"] == "C"
+    assert len(evidence.get("technical_team_member", [])) == 1
+
+
 # ---------- 快照哈希 ----------
 
 def test_snapshot_hash_stable_and_sensitive():

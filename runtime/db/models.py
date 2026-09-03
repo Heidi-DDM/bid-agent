@@ -226,6 +226,10 @@ class EvidenceFile(Base):
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # 原文 hash，不可变
     page_no: Mapped[int | None] = mapped_column(Integer)  # OCR 页码定位
     ocr_confidence: Mapped[float | None] = mapped_column(Float)  # 低置信度 → 人工复核
+    review_status: Mapped[str | None] = mapped_column(String(24))  # 0009：NULL/approved/rejected/pending_review/revised
+    reviewed_by: Mapped[str | None] = mapped_column(String(128))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_note: Mapped[str | None] = mapped_column(Text)
     classification: Mapped[str] = mapped_column(String(16), nullable=False, default="internal")  # internal/confidential
     uploaded_by: Mapped[str] = mapped_column(String(128), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
@@ -310,7 +314,8 @@ class Manager(Base):
     reg_cert_type: Mapped[str] = mapped_column(String(32), nullable=False)  # 一级建造师/二级建造师等
     reg_cert_no: Mapped[str] = mapped_column(String(128), nullable=False)  # 唯一，格式校验；缺失待补
     cert_level: Mapped[str] = mapped_column(String(32), nullable=False)  # 一级/二级
-    cert_valid_until: Mapped[date] = mapped_column(Date, nullable=False)  # 过期自动 expired
+    b_cert_no: Mapped[str | None] = mapped_column(String(128))  # 安全B证编号（0008 补齐；缺失=NULL=待补）
+    cert_valid_until: Mapped[date | None] = mapped_column(Date)  # 缺失=NULL=待补（0008 改 nullable）
     edu_safety_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     # valid / expiring / expired / pending
     eligible_project_types: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # 与项目类型匹配
