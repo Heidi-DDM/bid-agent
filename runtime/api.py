@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from runtime.routers import approvals, auth, enterprise, intake, knowledge, materials, match, ocr, parse, projects
@@ -46,6 +47,21 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+# R012：prototype 静态前端（本地 8080）跨域访问 API（仅非 prod；prod fail-closed 不加 CORS）
+if app_env() != "prod":
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:8080",
+            "http://localhost:8080",
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # 挂载 F020 业务路由
 app.include_router(auth.router)

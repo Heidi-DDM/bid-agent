@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>人工补录｜投标智能体原型</title>
+  <title>人工复核与补录｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,123 +12,343 @@
   <div class="layout">
     <div class="main">
       <div class="steps"></div>
+      <div id="api-error" style="display:none"></div>
 
+      <!-- A. 解析候选复核（材料处于 manual_review 时） -->
+      <section class="card" id="review-panel">
+        <div class="card-title-row">
+          <h2>解析候选复核（<span id="rv-material">MAT-ND-TENDER</span> · 项目 <span id="rv-proj">ND-2025</span>）</h2>
+          <span class="badge review" id="rv-badge">加载中…</span>
+        </div>
+        <p class="sub" style="margin-top:6px">投标专员逐条复核解析产出的规则/主卡候选（F021 §2.7）；全部处理后可「确认写入规则集」，随后系统自动建索引并触发首次匹配。驳回项不进入规则集。</p>
+        <div id="rv-progress" class="hint" style="margin-top:8px"></div>
+        <div id="candidates-box" style="margin-top:10px"><div class="hint">加载中…</div></div>
+        <div id="confirm-row" style="margin-top:12px;display:none">
+          <button class="btn" id="btn-confirm">确认写入规则集并触发匹配</button>
+          <span class="hint" id="confirm-hint"></span>
+        </div>
+      </section>
+
+      <!-- B. 处置队列（真实 /queues） -->
       <section class="card">
         <div class="card-title-row">
-          <h2>人工补录与重算</h2>
-          <span class="hint">自动匹配结果中的缺失项在此补录；补录完成后由人工确认并重新执行匹配。</span>
+          <h2>风险与缺项处置队列（项目 ND-2025）</h2>
+          <span class="hint">blocked / pending / review 来自最近一次准入结果；处置方式：补录材料 → 数据管理员核验 → 重算。</span>
         </div>
+        <div id="queues-box"><div class="hint">加载中…</div></div>
+      </section>
 
-        <h3 style="margin-top:4px">① 高风险项（blocked_hard_requirement）— 证据充分但不满足</h3>
-        <div class="queue-card" style="border-color:#f3c1c1;background:var(--danger-bg)">
-          <div class="q-icon" style="background:var(--danger-bg);color:var(--danger)">✕</div>
-          <div class="q-body">
-            <div class="q-title">广宗县葫芦中学建设项目
-              <span class="badge danger">blocked_hard_requirement</span>
-              <span class="badge danger">资质过期</span>
-            </div>
-            <div class="q-desc">
-              条款：招标公告 §3.4 ｜ 要求：具备有效的企业安全生产许可证 ｜
-              证据：安全生产许可证 有效期至 2026-06-30（已过期 2 个月）→ 证据充分但明确不满足，一票否决，不得进入审批。
-            </div>
-          </div>
-          <div class="q-actions">
-            <button class="btn sm ghost" onclick="alert('演示：已生成资料更新任务，交由数据管理员核验。')">发起资料更新</button>
-            <a class="btn sm" href="exceptions.html#expired">查看异常态演示</a>
+      <!-- C. 人工补录表单 -->
+      <section class="card" id="supplement-panel">
+        <div class="card-title-row"><h2>人工补录材料</h2><span class="hint">上传缺失证据文件（pdf/docx）→ 提交后由数据管理员核验 → 重算</span></div>
+        <div class="form-grid" style="margin-top:10px">
+          <div class="form-item"><label>补录材料说明（材料 ID）</label>
+            <input type="text" id="sup-material-id" value="MAT-ND-SUPPLEMENT" class="inp"></div>
+          <div class="form-item"><label>数据责任人 data_owner</label>
+            <input type="text" id="sup-owner" value="演示-数据管理员" class="inp"></div>
+          <div class="form-item"><label>有效期（YYYY-MM-DD，可空）</label>
+            <input type="date" id="sup-valid" class="inp"></div>
+          <div class="form-item full">
+            <label>证据文件（pdf/docx）*</label>
+            <input type="file" id="sup-file" accept=".pdf,.docx" class="inp">
           </div>
         </div>
-
-        <h3>② 缺失材料（blocked_missing_data）— 默认阻断</h3>
-        <div class="queue-card" style="border-color:#f3d9a4;background:var(--warn-bg)">
-          <div class="q-icon" style="background:var(--warn-bg);color:var(--warn)">？</div>
-          <div class="q-body">
-            <div class="q-title">ND-2025 · NQ-H-007
-              <span class="badge warn">待补材料</span>
-              <span class="badge gray">条款：招标公告 §3.13② / 资格审查表 #11</span>
-            </div>
-            <div class="q-desc">
-              缺少 2022/2023/2024 年度财务审计报告或银行资信证明（素材缺口，当年必有，待公司补充）。
-              处置：不推断满足，补齐后重跑可复现满分路径。
-            </div>
-          </div>
-          <div class="q-actions"><button class="btn sm" onclick="document.getElementById('supplement-form').style.display='block';document.getElementById('supplement-form').scrollIntoView({behavior:'smooth'})">补录材料</button></div>
+        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn" id="btn-upload">① 上传材料（POST /materials）</button>
+          <button class="btn" id="btn-verify" disabled>② 核验通过（data_admin，POST verify）</button>
+          <button class="btn" id="btn-recalc" disabled>③ 重算（POST recalculate）</button>
         </div>
-        <div class="queue-card" style="border-color:#f3d9a4;background:var(--warn-bg)">
-          <div class="q-icon" style="background:var(--warn-bg);color:var(--warn)">？</div>
-          <div class="q-body">
-            <div class="q-title">康保县储能电站 EPC 总承包项目
-              <span class="badge warn">blocked_missing_data</span>
-              <span class="badge gray">企业资料库为空</span>
-            </div>
-            <div class="q-desc">
-              未导入任何企业资料 → 匹配页输出“不可判定/待补材料”，不得默认满足。先由数据管理员导入最小资料集。
-            </div>
-          </div>
-          <div class="q-actions"><a class="btn sm ghost" href="exceptions.html#empty">查看异常态演示</a></div>
-        </div>
-
-        <h3>③ 风险复核（manual_review）— 不静默跳过</h3>
-        <div class="queue-card" style="border-color:#e0d4f5;background:var(--review-bg)">
-          <div class="q-icon" style="background:var(--review-bg);color:var(--review)">审</div>
-          <div class="q-body">
-            <div class="q-title">ND-2025 · NQ-S-001 / NQ-S-002
-              <span class="badge review">人工复核</span>
-            </div>
-            <div class="q-desc">
-              技术标主观项待内部质量评审（NQ-S-001）；商务标/信用评分公式或报价输入不完整（NQ-S-002）。
-              评审/复核完成前不计入内部满分。
-            </div>
-          </div>
-          <div class="q-actions"><button class="btn sm" onclick="alert('演示：已登记人工复核任务，完成后回填结论。')">登记复核</button></div>
-        </div>
-        <div class="queue-card" style="border-color:#e0d4f5;background:var(--review-bg)">
-          <div class="q-icon" style="background:var(--review-bg);color:var(--review)">审</div>
-          <div class="q-body">
-            <div class="q-title">阜平县高铁片区综合管网建设项目
-              <span class="badge review">解析部分完成</span>
-            </div>
-            <div class="q-desc">
-              评分办法章节解析不完整（表格版式）→ 人工复核补齐，不静默跳过；.gef 固化件不在解析范围。
-            </div>
-          </div>
-          <div class="q-actions"><a class="btn sm ghost" href="exceptions.html#parse_fail">查看异常态演示</a></div>
-        </div>
-
-        <section class="supplement-panel" id="supplement-form" style="display:none">
-          <h3 style="margin-top:0">补录 NQ-H-007：财务审计报告 / 银行资信证明</h3>
-          <div class="form-grid" style="margin-top:10px">
-            <div class="form-item"><label>材料类型 <span class="req">*</span></label><select class="inp"><option>2022-2024 年度审计报告</option><option>银行资信证明 + 基本账户证明</option></select></div>
-            <div class="form-item"><label>核验状态 <span class="req">*</span></label><select class="inp"><option>待人工核验</option><option>已核验</option></select></div>
-            <div class="form-item full"><label>上传材料 <span class="req">*</span></label><div class="dropzone" onclick="alert('演示：选择补录文件（原型不真实上传）。')"><div class="big">点击上传补录材料</div><div class="hint">原文保留、生成新版本，不覆盖原始材料</div></div></div>
-            <div class="form-item full"><label>核验备注</label><textarea placeholder="记录核验人、依据和待确认字段"></textarea></div>
-          </div>
-          <div style="display:flex;gap:10px;margin-top:12px"><button class="btn" onclick="alert('演示：补录已登记为 pending_verification，核验通过后重新执行匹配。')">保存并提交核验</button><button class="btn ghost" onclick="document.getElementById('supplement-form').style.display='none'">取消</button></div>
-        </section>
-
-        <div class="notice warn" style="margin-top:12px">
-          <b>处置原则</b>：缺失不等于不满足。补录并完成核验后重新执行匹配；结果满足审核条件后，才进入
-          <a href="approval.html">人工审核</a>。
-        </div>
+        <div id="sup-progress" style="margin-top:12px"></div>
       </section>
     </div>
   </div>
 
   <footer class="footer">
-    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R012 真实 API 版）</span>
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
-  <div class="drawer-mask" id="drawer-mask"></div>
-  <aside class="drawer" id="drawer">
-    <div class="drawer-head">
-      <h3 id="drawer-title" style="margin:0"></h3>
-      <button class="close" id="drawer-close">×</button>
-    </div>
-    <div class="drawer-body" id="drawer-body"></div>
-  </aside>
-
   <script src="data.js"></script>
+  <script src="api.js"></script>
   <script src="common.js"></script>
-  <script>initPage("queue.html", "queue");</script>
+  <script>
+    initPage("queue.html", "queue");
+    const PJ = () => demoProjectId();
+    const MID = "MAT-ND-TENDER";
+    const errBox = document.getElementById("api-error");
+    let latestMaterialId = null;   // 补录刚上传的材料
+    let beforeRunId = null;        // 重算前的 run_id
+    let verifiedMaterialReady = false;  // 存在已核验的补录材料（重算前置；RBAC：recalculate=match:write 仅 business_head）
+
+    /* ============ A. 解析候选复核 ============ */
+    async function loadCandidates() {
+      const box = document.getElementById("candidates-box");
+      const badge = document.getElementById("rv-badge");
+      try {
+        const data = await apiGet(`/parse/projects/${PJ()}/materials/${MID}/candidates`);
+        const items = data.items || [];
+        const prog = data.progress || {};
+        document.getElementById("rv-proj").textContent = data.project_id;
+        badge.className = "badge " + (prog.pending > 0 ? "review" : "ok");
+        badge.textContent = prog.pending > 0 ? `待复核 ${prog.pending} 项` : "全部已处理";
+        document.getElementById("rv-progress").innerHTML =
+          `候选 ${items.length} 条（规则 ${prog.rule_pending ?? "?"} 待决 / 主卡 ${prog.main_card_pending ?? "?"} 待决）· 材料 v${data.version}`;
+        box.innerHTML = "";
+        if (!items.length) {
+          box.innerHTML = `<div class="notice info">无解析候选（材料未解析或已完成复核确认）。若匹配已触发请到「自动匹配/风险与缺失」查看。</div>`;
+          document.getElementById("confirm-row").style.display = "none";
+          return;
+        }
+        items.forEach((c) => {
+          const isRule = c.kind === "rule_candidate";
+          const pl = c.payload || {};
+          const decided = c.status && c.status !== "pending";
+          const card = document.createElement("div");
+          card.className = "queue-card";
+          const title = isRule
+            ? `${pl.requirement_id || c.candidate_id} · ${pl.category || pl.req_type || ""}`
+            : `主卡字段：${pl.field_key || c.candidate_id}`;
+          const detail = isRule
+            ? `<b>条款</b>：${pl.clause_ref || "—"} ｜ <b>页码</b>：${pl.page_no ?? "—"} ｜ <b>置信</b>：${pl.confidence || "—"}<br>
+               要求原文：${(pl.assertion || "").slice(0, 220)}${(pl.assertion || "").length > 220 ? "…" : ""}`
+            : `字段值：${(pl.value !== undefined && pl.value !== null) ? JSON.stringify(pl.value).slice(0, 160) : "（缺失，__待补__ 不推断）"} ｜ 页码：${pl.page_no ?? "—"}`;
+          card.innerHTML = `
+            <div class="q-body">
+              <div class="q-title">${title} ${decided ? apiStatusBadge(c.status) : '<span class="badge info">待复核</span>'}</div>
+              <div class="q-desc">${detail}</div>
+              ${c.review_note ? `<div class="hint">复核意见：${c.review_note}</div>` : ""}
+            </div>
+            ${decided ? "" : `
+            <div class="q-actions">
+              <button class="btn sm" data-act="approve">通过</button>
+              <button class="btn sm ghost" data-act="reject">驳回</button>
+              <input class="inp" placeholder="复核备注（可空）" data-note style="width:180px">
+            </div>`}`;
+          box.appendChild(card);
+          if (!decided) {
+            card.querySelector('[data-act="approve"]').addEventListener("click", () => decide(c, "approved", card));
+            card.querySelector('[data-act="reject"]').addEventListener("click", () => decide(c, "rejected", card));
+          }
+        });
+        const row = document.getElementById("confirm-row");
+        row.style.display = prog.pending === 0 && items.length ? "flex" : "none";
+        document.getElementById("confirm-hint").textContent =
+          prog.pending === 0 && items.length ? `全部 ${items.length} 项已处理（含驳回 ${prog.rejected || 0}）——可确认写入规则集` : "";
+      } catch (err) {
+        if (err.status === 403) { box.innerHTML = `<div class="notice error">权限不足：解析复核需投标专员（bid_specialist）。当前：${apiRole() || "未登录"}。请用右上角登录切换。</div>`; return; }
+        box.innerHTML = `<div class="notice error">加载候选失败：${err.message}${err.requestId ? `（${err.requestId}）` : ""}</div>`;
+      }
+    }
+
+    async function decide(c, decision, cardEl) {
+      const noteEl = cardEl.querySelector("[data-note]");
+      try {
+        await apiPost(`/parse/candidates/${c.candidate_id}/review`, {
+          decision, reviewer: apiName() || apiRole() || "demo",
+          review_note: (noteEl && noteEl.value.trim()) || null,
+        });
+        loadCandidates();
+      } catch (err) {
+        apiShowError(err);
+        alert("复核提交失败：" + err.message);
+      }
+    }
+
+    document.getElementById("btn-confirm").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-confirm");
+      btn.disabled = true;
+      try {
+        const r = await apiPost(`/parse/projects/${PJ()}/materials/${MID}/confirm`, {
+          actor: apiName() || apiRole() || "demo",
+        });
+        const msg = `确认完成：规则集 <code>${r.rule_set_id}</code> · 写入要求 ${r.created_requirements} 条 · 主卡字段 ${r.main_card_fields_written} 条 · as_of ${r.as_of}。`;
+        document.getElementById("confirm-hint").innerHTML = msg +
+          (r.match_job ? ` 已自动触发首次匹配（job <code>${r.match_job}</code>）与索引任务 ${(r.index_jobs || []).length} 个。` : " 索引/匹配将排队执行。");
+        apiShowError(null);
+        errBox.style.display = "none";
+        document.getElementById("rv-badge").textContent = "parsed · 已确认";
+        document.getElementById("rv-badge").className = "badge ok";
+        setTimeout(() => loadQueues(), 1500);
+      } catch (err) {
+        apiShowError(err);
+        alert("确认失败：" + err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    /* ============ B. 处置队列 ============ */
+    async function loadQueues() {
+      const box = document.getElementById("queues-box");
+      try {
+        const data = await apiGet(`/projects/${PJ()}/queues`);
+        const q = (data.queues || { blocked_hard_requirement: [], blocked_missing_data: [], manual_review: [] });
+        const groups = [
+          { key: "blocked_hard_requirement", title: "① 硬性失败（blocked_hard_requirement）— 证据充分但不满足，一票否决", tone: "danger" },
+          { key: "blocked_missing_data", title: "② 缺证阻断（blocked_missing_data）— 默认阻断，不推断满足", tone: "warn" },
+          { key: "manual_review", title: "③ 人工复核（manual_review）— 评分公式/主观项", tone: "review" },
+        ];
+        box.innerHTML = "";
+        let any = false;
+        groups.forEach((g) => {
+          const items = q[g.key] || [];
+          if (!items.length) return;
+          any = true;
+          box.insertAdjacentHTML("beforeend", `<h3 style="margin:10px 0 6px">${g.title}（${items.length}）</h3>`);
+          items.forEach((it) => {
+            const div = document.createElement("div");
+            div.className = "queue-card";
+            div.innerHTML = `
+              <div class="q-body">
+                <div class="q-title">${it.project_id} · ${it.requirement_id || "—"} <span class="badge ${g.tone}">${g.key.replaceAll("_", " ")}</span></div>
+                <div class="q-desc">条款：${it.clause || "—"}<br>${it.text || ""}</div>
+              </div>
+              <div class="q-actions"><button class="btn sm sup-btn">补录材料</button></div>`;
+            box.appendChild(div);
+            div.querySelector(".sup-btn").addEventListener("click", () => {
+              document.getElementById("supplement-panel").scrollIntoView({ behavior: "smooth" });
+            });
+          });
+        });
+        if (!any) {
+          box.innerHTML = `<div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d">
+            <b>无处置项</b>：最近准入结果没有阻断/待补/复核队列项（满分态或尚无匹配结果）。</div>`;
+        }
+      } catch (err) {
+        box.innerHTML = `<div class="notice error">加载队列失败：${err.message}</div>`;
+      }
+    }
+
+    /* ============ C. 人工补录 → 核验 → 重算 ============ */
+    const supProg = document.getElementById("sup-progress");
+    const supFile = document.getElementById("sup-file");
+
+    async function supMsg(html) { supProg.innerHTML = html; }
+
+    document.getElementById("btn-upload").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-upload");
+      if (!supFile.files.length) { supMsg(`<div class="notice warn">请先选择补录证据文件（pdf/docx）。</div>`); return; }
+      btn.disabled = true;
+      supMsg(`<div class="notice info">① 上传补录材料（POST /api/v1/materials）…</div>`);
+      try {
+        const form = new FormData();
+        form.append("file", supFile.files[0]);
+        form.append("material_id", document.getElementById("sup-material-id").value.trim() || "MAT-ND-SUPPLEMENT");
+        form.append("material_type", "evidence_file");
+        form.append("source_type", "uploaded");
+        form.append("owner_type", "enterprise");
+        form.append("classification", "internal");
+        form.append("permission_scope", "enterprise_read");
+        form.append("data_owner", document.getElementById("sup-owner").value.trim() || apiRole());
+        form.append("project_id", PJ());
+        const vd = document.getElementById("sup-valid").value;
+        if (vd) form.append("valid_until", vd);
+        const resp = await fetch(apiBase() + "/materials", {
+          method: "POST",
+          headers: apiToken() ? { Authorization: "Bearer " + apiToken() } : {},
+          body: form,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          const msg = (data.error && data.error.message) || `HTTP ${resp.status}`;
+          throw new Error(msg + (data.request_id ? `（${data.request_id}）` : ""));
+        }
+        latestMaterialId = data.material_id;
+        document.getElementById("btn-verify").disabled = false;
+        supMsg(`<div class="notice info">① 完成：<code>${data.material_id}</code> v${data.version} · sha256 ${(data.content_hash || "").slice(0, 12)}… · created=${data.created} · 状态 pending_verification。<br>
+          <span class="hint">② 核验需 data_admin 角色——请用右上角切换「数据管理员」登录后点击核验通过。</span></div>`);
+      } catch (err) {
+        apiShowError(err);
+        supMsg(`<div class="notice error">上传失败：${err.message}</div>`);
+      } finally { btn.disabled = false; }
+    });
+
+    document.getElementById("btn-verify").addEventListener("click", async () => {
+      if (!latestMaterialId) return;
+      const btn = document.getElementById("btn-verify");
+      btn.disabled = true;
+      try {
+        const r = await apiPost(`/materials/${latestMaterialId}/verify`, {});
+        verifiedMaterialReady = true;
+        applyRoleGate();
+        const needSwitch = apiRole() !== "business_head";
+        supMsg(`<div class="notice info">② 核验通过：<code>${latestMaterialId}</code> → active（verified_at ${r.verified_at}）。<br>
+          <span class="hint">③ 重算接口 = <code>match:write</code>，RBAC 仅 <b>business_head（经营负责人）</b>持有（F020 §5）——${needSwitch ? "请右上角切换「经营负责人」登录，页面将自动识别已核验补录材料并开放 ③ 重算。" : "当前已就绪，可直接点击 ③ 重算。"}</span></div>`);
+      } catch (err) {
+        if (err.status === 403) { supMsg(`<div class="notice error">权限不足：核验需 data_admin。当前 ${apiRole() || "未登录"}——右上角切换数据管理员后重试。</div>`); }
+        else { apiShowError(err); supMsg(`<div class="notice error">核验失败：${err.message}</div>`); }
+      } finally { btn.disabled = false; }
+    });
+
+    document.getElementById("btn-recalc").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-recalc");
+      btn.disabled = true;
+      try {
+        const latest = await apiGet(`/projects/${PJ()}/match-runs/latest`);
+        beforeRunId = latest.run_id;
+        const ev = "supplement-" + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+        const r = await apiPost(`/projects/${PJ()}/recalculate`, { evidence_version: ev });
+        supMsg(`<div class="notice info">③ 重算任务 job <code>${r.job_id}</code>（created=${r.created}）已提交，轮询新 run…</div>`);
+        // 轮询 latest run 变化（无独立 job 状态端点；run_id 更新即完成）
+        // 2026-09-03 实测：recalculate 任务在 worker 单线程队列排在 knowledge_index（L2 索引 15744 chunks ≈ 13 分钟）之后
+        // → 轮询上限 5min 会误报「重算超时」（任务实际 pending 合法排队）→ 提到 20min 覆盖索引排队
+        const deadline = Date.now() + 20 * 60 * 1000;
+        let done = null;
+        while (Date.now() < deadline) {
+          await new Promise((res) => setTimeout(res, 2000));
+          const cur = await apiGet(`/projects/${PJ()}/match-runs/latest`);
+          if (cur.run_id && cur.run_id !== beforeRunId) { done = cur; break; }
+          if (r.created === false && cur.run_id === beforeRunId) { done = { run_id: beforeRunId, idempotent: true }; break; }
+        }
+        if (!done) throw new Error("重算超时（轮询 20 分钟无新 run）");
+        const badgeLine = done.idempotent
+          ? `幂等复用：同证据版本已有任务，run 未变化（<code>${beforeRunId}</code>）。`
+          : `新 run：<code>${done.run_id}</code> · 规则集 ${done.rule_set_id} · coverage ${JSON.stringify(done.coverage || "")} · as_of ${done.as_of}。`;
+        supMsg(`<div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d"><b>③ 重算完成</b>：${badgeLine}<br>
+          <span class="hint">结果已刷新（旧 run 标记 stale）。请到「风险与缺失 / 自动匹配」查看新结果；审批入口仅在后端返回 internal_admission_eligible=true 时出现。</span></div>`);
+        loadQueues();
+      } catch (err) {
+        apiShowError(err);
+        supMsg(`<div class="notice error">重算失败：${err.message}</div>`);
+      } finally { btn.disabled = false; }
+    });
+
+    /* 角色提示：补录上传需 material write（投标专员/data_admin），核验需 data_admin；
+       重算 = match:write 仅 business_head（F020 §5 / runtime/core/rbac.py），
+       data_admin 核验通过后需切换经营负责人才能点 ③（2026-09-03 修复：原 verify 后无条件 enable recalc → data_admin 点击 403 假绿） */
+    function applyRoleGate() {
+      const r = apiRole();
+      document.getElementById("btn-verify").disabled = !(r === "data_admin") || !latestMaterialId;
+      document.getElementById("btn-recalc").disabled = !(r === "business_head") || !verifiedMaterialReady;
+    }
+    document.addEventListener("api:unauthorized", applyRoleGate);
+
+    /* 页面加载后探测：是否已有已核验补录材料（business_head 登录时开放 ③ 重算入口） */
+    async function probeVerifiedSupplement() {
+      const mid = (document.getElementById("sup-material-id").value || "MAT-ND-SUPPLEMENT").trim();
+      if (!apiToken() || !mid) return;
+      try {
+        const d = await apiGet(`/materials/${mid}`);
+        if (d && d.status === "active" && d.verified_at) {
+          verifiedMaterialReady = true;
+          latestMaterialId = mid;
+          const role = apiRole();
+          document.getElementById("btn-recalc").disabled = !(role === "business_head");
+          if (role === "business_head") {
+            supMsg(`<div class="notice info">已核验补录材料 <code>${mid}</code> v${d.version || "?"}（verified_at ${String(d.verified_at).slice(0, 10)}）——<b>经营负责人可直接 ③ 重算</b>（以新证据版本重跑匹配，旧结果标记 stale，F020 §2.2.5）。</div>`);
+          } else {
+            supMsg(`<div class="notice info">已核验补录材料 <code>${mid}</code> v${d.version || "?"}（verified_at ${String(d.verified_at).slice(0, 10)}）。<br><span class="hint">③ 重算需 <b>business_head</b>（match:write）——右上角切换「经营负责人」登录后自动开放。</span></div>`);
+          }
+        }
+      } catch (err) {
+        // 404/403：无补录材料或不可读——静默（未登录/材料不存在属正常态）
+      }
+    }
+    applyRoleGate();
+    probeVerifiedSupplement();
+
+    loadCandidates();
+    loadQueues();
+  </script>
 </body>
 </html>

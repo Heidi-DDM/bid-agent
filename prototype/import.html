@@ -37,69 +37,35 @@
           <div class="form-item full">
             <label>完整招标文件上传（docx / pdf） <span class="req">*</span></label>
             <div class="dropzone" id="dropzone">
-              <div class="big">点击或拖拽上传招标文件</div>
-              <div class="hint">已预置演示文件：招标文件.pdf（476 页）· sha256 指纹已登记 · raw 原文不可变；不上传完整文件不进入匹配。</div>
+              <div class="big" id="dz-text">点击或拖拽上传招标文件</div>
+              <div class="hint">农大演示：招标文件.pdf（476 页，原文 sha256 指纹登记 · raw 不可变）；不上传完整文件不进入匹配。文件上传走真实 API（multipart → POST /intake/tender-document）。</div>
             </div>
+            <input type="file" id="file-input" accept=".pdf,.docx" style="display:none">
           </div>
           <div class="form-item full">
             <label>公告正文（结构化推送已自动带入，只读）</label>
-            <textarea id="f-body" placeholder="从公告页面复制正文粘贴到此（与上传通道二选一）…"></textarea>
+            <textarea id="f-body" placeholder="演示项目公告事实已结构化入库，招标文件上传后开始解析…"></textarea>
           </div>
         </div>
         <div style="display:flex;gap:10px;margin-top:14px">
-          <button class="btn" id="btn-parse">开始解析</button>
+          <button class="btn" id="btn-parse">上传并开始解析</button>
           <a class="btn ghost" href="index.html">返回结构化推送</a>
         </div>
+        <div id="api-error" style="display:none"></div>
         <div id="parse-progress" style="margin-top:14px"></div>
       </section>
 
-      <!-- 原文与解析状态 -->
+      <!-- 原文与解析状态（真实项目材料） -->
       <section class="card" id="raw-panel">
         <div class="card-title-row">
-          <h2>原文与解析状态（项目 ND-2025）</h2>
-          <span class="badge ok" id="parse-badge">parsed</span>
+          <h2>原文与解析状态（项目 <span id="proj-id">ND-2025</span>）</h2>
+          <span class="badge" id="parse-badge">加载中…</span>
         </div>
         <table class="tbl">
           <thead>
             <tr><th>材料</th><th>版本</th><th>解析状态</th><th>原文指纹</th><th>操作</th></tr>
           </thead>
-          <tbody>
-            <tr>
-              <td>招标公告（含资格审查要求）</td>
-              <td>v1（原始）<br><span class="hint">澄清后版本：v1.1 / v1.2（见下）</span></td>
-              <td><span class="badge ok">parsed</span></td>
-              <td class="num">sha256:e3b0…a1f9</td>
-              <td><a href="#" onclick="alert('演示：打开不可变原文视图（raw）。原文只读，不可覆盖。');return false;">查看原文</a></td>
-            </tr>
-            <tr>
-              <td>招标文件.pdf（476 页）</td>
-              <td>v1（原始）</td>
-              <td><span class="badge ok">parsed</span> <span class="hint">正文可解析</span></td>
-              <td class="num">sha256:9c42…77be</td>
-              <td><a href="#" onclick="alert('演示：打开不可变原文视图（raw）。');return false;">查看原文</a></td>
-            </tr>
-            <tr>
-              <td>澄清/补遗 ①（35 问）</td>
-              <td>v1.1（不覆盖 v1）</td>
-              <td><span class="badge ok">parsed</span> <span class="hint">OCR 成功 · 无资格实质变更</span></td>
-              <td class="num">sha256:5f11…0d2e</td>
-              <td><a href="#" onclick="alert('演示：打开澄清原文。多版本按 project_id 挂接，不覆盖历史。');return false;">查看原文</a></td>
-            </tr>
-            <tr>
-              <td>澄清/补遗 ②（细则）</td>
-              <td>v1.2（不覆盖 v1.1）</td>
-              <td><span class="badge ok">parsed</span></td>
-              <td class="num">sha256:77aa…31c0</td>
-              <td><a href="#" onclick="alert('演示：打开澄清原文。');return false;">查看原文</a></td>
-            </tr>
-            <tr>
-              <td>（对照）阜平项目招标文件</td>
-              <td>v1</td>
-              <td><span class="badge review">partial · 人工复核</span></td>
-              <td class="num">sha256:1d9f…b4e8</td>
-              <td><a href="exceptions.html#parse_fail">查看异常态演示</a></td>
-            </tr>
-          </tbody>
+          <tbody id="raw-rows"><tr><td colspan="5" class="hint">加载中…</td></tr></tbody>
         </table>
         <div class="notice info" style="margin-top:10px">
           <b>解析规则（F004/F005）</b>：解析失败/部分解析进入人工复核，不静默跳过；原文 raw 不可覆盖、多版本只增；
@@ -124,52 +90,132 @@
   </aside>
 
   <script src="data.js"></script>
+  <script src="api.js"></script>
   <script src="common.js"></script>
   <script>
     initPage("import.html", "import");
 
+    /* ---- R012：真实文件上传 → 解析任务（job 轮询） ---- */
     const progress = document.getElementById("parse-progress");
     const dropzone = document.getElementById("dropzone");
-    let fullFileUploaded = false;
-    dropzone.addEventListener("click", () => {
-      fullFileUploaded = true;
-      dropzone.innerHTML = '<div class="big">已选择：招标文件.pdf（476 页） ✓</div><div class="hint">sha256 指纹已登记 · raw 原文不可变</div>';
-      progress.innerHTML = '<div class="notice info">完整招标文件已登记，下一步可开始解析。</div>';
+    const fileInput = document.getElementById("file-input");
+    let selectedFile = null;
+
+    dropzone.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      selectedFile = fileInput.files[0] || null;
+      if (selectedFile) {
+        document.getElementById("dz-text").textContent =
+          `已选择：${selectedFile.name}（${(selectedFile.size / 1024 / 1024).toFixed(1)} MB）`;
+        dropzone.classList.add("has-file");
+      }
     });
 
-    document.getElementById("btn-parse").addEventListener("click", () => {
-      if (!fullFileUploaded) {
-        progress.innerHTML = '<div class="notice warn"><b>尚未上传完整招标文件</b>：请先点击上传区域登记文件，未上传前不启动解析和企业资料匹配。</div>';
+    document.getElementById("btn-parse").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-parse");
+      const errBox = document.getElementById("api-error");
+      errBox.style.display = "none";
+      if (!selectedFile) {
+        progress.innerHTML = `<div class="notice warn"><b>尚未选择完整招标文件</b>：请先点击上传区域选择文件（pdf/docx），未上传不启动解析和企业资料匹配。</div>`;
         return;
       }
-      const btn = document.getElementById("btn-parse");
       btn.disabled = true;
-      let step = 0;
-      const steps = [
-        "登记原文（sha256 指纹 + 不可变存储）…",
-        "路由：文本 PDF → Parser（F005 链路）…",
-        "提取项目主卡：项目名称 / 招标人 / 时间线 / 最高限价…",
-        "拆分招标条款与响应要求：资格 12 项 / 评分 4 项 / 动作 4 项…",
-        "解析完成：20 条要求，自动启动企业已解析资料匹配 ✓",
-      ];
-      progress.innerHTML = `<div class="notice info">开始解析…</div>`;
-      const timer = setInterval(() => {
-        if (step < steps.length) {
-          progress.innerHTML = `<div class="notice info">${steps[step]}</div>`;
-          step++;
-        } else {
-          clearInterval(timer);
-          btn.disabled = false;
-          document.getElementById("parse-badge").textContent = "parsed（20/20 条要求）";
-          progress.innerHTML = `
-            <div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d">
-              <b>解析完成</b>：项目主卡已建立，20 条要求全部提取并可溯源（clause + 原文摘录）。
-              系统已自动读取已解析且已核验的企业资质、业绩和人员资料执行一次匹配；缺失字段一律标注“待补”，不推断。<br>
-              <a href="matrix.html" class="btn sm" style="margin-top:8px">查看解析与自动匹配结果 →</a>
-            </div>`;
+      progress.innerHTML = `<div class="notice info"><b>正在上传并登记原文</b>（sha256 指纹 + 不可变存储）…</div>`;
+      try {
+        const form = new FormData();
+        form.append("file", selectedFile);
+        form.append("project_id", demoProjectId());
+        form.append("material_id", "MAT-ND-TENDER");
+        form.append("data_owner", apiName() || apiRole() || "demo");
+        form.append("source_type", "uploaded");
+        const resp = await fetch(apiBase() + "/intake/tender-document", {
+          method: "POST",
+          headers: apiToken() ? { Authorization: "Bearer " + apiToken(), "Idempotency-Key": "r012-nd-tender-v1" } : { "Idempotency-Key": "r012-nd-tender-v1" },
+          body: form,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          const msg = (data.error && data.error.message) || `HTTP ${resp.status}`;
+          if (resp.status === 401) { document.dispatchEvent(new CustomEvent("api:unauthorized")); }
+          throw new Error(msg + (data.request_id ? `（request_id: ${data.request_id}）` : ""));
         }
-      }, 700);
+        progress.innerHTML = `<div class="notice info"><b>原文已登记</b>：${data.material_id} v${data.version} · sha256 <code>${(data.content_hash || "").slice(0, 16)}</code>… · 任务 job_id <code>${data.job_id}</code> · created=${data.created}</div>`;
+        if (!data.created && !data.job_id) {
+          progress.insertAdjacentHTML("beforeend", `<div class="notice warn">同 sha256 原文已存在（幂等返回既有材料）。如需重新解析请用下方「重新解析」。</div>`);
+          btn.disabled = false;
+          loadMaterials();
+          return;
+        }
+        // 轮询解析任务（parse.tender_document：completed=解析完成待复核 / failed=失败可重试）
+        const tick = (d) => {
+          const st = d.status === "completed" ? (d.parse_status === "parsed" ? "completed(已确认)" : "completed(待人工复核)") : d.status;
+          progress.innerHTML = `<div class="notice info"><b>解析任务</b>：job_id <code>${data.job_id}</code> · ${apiStatusBadge(st)}` +
+            (d.error_code ? ` · ${d.error_code}` : "") + `</div>`;
+        };
+        const done = await apiPollJob(`/intake/${data.job_id}`, { onTick: tick, label: "解析" });
+        tick(done);
+        if (done.parse_status === "parsed") {
+          progress.insertAdjacentHTML("beforeend", `<div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d">
+            <b>解析已完成并经人工复核确认</b>：系统已自动触发一次匹配。<a class="btn sm" style="margin-top:8px" href="matrix.html">查看匹配结果 →</a></div>`);
+        } else if (done.parse_status === "manual_review") {
+          progress.insertAdjacentHTML("beforeend", `<div class="notice review"><b>解析完成，进入人工复核</b>：规则/主卡候选已生成，需投标专员逐条复核确认后才写入规则集并触发匹配。<br>
+            <a class="btn sm" style="margin-top:8px" href="queue.html">前往人工复核（${demoProjectId()}）→</a></div>`);
+        }
+        loadMaterials();
+      } catch (err) {
+        apiShowError(err);
+        progress.innerHTML = `<div class="notice error">上传/解析失败：${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
     });
+
+    /* ---- 原文与解析状态：真实材料表 ---- */
+    async function loadMaterials() {
+      const tbody = document.getElementById("raw-rows");
+      const badgeEl = document.getElementById("parse-badge");
+      try {
+        const p = await apiGet(`/projects/${demoProjectId()}`);
+        document.getElementById("proj-id").textContent = p.project_id;
+        badgeEl.className = "badge ok";
+        badgeEl.textContent = p.parse_status || "pending";
+        const tender = p.materials.find((m) => m.material_type === "tender_document");
+        badgeEl.textContent = tender ? (tender.parse_status || "pending") : "pending";
+        const typeName = { tender_document: "招标文件", announcement: "公告", evidence_file: "证据文件" };
+        tbody.innerHTML = "";
+        if (!p.materials || !p.materials.length) {
+          tbody.innerHTML = `<tr><td colspan="5" class="hint">项目 ${p.project_id} 暂无材料——上传招标文件后显示（空态）。</td></tr>`;
+          return;
+        }
+        p.materials.forEach((m) => {
+          const tr = document.createElement("tr");
+          const isTender = m.material_type === "tender_document";
+          tr.innerHTML = `
+            <td>${typeName[m.material_type] || m.material_type} <code>${m.material_id}</code></td>
+            <td>v${m.version}</td>
+            <td>${apiStatusBadge(m.parse_status || "pending")} ${isTender && m.parse_status === "parsed" ? '<span class="hint">正文可解析</span>' : ""}</td>
+            <td class="num">sha256:${(m.content_hash || "—")}</td>
+            <td>${isTender && m.parse_status !== "parsed" ? `<a href="#" class="reparse-link">重新解析</a>` : ""}</td>`;
+          tbody.appendChild(tr);
+          if (isTender && m.parse_status !== "parsed") {
+            tr.querySelector(".reparse-link").addEventListener("click", async (e) => {
+              e.preventDefault();
+              progress.innerHTML = `<div class="notice info">提交重新解析…</div>`;
+              try {
+                const rj = await apiPost(`/intake/${m.material_id}/reparse`, {});
+                progress.innerHTML = `<div class="notice info">重新解析任务 job_id <code>${rj.job_id}</code> 已提交，轮询中…</div>`;
+                await apiPollJob(`/intake/${rj.job_id}`, { label: "重新解析" });
+                progress.innerHTML = `<div class="notice info">重新解析完成，请前往「人工补录」页复核候选。</div>`;
+                loadMaterials();
+              } catch (err2) { apiShowError(err2); }
+            });
+          }
+        });
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="hint">材料加载失败：${err.message}</td></tr>`;
+      }
+    }
+    loadMaterials();
   </script>
 </body>
 </html>

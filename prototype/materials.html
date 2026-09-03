@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>企业资料库｜投标智能体原型</title>
+  <title>企业资料库后台｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,110 +12,121 @@
   <div class="layout">
     <div class="main">
       <div class="steps"></div>
+      <div id="api-error" style="display:none"></div>
 
       <section class="card">
         <div class="card-title-row">
-          <h2>企业资料库（已解析资料）</h2>
-          <span class="hint">这是数据管理员维护的基础资料状态页；项目匹配自动读取 active 资料，不需要逐项目勾选。</span>
+          <h2>企业资料库后台（数据管理员）</h2>
+          <span class="hint">匹配时自动读取「已核验且生效」资料（active + verified_at ≤ as_of）；未核验资料不参与准入。批量导入与逐条维护走 R022 通道。</span>
         </div>
 
-        <h3>① 企业资质（自动匹配来源）</h3>
-        <div id="quals"></div>
+        <h3 style="margin:8px 0 6px">安全生产许可证</h3>
+        <div id="safety-box" class="hint">加载中…</div>
 
-        <h3>② 安全生产许可证</h3>
-        <div id="safety"></div>
+        <h3 style="margin:14px 0 6px">企业资质（qualifications）</h3>
+        <div id="qual-box" class="hint">加载中…</div>
 
-        <h3>③ 可投标项目经理名录（系统自动筛选主推荐 / 备选）</h3>
-        <div id="managers"></div>
+        <h3 style="margin:14px 0 6px">项目经理（managers）</h3>
+        <div id="mgr-box" class="hint">加载中…</div>
 
-        <div class="notice" style="margin-top:12px">
-          <b>硬条件核查（F007）</b>：项目经理须逐项通过 专业 / 注册证书等级 / B 证 / 社保在岗 / 业绩 / 在建冲突 核查；
-          任一不满足或无法核验 → 不计入“满分可投标”。数据责任人制 + 有效期校验 + pending_verification 状态。
-        </div>
-
-        <div style="display:flex;gap:10px;margin-top:14px">
-          <a class="btn" href="matrix.html">返回自动匹配结果</a>
-          <a class="btn ghost" href="queue.html">去人工补录</a>
+        <h3 style="margin:14px 0 6px">核验队列（verification-queue，pending）</h3>
+        <div id="queue-box" class="hint">加载中…</div>
+        <div style="display:flex;gap:10px;margin-top:10px">
+          <button class="btn sm" id="btn-approve-q">批量核验通过（选中）</button>
+          <button class="btn sm ghost" id="btn-reject-q">批量驳回（选中）</button>
+          <span class="hint">无证据记录核验通过会被后端拒绝（400）——F022：无证据不可 active。</span>
         </div>
       </section>
     </div>
   </div>
 
   <footer class="footer">
-    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R012 真实 API 版）</span>
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
-  <div class="drawer-mask" id="drawer-mask"></div>
-  <aside class="drawer" id="drawer">
-    <div class="drawer-head">
-      <h3 id="drawer-title" style="margin:0"></h3>
-      <button class="close" id="drawer-close">×</button>
-    </div>
-    <div class="drawer-body" id="drawer-body"></div>
-  </aside>
-
   <script src="data.js"></script>
+  <script src="api.js"></script>
   <script src="common.js"></script>
   <script>
-    initPage("materials.html", "materials");
+    initPage("materials.html", "");
+    const errBox = document.getElementById("api-error");
+    const showErr = (m) => { errBox.innerHTML = `<div class="notice error">${m}</div>`; errBox.style.display = "block"; };
+    const KIND_LABEL = { qualifications: "资质", performances: "业绩", personnel: "人员", managers: "项目经理", evidence_files: "证据文件" };
 
-    const quals = document.getElementById("quals");
-    PROTOTYPE.company_data.qualifications.forEach(q => {
-      const row = document.createElement("div");
-      row.className = "queue-card";
-      row.innerHTML = `
-        <div class="q-body">
-          <div class="q-title">${q.name} · <b>${q.level}</b>
-            <span class="badge ok">active</span>
-            <span class="badge gray">有效期至 ${q.valid_until}</span>
-            <span class="badge ${q.selected ? "gold" : "gray"}">${q.selected ? "active · 自动纳入匹配" : "inactive · 不纳入匹配"}</span>
-          </div>
-          <div class="q-desc">证据：${q.evidence} ｜ 数据责任人：数据管理员（测试期核验人暂定项目负责人）</div>
-        </div>
-        <div class="q-actions"><span class="badge ${q.selected ? "ok" : "gray"}">${q.selected ? "已解析并核验" : "未启用"}</span></div>`;
-      quals.appendChild(row);
-    });
+    async function loadAll() {
+      try {
+        // safety license
+        const sl = await apiGet("/enterprise/safety-license");
+        const s = sl.safety_license || {};
+        document.getElementById("safety-box").innerHTML = s.name
+          ? `<table class="tbl"><tbody><tr><td>类别：<b>${s.name}</b></td><td>编号：${s.no || "—"}</td><td>有效期至：${s.valid_until || "—"}</td><td>${apiStatusBadge(s.status)}</td></tr></tbody></table>`
+          : `<div class="hint">暂无安全生产许可证记录。</div>`;
+        // qualifications
+        const q = await apiGet("/enterprise/qualifications");
+        const qItems = q.items || [];
+        document.getElementById("qual-box").innerHTML = qItems.length
+          ? `<table class="tbl"><thead><tr><th>类别</th><th>等级</th><th>有效期至</th><th>状态</th></tr></thead><tbody>` +
+            qItems.map((x) => `<tr><td>${x.category || "—"}</td><td>${x.level || "—"}</td><td>${x.valid_until || "—"}</td><td>${apiStatusBadge(x.status)}</td></tr>`).join("") +
+            `</tbody></table>`
+          : `<div class="hint">暂无资质记录。</div>`;
+        // managers
+        const m = await apiGet("/enterprise/managers");
+        const mItems = m.items || [];
+        document.getElementById("mgr-box").innerHTML = mItems.length
+          ? `<table class="tbl"><thead><tr><th>姓名/ID</th><th>资质</th><th>B证</th><th>有效期至</th><th>状态</th></tr></thead><tbody>` +
+            mItems.map((x) => `<tr><td>${x.name || x.manager_id || "—"}</td><td>${x.cert_type || x.qualification || "—"}</td><td>${x.b_cert_no || "—"}</td><td>${x.cert_valid_until || "—"}</td><td>${apiStatusBadge(x.status)}</td></tr>`).join("") +
+            `</tbody></table>`
+          : `<div class="hint">暂无项目经理记录。</div>`;
+        await loadQueue();
+      } catch (err) {
+        if (err.status === 403) { showErr(`权限不足：企业资料后台仅数据管理员（data_admin）可读。当前登录：${apiRoleLabel()}（${apiRole() || "未登录"}）——右上角切换后重试。`); return; }
+        showErr("加载企业资料失败：" + err.message);
+      }
+    }
 
-    const safety = document.getElementById("safety");
-    const sl = PROTOTYPE.company_data.safety_license;
-    safety.innerHTML = `
-      <div class="queue-card">
-        <div class="q-body">
-          <div class="q-title">${sl.name} · ${sl.no}
-            <span class="badge ok">${sl.status}</span>
-            <span class="badge gray">有效期至 ${sl.valid_until}</span>
-          </div>
-          <div class="q-desc">OCR 结构化（本地 tesseract，不出内网）· 有效期校验通过</div>
-        </div>
-        <div class="q-actions"><span class="badge ok">自动匹配 NQ-H-002</span></div>
-      </div>`;
+    async function loadQueue() {
+      const box = document.getElementById("queue-box");
+      try {
+        const data = await apiGet("/enterprise/verification-queue?status=pending_verification");
+        const items = data.items || [];
+        if (!items.length) { box.innerHTML = `<div class="hint">核验队列为空（无 pending_verification 记录）——13 条脱敏演示资料已核验 active。</div>`; return; }
+        box.innerHTML = `<table class="tbl"><thead><tr><th></th><th>种类</th><th>记录</th><th>证据</th><th>状态</th></tr></thead><tbody>` +
+          items.map((it, i) => `<tr>
+            <td><input type="checkbox" class="q-chk" data-kind="${it.kind}" data-id="${it.id || it.record_id || ""}"></td>
+            <td>${KIND_LABEL[it.kind] || it.kind}</td>
+            <td>${it.name || it.summary || it.category || it.id || "—"}</td>
+            <td class="hint">${(it.evidence_refs && it.evidence_refs.length) ? it.evidence_refs.join("、") : "无证据"}</td>
+            <td>${apiStatusBadge(it.status)}</td></tr>`).join("") + `</tbody></table>`;
+      } catch (err) {
+        box.innerHTML = `<div class="hint">队列加载失败：${err.message}</div>`;
+      }
+    }
 
-    const managers = document.getElementById("managers");
-    PROTOTYPE.company_data.managers.forEach(m => {
-      const row = document.createElement("div");
-      row.className = "queue-card";
-      const tone = m.status === "active" ? "ok" : (m.status === "pending_verification" ? "review" : "danger");
-      row.innerHTML = `
-        <div class="q-body">
-          <div class="q-title">${m.name}（${m.id}）
-            <span class="badge ${m.role === "主推荐" ? "gold" : "gray"}">${m.role !== "—" ? m.role : ""}</span>
-            <span class="badge ${tone}">${m.status === "active" ? "active" : m.status === "unavailable" ? "unavailable" : "pending_verification"}</span>
-          </div>
-          <div class="q-desc">
-            ${m.specialty} · ${m.cert} · B 证：${m.b_cert} · 社保：${m.social_security} · 在建：${m.active_project}<br>
-            类似业绩：${m.similar_perf}
-          </div>
-        </div>
-        <div class="q-actions">
-          ${m.status === "active"
-            ? '<span class="badge ok">硬条件核查通过</span>'
-            : m.status === "unavailable"
-              ? '<span class="badge danger">不计入满分可投标</span>'
-              : '<span class="badge review">待核实</span>'}
-        </div>`;
-      managers.appendChild(row);
-    });
+    async function batchVerify(action) {
+      const sel = [...document.querySelectorAll(".q-chk:checked")];
+      if (!sel.length) { showErr("请先勾选要核验的记录。"); return; }
+      const byKind = {};
+      sel.forEach((c) => {
+        (byKind[c.dataset.kind] = byKind[c.dataset.kind] || []).push(c.dataset.id);
+      });
+      const results = [];
+      for (const [kind, ids] of Object.entries(byKind)) {
+        try {
+          const r = await apiPost("/enterprise/verify", { kind, ids, action, comment: action === "reject" ? "演示驳回" : null });
+          results.push(`${KIND_LABEL[kind] || kind} ${ids.length} 条 → ${JSON.stringify(r.verify || "")}`);
+        } catch (e) {
+          results.push(`${KIND_LABEL[kind] || kind} 失败：${e.message}`);
+        }
+      }
+      errBox.innerHTML = `<div class="notice info">核验结果：${results.join("；")}</div>`;
+      errBox.style.display = "block";
+      loadQueue();
+    }
+    document.getElementById("btn-approve-q").addEventListener("click", () => batchVerify("approve"));
+    document.getElementById("btn-reject-q").addEventListener("click", () => batchVerify("reject"));
+
+    loadAll();
   </script>
 </body>
 </html>

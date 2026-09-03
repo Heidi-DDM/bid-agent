@@ -23,9 +23,9 @@ const NAV = [
   { label: "异常态演示", page: "exceptions.html" },
 ];
 
-/* ---------- 角色（本地模拟，F010 §9：审批数据仅审批角色可见） ---------- */
+/* ---------- 角色（R012 起为真实登录态；本地函数保留兼容静态演示页） ---------- */
 function getRole() {
-  return localStorage.getItem("proto_role") || "bid_specialist";
+  return localStorage.getItem("proto_role") || apiRole() || "bid_specialist";
 }
 function setRole(role) { localStorage.setItem("proto_role", role); }
 function roleLabel(role) { return (ROLES[role] || ROLES.bid_specialist).label; }
@@ -56,26 +56,54 @@ function fmtClause(ref) { return ref ? `<code>${ref}</code>` : ""; }
 function renderTopbar(activePage) {
   const topbar = document.querySelector(".topbar");
   if (!topbar) return;
-  const role = getRole();
   const navHtml = NAV.map(n =>
     `<a href="${n.page}" class="${n.page === activePage ? "active" : ""}">${n.label}</a>`
   ).join("");
+  const authed = !!apiToken();
+  let authHtml;
+  if (authed) {
+    authHtml = `
+      <span class="auth-name">${apiRoleLabel()}</span>
+      <code class="hint">${apiRole()}</code>
+      <button class="btn sm ghost" id="btn-logout" title="退出登录">退出</button>`;
+  } else {
+    authHtml = `
+      <span class="hint" title="演示账号：bid_specialist / data_admin / business_head / legal，密码同账号">未登录</span>
+      <input id="login-user" class="inp" placeholder="账号" autocomplete="username" style="width:96px">
+      <input id="login-pass" class="inp" type="password" placeholder="密码" autocomplete="current-password" style="width:96px">
+      <button class="btn sm" id="btn-login">登录</button>`;
+  }
   topbar.innerHTML = `
     <div class="brand"><span class="emblem">投</span>投标智能体</div>
     <nav>${navHtml}</nav>
-    <span class="demo-tag">原型演示 · 脱敏数据</span>
-    <div class="role-box">
-      <span>角色：</span>
-      <select id="role-select" title="切换演示角色（模拟登录）">
-        ${Object.entries(ROLES).map(([k, v]) =>
-          `<option value="${k}" ${k === role ? "selected" : ""}>${v.label}</option>`).join("")}
-      </select>
-    </div>`;
-  const sel = document.getElementById("role-select");
-  sel.addEventListener("change", () => {
-    setRole(sel.value);
-    window.location.reload();
-  });
+    <span class="demo-tag" id="api-indicator" title="运行时 API">API…</span>
+    <div class="role-box">${authHtml}</div>`;
+  if (authed) {
+    document.getElementById("btn-logout").addEventListener("click", () => {
+      apiLogout();
+      window.location.reload();
+    });
+  } else {
+    const user = document.getElementById("login-user");
+    const pass = document.getElementById("login-pass");
+    const doLogin = async () => {
+      if (!user.value.trim()) { alert("请输入账号（演示账号密码同账号：bid_specialist 等）"); return; }
+      try {
+        await apiLogin(user.value.trim(), pass.value || user.value.trim());
+        window.location.reload();
+      } catch (err) {
+        alert("登录失败：" + err.message);
+      }
+    };
+    document.getElementById("btn-login").addEventListener("click", doLogin);
+    pass.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+  }
+  // API 连接指示（仅提示，不阻断页面浏览）
+  const ind = document.getElementById("api-indicator");
+  fetch(apiBase().replace("/api/v1", "") + "/readyz", { method: "GET" })
+    .then((r) => r.json())
+    .then((j) => { ind.textContent = j.ready ? "API 就绪" : "API 未就绪"; ind.className = "demo-tag"; })
+    .catch(() => { ind.textContent = "API 未连接"; ind.className = "demo-tag"; });
 }
 
 /* ---------- 用户旅程步骤条 ---------- */
@@ -146,4 +174,25 @@ function initPage(activePage, activeStepId) {
   renderTopbar(activePage);
   renderSteps(activeStepId);
   bindDrawer();
+  // R012：401 统一处理——会话失效自动登出并提示（页面刷新后回到登录态）
+  document.addEventListener("api:unauthorized", () => {
+    const had = !!apiToken();
+    apiLogout();
+    if (had) {
+      const box = document.getElementById("api-error");
+      if (box) {
+        box.innerHTML = `<div class="notice error"><b>登录已失效或未登录</b>——请使用右上角账号登录后重试（演示账号：bid_specialist 等，密码同账号）。</div>`;
+        box.style.display = "block";
+      } else {
+        alert("登录已失效，请重新登录");
+      }
+      renderTopbar(activePage);
+    }
+  });
+  // 会话恢复：已有 token 则静默校验，失效自动登出
+  if (apiToken()) {
+    apiInitSession().then((ok) => {
+      if (!ok && document.getElementById("btn-logout")) renderTopbar(activePage);
+    });
+  }
 }

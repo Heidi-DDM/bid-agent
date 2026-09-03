@@ -12,128 +12,186 @@
   <div class="layout">
     <div class="main">
       <div class="steps"></div>
+      <div id="api-error" style="display:none"></div>
 
-      <div class="state-banner" style="border-color:#f3d9a4;background:#fffbeb">
-        <span class="badge warn">blocked_missing_data</span>
-        <div>
-          <span class="state-name">自动匹配完成：存在风险与缺失</span>
-          <span class="state-desc">— 匹配只执行一次；缺失关键证据默认阻断（NQ-H-007），不推断满足。请进入人工补录。</span>
-        </div>
-      </div>
+      <div class="state-banner" id="state-banner" style="display:none"></div>
 
-      <!-- 匹配结果摘要 -->
-      <section class="score-hero">
-        <div class="score-ring">
-          <div class="inner">
-            <div class="val">1 项</div>
-            <div class="cap">关键缺失</div>
-          </div>
-        </div>
-        <div class="info">
-          <h2>河北农业大学东校区研究生宿舍建设项目施工（ND-2025）</h2>
-          <p class="sub" style="margin-top:2px">招标文件解析完成 · 已读取企业已解析资料 · 自动匹配结果（规则版本 v1.0.0）</p>
-          <div class="rows">
-            <div><span class="k">资格/响应性核查：</span><span class="v">pending（11/12 满足，1 待补）</span></div>
-            <div><span class="k">风险项：</span><span class="v">2 项人工复核（技术标、商务标/信用）</span></div>
-            <div><span class="k">缺失项：</span><span class="v" style="color:var(--warn)">1 项待补（近三年财务审计报告或银行资信证明）</span></div>
-            <div><span class="k">当前状态：</span><span class="v" style="color:var(--warn)">阻断，补录后重新匹配</span></div>
-            <div><span class="k">项目经理：</span><span class="v">M-ND-01（主推荐）硬条件核查通过</span></div>
-            <div><span class="k">报价：</span><span class="v">121,598,056.76 元 ≤ 限价 124,715,908.89 元</span></div>
-          </div>
-          <div class="notice info" style="margin-top:10px;margin-bottom:0">
-            <b>结果说明</b>：系统展示条款、企业证据和缺失原因，不把缺失推断为满足；补录后由人工确认并重新执行匹配。
-          </div>
-        </div>
-      </section>
+      <!-- 准入摘要 -->
+      <section class="score-hero" id="score-hero" style="display:none"></section>
 
       <!-- 四类结论 -->
       <section class="card">
         <h2>匹配结果摘要（F008 / ADR-001）</h2>
         <table class="tbl" style="margin-top:8px">
           <thead><tr><th>结论</th><th>结果</th><th>说明</th></tr></thead>
-          <tbody>
-            <tr><td><b>① 资格/响应性核查</b></td><td><span class="badge warn">pending</span></td><td>11/12 满足；NQ-H-007（财务审计）证据缺失 → 待补，不推断</td></tr>
-            <tr><td><b>② 风险项</b></td><td><span class="badge review">2 项人工复核</span></td><td>技术标主观项、商务标/信用评分公式或输入待人工确认</td></tr>
-            <tr><td><b>③ 缺失项</b></td><td><span class="badge warn">1 项待补</span></td><td>NQ-H-007 财务审计报告或银行资信证明缺失，默认阻断</td></tr>
-            <tr><td><b>④ 下一步</b></td><td><span class="badge info">人工补录</span></td><td>补齐材料后重新执行匹配，再提交人工审核</td></tr>
-          </tbody>
+          <tbody id="four-rows"></tbody>
         </table>
       </section>
 
       <!-- 硬条件与计分 -->
       <section class="card">
-        <h2>逐条匹配明细（12 项硬性要求）</h2>
-        <div class="bar"><i style="width:91.7%;background:var(--accent)"></i></div>
-        <table class="tbl" style="margin-top:10px">
-          <tbody id="hard-rows"></tbody>
-        </table>
-
-        <h3>评分与风险项（仅展示解析结果，不自动作投标决定）</h3>
-        <table class="tbl">
-          <tbody id="scored-rows"></tbody>
-        </table>
-
-        <h3>动作项状态</h3>
-        <table class="tbl">
-          <tbody id="action-rows"></tbody>
-        </table>
+        <h2>逐条匹配明细</h2>
+        <div class="tabs" id="tabs">
+          <button class="tab active" data-t="hard_requirement">硬性要求（…）</button>
+          <button class="tab" data-t="scored_requirement">评分项（…）</button>
+          <button class="tab" data-t="action_requirement">动作项（…）</button>
+        </div>
+        <div id="detail-rows" class="hint" style="margin-top:8px">加载中…</div>
       </section>
 
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
         <a class="btn" href="queue.html">进入人工补录 →</a>
         <a class="btn ghost" href="matrix.html">← 查看自动匹配</a>
-        <a class="btn ghost" href="exceptions.html#no_manager">对照：无合格项目经理异常态</a>
+        <a class="btn ghost" href="approval.html">审批页（仅满分显示操作）</a>
       </div>
     </div>
   </div>
 
   <footer class="footer">
-    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011）</span>
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R012 真实 API 版）</span>
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
-  <div class="drawer-mask" id="drawer-mask"></div>
-  <aside class="drawer" id="drawer">
-    <div class="drawer-head">
-      <h3 id="drawer-title" style="margin:0"></h3>
-      <button class="close" id="drawer-close">×</button>
-    </div>
-    <div class="drawer-body" id="drawer-body"></div>
-  </aside>
-
   <script src="data.js"></script>
+  <script src="api.js"></script>
   <script src="common.js"></script>
   <script>
     initPage("score.html", "score");
+    const PJ = () => demoProjectId();
 
-    function rowHtml(r) {
-      const scoreCell = r.max_score != null
-        ? `<td class="num">${r.max_score}${r.score != null ? ` · <b>${r.score}</b>` : ""}</td>` : "";
-      return `<tr class="clickable" data-req="${r.id}">
-        <td class="num" style="width:90px"><b>${r.id}</b></td>
-        <td>${r.category}：${r.assertion}</td>
-        <td style="width:110px">${badge("match", r.match)}</td>
-        ${scoreCell}
-        <td style="width:180px;color:var(--ink-2)">${r.reason}</td>
-      </tr>`;
+    function matchBadge(m) {
+      const map = {
+        satisfied: ["ok", "满足"], passed: ["ok", "满足"],
+        unverifiable: ["warn", "待补/不可判定"], blocked_missing_data: ["warn", "缺证阻断"],
+        manual_review: ["review", "人工复核"],
+        failed: ["danger", "不满足"], not_qualified: ["danger", "不满足"], blocked_hard_requirement: ["danger", "硬性不满足"],
+      };
+      const mm = map[m] || ["gray", m || "未判定"];
+      return `<span class="badge ${mm[0]}">${mm[1]}</span>`;
     }
 
-    function bindRows() {
-      document.querySelectorAll("tr.clickable[data-req]").forEach(tr => {
-        tr.addEventListener("click", () => {
-          const req = PROTOTYPE.requirements.find(r => r.id === tr.dataset.req);
-          openDrawer(req);
+    const STATE_META2 = {
+      collecting: ["info", "信息收集中"], parsing: ["info", "解析中"], manual_review: ["review", "待人工复核"],
+      matching: ["info", "匹配中"], blocked_missing_data: ["warn", "缺证阻断"], blocked_hard_requirement: ["danger", "硬性不满足"],
+      blocked_waiver_expired: ["warn", "豁免过期阻断"], qualified_full_score: ["ok", "内部满分"], not_qualified: ["danger", "不满足"],
+      pending_bid_approval: ["info", "待审批"], approved_for_bidding: ["ok", "已批准投标"], rejected_by_approver: ["gray", "已驳回"],
+    };
+
+    function stateBadge(s) {
+      const m = STATE_META2[s] || ["gray", s || "未知"];
+      return `<span class="badge ${m[0]}">${m[1]}</span>`;
+    }
+
+    async function loadScore() {
+      const errBox = document.getElementById("api-error");
+      try {
+        const [adm, proj] = await Promise.all([
+          apiGet(`/projects/${PJ()}/admission`),
+          apiGet(`/projects/${PJ()}`),
+        ]);
+        const a = (adm.admission || {});
+        const name = proj.project_name;
+        const state = a.state || "collecting";
+
+        // state banner
+        const banner = document.getElementById("state-banner");
+        banner.style.display = "flex";
+        const bTone = a.eligible ? ["ok", "qualified_full_score", "内部满分——可进入人工审批"] :
+          (state === "blocked_hard_requirement" ? ["danger", state, "存在硬性不满足项（一票否决）"] :
+          (state === "blocked_missing_data" ? ["warn", state, "存在缺证阻断项——不推断满足，补录后重算"] :
+          ["info", state, ""]));
+        banner.innerHTML = `<span class="badge ${bTone[0]}">${bTone[1]}</span>
+          <div><span class="state-name">${name}</span>
+          <span class="state-desc">— ${bTone[2] || "当前准入状态，随匹配结果更新。"}</span></div>`;
+
+        // hero
+        const hero = document.getElementById("score-hero");
+        hero.style.display = "flex";
+        const missingN = (a.missing || []).length;
+        const reviewN = (a.review || []).length;
+        hero.innerHTML = `
+          <div class="score-ring"><div class="inner">
+            <div class="val">${missingN + reviewN} 项</div>
+            <div class="cap">待处置</div>
+          </div></div>
+          <div class="info">
+            <h2>${name}（${PJ()}）</h2>
+            <p class="sub" style="margin-top:2px">招标文件解析完成 · 自动匹配结果（准入状态 ${stateBadge(state)}）</p>
+            <div class="rows">
+              <div><span class="k">资格/响应性核查：</span><span class="v">${a.qualification || "pending"}（${a.hard_satisfied || 0}/${a.hard_total || 0} 满足）</span></div>
+              <div><span class="k">计分结论：</span><span class="v">${a.scoring || "not_full"}（客观分 ${a.objective_score ?? 0}/${a.objective_max ?? 0}）</span></div>
+              <div><span class="k">行动就绪：</span><span class="v">${a.readiness || "not_ready"}（动作 ${a.action_done ?? 0}/${a.action_total ?? 0}）</span></div>
+              <div><span class="k">缺失项：</span><span class="v" style="color:var(--warn)">${missingN ? missingN + " 项待补（" + a.missing.map((m) => m.req || m.requirement_id || "").join("、") + "）" : "无"}</span></div>
+              <div><span class="k">人工复核：</span><span class="v">${reviewN ? reviewN + " 项（" + a.review.map((r) => r.req || r.requirement_id || "").join("、") + "）" : "无"}</span></div>
+              <div><span class="k">项目经理：</span><span class="v">${a.manager ? (a.manager.name || a.manager.manager_id || JSON.stringify(a.manager)) + "（候选匹配）" : "无合格候选"}</span></div>
+              ${a.price ? `<div><span class="k">报价：</span><span class="v">${apiFmtMoney(a.price)}</span></div>` : ""}
+              <div><span class="k">准入：</span><span class="v" style="color:${a.eligible ? "var(--ok)" : "var(--warn)"}">${a.eligible ? "内部满分（可提交人工审批）" : "阻断/未满分（不可进入审批）"}</span></div>
+            </div>
+            <div class="notice info" style="margin-top:10px;margin-bottom:0">
+              <b>结果说明</b>：系统展示条款、企业证据和缺失原因，不把缺失推断为满足；补录后由数据管理员核验并重新执行匹配（在「人工补录」页）。<br>
+              <span class="hint">满分 ≠ 自动投标：满分仅进入待审批，最终由经营负责人决定（ADR-001 §2.3）。</span>
+            </div>
+          </div>`;
+
+        // 四类结论
+        const four = document.getElementById("four-rows");
+        const mk = (t, badgeHtml, desc) => `<tr><td><b>${t}</b></td><td>${badgeHtml}</td><td style="color:var(--ink-2)">${desc}</td></tr>`;
+        four.innerHTML = mk("① 资格/响应性核查", a.qualification === "satisfied" || a.qualification === "passed" ? `<span class="badge ok">通过</span>` : `<span class="badge ${a.qualification === "pending" ? "warn" : "warn"}">${a.qualification || "pending"}</span>`,
+            `${a.hard_satisfied || 0}/${a.hard_total || 0} 满足；${missingN} 项缺证默认阻断，不推断`)
+          + mk("② 计分结论", a.scoring === "full" ? `<span class="badge ok">满分</span>` : `<span class="badge warn">${a.scoring || "not_full"}</span>`,
+            `客观分 ${a.objective_score ?? 0}/${a.objective_max ?? 0}；${reviewN} 项人工复核`)
+          + mk("③ 行动就绪", a.readiness === "ready" ? `<span class="badge ok">就绪</span>` : `<span class="badge ${a.readiness === "not_ready" ? "warn" : "info"}">${a.readiness || "not_ready"}</span>`,
+            `动作 ${a.action_done ?? 0}/${a.action_total ?? 0}`)
+          + mk("④ 下一步", a.eligible ? `<span class="badge ok">可进入审批</span>` : `<span class="badge info">人工补录/复核</span>`,
+            a.eligible ? "满分结果可提交经营负责人审批（approval 页）" : "补齐材料并核验后重算（queue 页）");
+      } catch (err) {
+        if (err.status === 403) { errBox.innerHTML = `<div class="notice error">权限不足：当前角色 ${apiRole() || "未登录"} 无权查看结果。请用右上角登录（演示：bid_specialist）。</div>`; errBox.style.display = "block"; return; }
+        errBox.innerHTML = `<div class="notice error">加载准入摘要失败：${err.message}</div>`; errBox.style.display = "block";
+      }
+    }
+
+    /* 逐条明细（matrix 数据，按 tab 分组） */
+    let REQS = [];
+    async function loadDetails() {
+      try {
+        const data = await apiGet(`/projects/${PJ()}/matrix`);
+        REQS = data.requirements || [];
+        const counts = {};
+        REQS.forEach((r) => { counts[r.req_type] = (counts[r.req_type] || 0) + 1; });
+        document.querySelectorAll("#tabs .tab").forEach((t) => {
+          const n = counts[t.dataset.t] || 0;
+          const label = { hard_requirement: "硬性要求", scored_requirement: "评分项", action_requirement: "动作项" }[t.dataset.t];
+          t.textContent = `${label}（${n}）`;
         });
-      });
+        renderDetails("hard_requirement");
+      } catch (err) {
+        document.getElementById("detail-rows").innerHTML = `<div class="notice error">加载明细失败：${err.message}</div>`;
+      }
     }
+    function renderDetails(type) {
+      const rows = REQS.filter((r) => r.req_type === type);
+      const box = document.getElementById("detail-rows");
+      if (!rows.length) { box.innerHTML = `<div class="hint">该类别暂无条目。</div>`; return; }
+      box.innerHTML = `<table class="tbl"><tbody>
+        ${rows.map((r) => `<tr>
+          <td class="num" style="width:90px"><b>${r.requirement_id}</b></td>
+          <td>${(r.assertion || "").slice(0, 150)}${(r.assertion || "").length > 150 ? "…" : ""}<br><span class="hint">${fmtClause(r.clause_ref)}</span></td>
+          <td style="width:120px">${matchBadge(r.match)}</td>
+          <td style="width:210px;color:var(--ink-2)">${(r.match_reason && r.match_reason.text) || "—"}</td>
+          ${type === "scored_requirement" ? `<td class="num" style="width:90px">${r.max_score ?? "—"}${r.score != null ? `（${r.score}）` : ""}</td>` : ""}
+        </tr>`).join("")}
+      </tbody></table>`;
+    }
+    document.getElementById("tabs").addEventListener("click", (e) => {
+      const btn = e.target.closest(".tab");
+      if (!btn) return;
+      document.querySelectorAll("#tabs .tab").forEach((t) => t.classList.remove("active"));
+      btn.classList.add("active");
+      renderDetails(btn.dataset.t);
+    });
 
-    document.getElementById("hard-rows").innerHTML =
-      PROTOTYPE.requirements.filter(r => r.type === "hard").map(rowHtml).join("");
-    document.getElementById("scored-rows").innerHTML =
-      PROTOTYPE.requirements.filter(r => r.type === "scored").map(rowHtml).join("");
-    document.getElementById("action-rows").innerHTML =
-      PROTOTYPE.requirements.filter(r => r.type === "action").map(rowHtml).join("");
-    bindRows();
+    loadScore();
+    loadDetails();
   </script>
 </body>
 </html>

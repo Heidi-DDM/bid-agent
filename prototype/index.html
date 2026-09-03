@@ -85,44 +85,93 @@
     <div class="drawer-body" id="drawer-body"></div>
   </aside>
 
+  <div id="api-error" style="display:none;max-width:1080px;margin:0 auto"></div>
+
   <script src="data.js"></script>
+  <script src="api.js"></script>
   <script src="common.js"></script>
   <script>
     initPage("index.html", "index");
 
-    document.getElementById("btn-search").addEventListener("click", () => {
-      const keyword = document.getElementById("search-keyword").value.trim() || "（未填写关键词）";
+    /* ---- R012：真实 API —— 搜索（job 化）与结构化推送展示 ---- */
+    document.getElementById("btn-search").addEventListener("click", async () => {
+      const box = document.getElementById("search-result");
+      const keyword = document.getElementById("search-keyword").value.trim();
       const region = document.getElementById("search-region").value;
-      document.getElementById("search-result").innerHTML = `<div class="notice info"><b>已完成搜索</b>：${region} · ${keyword} · 返回 5 条公告事实卡。结果已结构化保存，待人工选择深入项目。</div>`;
+      if (!keyword && !region) { box.innerHTML = `<div class="notice error">关键词或地区至少填一个</div>`; return; }
+      box.innerHTML = `<div class="notice info"><b>搜索任务已提交</b>：正在排队执行（manual_trigger）…</div>`;
+      try {
+        const job = await apiPost("/intake/announcement/search",
+          { keyword, region, collect_mode: "manual_trigger" });
+        const statusBox = (d) => {
+          box.innerHTML = `<div class="notice info"><b>搜索任务</b>：job_id <code>${job.job_id}</code> · 状态 ${apiStatusBadge(d.status)}` +
+            (d.error_code ? ` · 错误 ${d.error_code}` : "") + `</div>`;
+        };
+        const done = await apiPollJob(`/intake/announcement/search/${job.job_id}`,
+          { onTick: statusBox, label: "公告搜索" });
+        statusBox(done);
+        if (done.items && done.items.length) {
+          done.items.forEach((p) => {
+            box.insertAdjacentHTML("beforeend", `
+              <div class="project-card" style="margin-top:8px">
+                <div class="pc-main">
+                  <div class="pc-title">${p.project_name} ${apiStatusBadge("pending")}</div>
+                  <div class="pc-meta"><span><b>项目</b>：<code>${p.project_id}</code></span>
+                  <span class="hint">新公告线索（未上传招标文件，无解析/匹配任务——F024：该步骤不触发匹配）</span></div>
+                </div>
+              </div>`);
+          });
+        } else {
+          box.insertAdjacentHTML("beforeend",
+            `<div class="notice warn" style="margin-top:8px"><b>空态</b>：测试期 manual_trigger 不联网采集，搜索返回 0 条结构化事实。
+              这是合法空态——公告原文须经人工确认后单独入库（F004 红线，scheduled 未启用）。</div>`);
+        }
+      } catch (err) {
+        apiShowError(err);
+        box.innerHTML = `<div class="notice error">搜索失败：${err.message}</div>`;
+      }
     });
 
-    const list = document.getElementById("project-list");
-    PROTOTYPE.projects.forEach(p => {
-      const card = document.createElement("div");
-      card.className = "project-card";
-      const stateBadge = badge("state", p.state);
-      card.innerHTML = `
-        <div class="pc-main">
-          <div class="pc-title">${p.name} ${stateBadge}</div>
-          <div class="pc-meta">
-            <span><b>地区</b>：${p.region}</span>
-            <span><b>类型</b>：${p.type}</span>
-            ${p.deadline ? `<span><b>截止</b>：${p.deadline}</span>` : ""}
-            ${p.budget_cap ? `<span><b>最高限价</b>：${p.budget_cap}</span>` : ""}
-            <span><b>更新</b>：${p.updated}</span>
-          </div>
-          ${p.note ? `<div class="hint" style="margin-top:4px">${p.note}</div>` : ""}
-          <div class="pc-foot">
-            ${p.is_main
-              ? `<a class="btn sm" href="import.html">选择深入并上传文件（${p.id}）</a>`
-              : p.id === "FP-2024" ? `<a class="btn sm ghost" href="exceptions.html#parse_fail">查看异常态演示</a>`
-              : p.id === "GZ-2024" ? `<a class="btn sm ghost" href="exceptions.html#expired">查看异常态演示</a>`
-              : p.id === "KB-2023" ? `<a class="btn sm ghost" href="exceptions.html#empty">查看异常态演示</a>`
-              : `<span class="hint">历史对照样本（R009 黄金样本）</span>`}
-          </div>
-        </div>`;
-      list.appendChild(card);
-    });
+    /* ---- 结构化推送：读取真实项目（演示项目 ND-2025 农大） ---- */
+    async function loadProjectList() {
+      const list = document.getElementById("project-list");
+      list.innerHTML = `<div class="hint">加载中…</div>`;
+      try {
+        const p = await apiGet(`/projects/${demoProjectId()}`);
+        const st = p.parse_status === "parsed" ? "已解析" : (p.parse_status || "未上传招标文件");
+        list.innerHTML = "";
+        const card = document.createElement("div");
+        card.className = "project-card";
+        const link = p.parse_status === "parsed"
+          ? `<span class="hint">招标文件已解析——前往「自动匹配 / 风险与缺失」查看结果</span>`
+          : `<a class="btn sm" href="import.html">选择深入并上传文件（${p.project_id}）</a>`;
+        card.innerHTML = `
+          <div class="pc-main">
+            <div class="pc-title">${p.project_name} ${apiStatusBadge(p.state || "collecting")}</div>
+            <div class="pc-meta">
+              <span><b>项目</b>：<code>${p.project_id}</code></span>
+              <span><b>招标文件</b>：${p.tender_file ? "已上传 v" + p.tender_file : "未上传"}</span>
+              <span><b>解析状态</b>：${apiStatusBadge(st)}</span>
+              <span><b>更新</b>：${p.updated || "—"}</span>
+            </div>
+            <div class="pc-foot">${link}</div>
+          </div>`;
+        list.appendChild(card);
+        if (p.materials && p.materials.length) {
+          const sub = document.createElement("div");
+          sub.className = "hint";
+          sub.style.marginTop = "6px";
+          sub.innerHTML = "已挂接材料：" + p.materials.map((m) =>
+            `<code>${m.material_id}</code> v${m.version} ${m.material_type} ${m.parse_status || ""}`).join(" · ");
+          list.appendChild(sub);
+        }
+      } catch (err) {
+        if (err.status === 401) { list.innerHTML = `<div class="notice warn">请先使用右上角账号登录后查看（演示账号 bid_specialist，密码同账号）。</div>`; return; }
+        if (err.status === 403) { list.innerHTML = `<div class="notice error">权限不足：当前角色 ${apiRole() || "未登录"} 无权查看项目。</div>`; return; }
+        list.innerHTML = `<div class="notice error">加载项目失败：${err.message}</div>`;
+      }
+    }
+    loadProjectList();
   </script>
 </body>
 </html>
