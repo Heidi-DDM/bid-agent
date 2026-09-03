@@ -33,10 +33,12 @@ def _request(url: str) -> urllib.request.Request:
 
 
 def fetch_robots(url: str, *, timeout: int = FETCH_TIMEOUT_SECONDS) -> str | None:
-    """获取站点 robots.txt 文本。返回 None 表示站点无 robots.txt（允许）。
+    """获取站点 robots.txt 文本。返回 None 表示站点无 robots.txt（允许抓取）。
 
-    网络/HTTP 错误统一抛 RobotsUnavailable（保守：不可判定时交人工复核，
-    不让抓取动作在无 robots 保护下静默发生）。
+    HTTP 404/空文件视为"站点无 robots.txt"（RFC 9309：无规则 = 默认允许，
+    由调用方记录 fetched=False 供审计复核）；网络错误/超时/5xx 抛
+    RobotsUnavailable（保守：不可判定时交人工复核，不让抓取动作在无 robots
+    保护下静默发生）。
     """
     parsed = urlparse(url)
     robots_url = f"{parsed.scheme}://{parsed.netloc}{ROBOTS_PATH}"
@@ -47,7 +49,12 @@ def fetch_robots(url: str, *, timeout: int = FETCH_TIMEOUT_SECONDS) -> str | Non
                 raise RobotsUnavailable("robots.txt 超过大小上限")
             text = data.decode("utf-8", errors="replace")
             return text if text.strip() else None
-    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+    except HTTPError as exc:
+        if exc.code == 404:
+            return None  # 站点无 robots.txt 文件（区别于网络故障，RFC 9309 允许抓取）
+        logger.warning("robots.txt 获取失败 url=%s err=%s", robots_url, type(exc).__name__)
+        raise RobotsUnavailable(f"robots.txt 不可达: {robots_url}（{type(exc).__name__}）") from exc
+    except (URLError, TimeoutError, OSError) as exc:
         logger.warning("robots.txt 获取失败 url=%s err=%s", robots_url, type(exc).__name__)
         raise RobotsUnavailable(f"robots.txt 不可达: {robots_url}（{type(exc).__name__}）") from exc
 

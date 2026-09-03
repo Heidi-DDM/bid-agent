@@ -17,8 +17,12 @@ SINGLE_SOURCE_INTERVAL = timedelta(minutes=5)   # 单源 ≤1 次/5 分钟
 GLOBAL_WINDOW = timedelta(hours=1)              # 全平台窗口 1 小时
 GLOBAL_MAX_CALLS = 200                          # 全平台 ≤200 次/小时
 
-# 透明标识 UA：含组织与用途，明确不伪装（不以浏览器 UA 开头）
-TRANSPARENT_UA = "Hebei-Jianshe-BidAgent/0.1 (内部演示系统; 数据源合规见 docs/合规数据源清单.md)"
+# 透明标识 UA：含组织与用途，明确不伪装（不以浏览器 UA 开头）。
+# 必须 ASCII-only：HTTP header 仅允许 latin-1 编码，中文字符会在 urllib
+# 序列化 header 时抛 UnicodeEncodeError（2026-09-03 真实源冒烟实测暴露）。
+TRANSPARENT_UA = ("Hebei-Jianshe-BidAgent/0.1 "
+                  "(internal demo system; source compliance per "
+                  "docs/data-source-compliance.md)")
 
 
 class ComplianceError(Exception):

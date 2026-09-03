@@ -58,6 +58,9 @@ class AnalysisJob(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     runner_id: Mapped[str | None] = mapped_column(String(64))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 执行结果摘要（announcement.search 的逐源结果 [{source_id,status,count,note}]，
+    # 供 GET 轮询如实展示；其他 kind 暂不使用）
+    result_summary: Mapped[list | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
@@ -191,6 +194,43 @@ class MaterialVersion(Base):
     object_uri: Mapped[str] = mapped_column(String(512), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class AnnouncementCandidate(Base):
+    """R004/F020：公告搜索候选（public_data schema，manual_trigger 搜索结果暂存）。
+
+    搜索任务只抓列表页 → 候选落本表（标题/来源/链接等列表页可确证事实；
+    region/publish_date 等列表页不标注的字段一律 NULL=待补，不推断）；
+    投标专员逐条确认后由 announcement.import_detail 任务抓详情原文入库
+    （material 固化 + Project 建档），import_status 流转 pending → imported/failed。
+    """
+
+    __tablename__ = "announcement_candidates"
+    __table_args__ = (
+        Index("ix_announcement_candidates_job", "search_job_id"),
+        Index("ix_announcement_candidates_project", "project_id"),
+        Index("ix_announcement_candidates_import", "import_status"),
+        {"schema": "public_data"},
+    )
+    candidate_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    search_job_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    url: Mapped[str] = mapped_column(String(512), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(64))
+    region: Mapped[str | None] = mapped_column(String(64))
+    publish_date: Mapped[date | None] = mapped_column(Date)
+    project_id: Mapped[str | None] = mapped_column(String(64))
+    import_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    # pending / imported / failed
+    import_job_id: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
 
 
 class FieldTrace(Base):

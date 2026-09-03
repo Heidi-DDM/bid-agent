@@ -1,6 +1,8 @@
 # F020：搜索/推送 + 入库 API
-# POST /api/v1/intake/announcement/search（测试期 manual_trigger，只保存公开事实，不触发解析/匹配/准入）
-# GET  /api/v1/intake/announcement/search/{job_id}
+# POST /api/v1/intake/announcement/search（测试期 manual_trigger，真实抓取列表→候选落库）
+# GET  /api/v1/intake/announcement/search/{job_id}（轮询：候选公告卡片 + 逐源结果摘要）
+# POST /api/v1/intake/announcement/candidates/{candidate_id}/import（候选确认→详情原文入库）
+# GET  /api/v1/intake/announcement/candidates/{candidate_id}（候选/导入状态）
 # POST /api/v1/intake/announcement
 # POST /api/v1/intake/tender-document（multipart 上传完整招标文件，绑定 project_id；未上传完整文件不建解析任务）
 # GET  /api/v1/intake/{id}
@@ -12,13 +14,15 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Header, Request, UploadFile
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from runtime.collecting import registry as source_registry
 from runtime.routers.deps import get_actor, get_db, get_role, get_request_id, require_role
 from runtime.core.config import object_store_root
 from runtime.core.errors import ApiError
 from runtime.db import api_service, material_service, worker_service
-from runtime.db.models import AnalysisJob, Project
+from runtime.db.models import AnalysisJob, AnnouncementCandidate
 
 router = APIRouter(prefix="/api/v1/intake", tags=["intake"])
 
@@ -35,9 +39,12 @@ async def search_announcement(
     actor: str = Depends(get_actor),
     session: Session = Depends(get_db),
 ) -> dict:
-    """搜索与结构化推送（F020 §2.2.1）：只保存公开公告事实，不触发解析/匹配/准入。
+    """搜索公告（F020 §2.2.1）：真实抓取已冻结 L1 平台列表页 → 候选落库。
 
-    测试期仅 manual_trigger（F004 采集红线）；创建异步 job，轮询 GET .../search/{job_id}。
+    测试期仅 manual_trigger（F004 采集红线）；创建异步 job 由 worker 执行
+    （robots 预检 + 单源限频 ≤1 次/5 分钟 + 透明 UA），轮询 GET .../search/{job_id}
+    获取候选；候选确认入库走 candidates/{id}/import。搜索本身不创建 Project、
+    不触发解析/匹配/准入（候选确认入库后才建档）。
     """
     require_role(role, "announcement", "write", session=session, actor=actor)
     content_type = request.headers.get("content-type", "")
@@ -48,22 +55,57 @@ async def search_announcement(
             raise ApiError("invalid_request", "请求体必须是合法 JSON")
     else:
         payload = dict(await request.form())
-    keyword = str(payload.get("keyword") or "")
-    region = str(payload.get("region") or "")
+    keyword = str(payload.get("keyword") or "").strip()
+    region = str(payload.get("region") or "").strip() or None
     collect_mode = str(payload.get("collect_mode") or "manual_trigger")
     if collect_mode != "manual_trigger":
         raise ApiError("invalid_request", "测试期仅支持 manual_trigger（F004 红线）")
     if not keyword and not region:
         raise ApiError("invalid_request", "keyword 或 region 至少填一个")
 
-    project_id = f"PJ-{uuid.uuid4().hex[:10]}"
-    project_name = keyword.strip() or f"公告搜索-{region}"
-    api_service.create_project(session, project_id=project_id, project_name=project_name, actor=actor)
+    # sources：JSON 数组或逗号分隔字符串；未注册/未启用源如实拒绝（清单 §2 以外不接入）
+    raw_sources = payload.get("sources") or []
+    if isinstance(raw_sources, str):
+        raw_sources = [s.strip() for s in raw_sources.split(",") if s.strip()]
+    if not isinstance(raw_sources, list):
+        raise ApiError("invalid_request", "sources 必须是数组或逗号分隔字符串")
+    raw_sources = [str(s).strip() for s in raw_sources if str(s).strip()]
+    valid, unknown = source_registry.validate_sources(raw_sources)
+    if unknown:
+        raise ApiError("invalid_request",
+                       f"未注册/未启用数据源: {unknown}（docs/合规数据源清单.md §2 以外平台不接入）")
 
     job, created = worker_service.create_job(
-        session, kind="announcement.search", input_ref=project_id, project_id=project_id
+        session,
+        kind="announcement.search",
+        input_ref=json.dumps({"keyword": keyword, "region": region, "sources": valid},
+                             ensure_ascii=False),
+        project_id=None,
     )
-    return {"request_id": request_id, "job_id": job.job_id, "project_id": project_id, "created": created}
+    return {"request_id": request_id, "job_id": job.job_id, "created": created}
+
+
+def _candidate_card(c: AnnouncementCandidate) -> dict:
+    """候选公告卡片（对齐 F020 §2.2.1 公告事实卡字段；列表页未标注字段=null 待补）。"""
+    return {
+        "candidate_id": c.candidate_id,
+        "project_id": c.project_id,
+        "project_name": c.title,
+        "state": "collecting",
+        "region": c.region,
+        "project_type": c.category,
+        "budget_cap": None,
+        "bond": None,
+        "bid_validity": None,
+        "deadline": c.publish_date.isoformat() if c.publish_date else None,
+        "source": c.source_name,
+        "source_url": c.url,
+        "parse_status": "pending",
+        "tender_file": None,
+        "updated": None,
+        "import_status": c.import_status,
+        "note": "候选公告（列表页事实），待投标专员确认后抓详情原文入库",
+    }
 
 
 @router.get("/announcement/search/{job_id}")
@@ -73,24 +115,91 @@ def search_announcement_status(
     role: str = Depends(get_role),
     session: Session = Depends(get_db),
 ) -> dict:
-    """轮询搜索结果（F020 §2.2.1）。"""
+    """轮询搜索结果（F020 §2.2.1）：候选公告卡片数组 + 逐源结果摘要。"""
     require_role(role, "announcement", "read", session=session, actor=role, object_ref=job_id)
-    from runtime.db.models import AnalysisJob
-
     job = session.get(AnalysisJob, job_id)
     if job is None:
         raise ApiError("not_found", f"任务不存在: {job_id}")
-    items: list[dict] = []
+    candidates: list[dict] = []
     if job.status == "completed":
-        project = session.get(Project, job.project_id) if job.project_id else None
-        if project is not None:
-            items = [api_service.project_card(session, project)]
+        rows = session.scalars(
+            select(AnnouncementCandidate)
+            .where(AnnouncementCandidate.search_job_id == job_id)
+            .order_by(AnnouncementCandidate.created_at)
+        ).all()
+        candidates = [_candidate_card(c) for c in rows]
     return {
         "request_id": request_id,
         "status": job.status,
-        "items": items,
+        "items": candidates,
+        "summary": job.result_summary if isinstance(job.result_summary, list) else None,
         "error_code": job.error_code,
     }
+
+
+@router.post("/announcement/candidates/{candidate_id}/import")
+def import_candidate(
+    candidate_id: str,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+) -> dict:
+    """候选公告确认入库（F020 §2.2.1 扩展）：投递 announcement.import_detail 任务。
+
+    worker 执行 robots 预检 + 限频 → 抓详情原文 → 原文固化（Material，raw 不可覆盖）
+    → Project 建档。同源 5 分钟内仅可抓 1 次（红线），紧邻搜索后导入会触发
+    限频重试，属合规预期行为。
+    """
+    require_role(role, "announcement", "write", session=session, actor=actor,
+                 object_ref=candidate_id)
+    candidate = session.get(AnnouncementCandidate, candidate_id)
+    if candidate is None:
+        raise ApiError("not_found", f"候选公告不存在: {candidate_id}")
+    if candidate.import_status == "imported":
+        raise ApiError("invalid_request",
+                       f"候选公告已入库 project_id={candidate.project_id}（raw 不可覆盖，不重复导入）")
+    # 幂等：同候选不重复建任务；failed 重试追加序号（避免幂等键命中失败任务）
+    existing_count = len(session.scalars(
+        select(AnalysisJob).where(
+            AnalysisJob.kind == "announcement.import_detail",
+            AnalysisJob.input_ref == candidate_id,
+        )
+    ).all())
+    job, _ = worker_service.create_job(
+        session,
+        kind="announcement.import_detail",
+        input_ref=candidate_id,
+        project_id=None,
+        idempotency_key=f"announcement.import_detail:{candidate_id}:{existing_count}",
+    )
+    candidate.import_job_id = job.job_id
+    candidate.requested_by = actor
+    session.commit()
+    return {"request_id": request_id, "job_id": job.job_id, "candidate_id": candidate_id}
+
+
+@router.get("/announcement/candidates/{candidate_id}")
+def candidate_status(
+    candidate_id: str,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+) -> dict:
+    """候选公告与导入状态（轮询 import 任务结果）。"""
+    require_role(role, "announcement", "read", session=session, actor=role, object_ref=candidate_id)
+    candidate = session.get(AnnouncementCandidate, candidate_id)
+    if candidate is None:
+        raise ApiError("not_found", f"候选公告不存在: {candidate_id}")
+    job_status = None
+    if candidate.import_job_id:
+        job = session.get(AnalysisJob, candidate.import_job_id)
+        job_status = job.status if job else None
+    card = _candidate_card(candidate)
+    card["job_status"] = job_status
+    card["error_message"] = candidate.error_message
+    card["requested_by"] = candidate.requested_by
+    return {"request_id": request_id, "candidate": card}
 
 
 @router.post("/announcement")

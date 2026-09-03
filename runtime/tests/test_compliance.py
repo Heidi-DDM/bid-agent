@@ -44,6 +44,12 @@ def test_transparent_ua_is_transparent():
     assert not ua_is_transparent("googlebot/2.1")
 
 
+def test_transparent_ua_ascii_only():
+    # HTTP header 仅 latin-1：中文 UA 会在发送请求时 UnicodeEncodeError
+    # （2026-09-03 惠招标真实抓取冒烟实测暴露），UA 必须 ASCII-only。
+    assert TRANSPARENT_UA.isascii()
+
+
 # ---------- URL ----------
 
 def test_normalize_url_ok():

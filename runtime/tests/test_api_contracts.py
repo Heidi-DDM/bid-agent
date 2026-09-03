@@ -140,6 +140,45 @@ def test_search_requires_keyword_or_region(client):
     assert resp.json()["error"]["code"] == "invalid_request"
 
 
+# ---------- R004：候选公告确认入库 RBAC（announcement write 仅投标专员） ----------
+
+def test_candidate_import_requires_announcement_write(client):
+    # import = 写公开事实（抓详情原文入库）：bid_specialist 允许（沙盒无库 → 500）；
+    # 其余角色 403 不触库
+    url = "/api/v1/intake/announcement/candidates/C-1/import"
+    for role in ("data_admin", "business_head", "legal"):
+        resp = client.post(url, headers=_headers(role))
+        assert resp.status_code == 403, role
+        assert resp.json()["error"]["code"] == "forbidden", role
+    resp = client.post(url, headers=_headers("bid_specialist"))
+    assert resp.status_code == 500  # 已过 RBAC，沙盒无库 → 统一 500 结构
+    assert resp.json()["error"]["code"] == "internal_error"
+
+
+def test_candidate_status_read_gate(client):
+    # 候选读 = announcement read：bid_specialist/business_head/legal 可读（无库 500）；
+    # data_admin 403
+    url = "/api/v1/intake/announcement/candidates/C-1"
+    resp = client.get(url, headers=_headers("data_admin"))
+    assert resp.status_code == 403
+    for role in ("bid_specialist", "business_head", "legal"):
+        resp = client.get(url, headers=_headers(role))
+        assert resp.status_code == 500, role
+        assert resp.json()["error"]["code"] == "internal_error", role
+
+
+def test_search_rejects_unknown_source(client):
+    resp = client.post(
+        "/api/v1/intake/announcement/search",
+        headers=_headers("bid_specialist"),
+        json={"keyword": "房屋建筑施工", "region": "河北省",
+              "sources": ["not_registered_platform"], "collect_mode": "manual_trigger"},
+    )
+    # 未知源校验在触库前 → 400（沙盒无库也稳定）
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_request"
+
+
 def test_reject_requires_comment_validation(client):
     # 经营负责人提交空 comment -> 先校验 body（pydantic 不强制非空字符串）-> 服务层校验
     resp = client.post(
@@ -158,6 +197,9 @@ def test_openapi_registers_f020_routes(client):
     for path in [
         "/api/v1/materials",
         "/api/v1/intake/announcement/search",
+        "/api/v1/intake/announcement/search/{job_id}",
+        "/api/v1/intake/announcement/candidates/{candidate_id}/import",
+        "/api/v1/intake/announcement/candidates/{candidate_id}",
         "/api/v1/intake/tender-document",
         "/api/v1/projects",
         "/api/v1/projects/{project_id}/requirements",

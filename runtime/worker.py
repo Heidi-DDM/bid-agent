@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import logging
 import logging.config
 import os
@@ -39,7 +40,7 @@ def process_one(session, runner_id: str, stale_seconds: int) -> bool:
         # 心跳保持（单次任务执行期间周期性刷新；演示执行器即刻返回）
         heartbeat_job(session, job_id)
         # F021+ 在此接入具体执行器（解析/匹配/准入），当前为可验证的占位执行
-        _execute(session, kind, job.input_ref, job.project_id)
+        _execute(session, kind, job.input_ref, job.project_id, job_id)
         finish_job(session, job_id, outcome="completed")
         logger.info("完成任务 job_id=%s kind=%s", job_id, kind)
         # F020 §2.1：解析成功只触发一次首次匹配（parse.completed 幂等编排）
@@ -286,10 +287,82 @@ def _execute_knowledge_index(session, input_ref: str | None) -> None:
     session.commit()
 
 
-def _execute(session, kind: str, input_ref: str | None, project_id: str | None = None) -> None:
+def _execute_announcement_search(session, input_ref: str | None, job_id: str | None) -> None:
+    """announcement.search 执行器（R004/F020 §2.2.1）：真实公告搜索。
+
+    input_ref = JSON {keyword, region, sources}（POST 时生成）；逐源执行
+    robots 预检 → 限频 → 抓列表页 → 解析 → 关键词过滤 → 候选落库；
+    逐源结果摘要（含限频/robots 拒绝的如实说明）写入 job.result_summary，
+    供 GET 轮询展示（红线拒绝不静默、不伪造成功）。
+    """
+    if not input_ref:
+        raise ValueError("announcement.search 任务缺少 input_ref（搜索参数 JSON）")
+    from runtime.collecting import service as collecting
+
+    payload = json.loads(input_ref)
+    job_id = job_id or ""
+    summary = collecting.search_sources(
+        session,
+        keyword=str(payload.get("keyword") or ""),
+        region=payload.get("region"),
+        sources=payload.get("sources"),
+        search_job_id=job_id,
+    )
+    collecting.save_result_summary(session, job_id, summary)
+    found = sum(int(s.get("count") or 0) for s in summary if s.get("status") == "ok")
+    logger.info("公告搜索完成 job_id=%s keyword=%r 候选=%s summary=%s",
+                job_id, payload.get("keyword"), found,
+                [{"source_id": s["source_id"], "status": s["status"], "count": s.get("count")}
+                 for s in summary])
+
+
+def _execute_announcement_import(session, input_ref: str | None) -> None:
+    """announcement.import_detail 执行器：候选公告详情原文抓取入库。
+
+    input_ref = candidate_id；抓详情（robots+限频）→ 原文固化（material）→
+    Project 建档 → 候选 import_status=imported；失败落账 failed 后上抛
+    （任务 retryable/failed，详情页字段缺失不推断）。
+    """
+    if not input_ref:
+        raise ValueError("announcement.import_detail 任务缺少 input_ref（candidate_id）")
+    from runtime.collecting import service as collecting
+    from runtime.core.config import object_store_root
+    from runtime.db.models import AnnouncementCandidate
+
+    candidate = session.get(AnnouncementCandidate, input_ref)
+    if candidate is None:
+        raise ValueError(f"候选公告不存在: {input_ref}")
+    if candidate.import_status == "imported":
+        logger.info("候选公告已入库 candidate=%s project=%s（幂等跳过）",
+                    candidate.candidate_id, candidate.project_id)
+        return
+    try:
+        result = collecting.import_candidate_detail(
+            session,
+            candidate=candidate,
+            actor=candidate.requested_by or "system:announcement_import",
+            store_root=object_store_root(),
+        )
+    except Exception as exc:
+        collecting.mark_import_failed(session, candidate.candidate_id, exc)
+        logger.info("公告详情入库失败 candidate=%s err=%s:%s",
+                    candidate.candidate_id, type(exc).__name__, str(exc)[:200])
+        raise
+    from runtime.db.models import AnalysisJob
+
+    job = session.get(AnalysisJob, candidate.import_job_id or "")
+    if job is not None and job.result_summary is None:
+        job.result_summary = [{"source_id": candidate.source_id, "status": "imported",
+                               "count": 1, "note": f"project={result['project_id']}"}]
+        session.commit()
+
+
+def _execute(session, kind: str, input_ref: str | None, project_id: str | None = None,
+             job_id: str | None = None) -> None:
     """任务执行器：knowledge_index 执行真实索引（解析产物重路由）；
     parse.tender_document 执行 原文路由→条款/主卡候选→manual_review（R021-5）；
-    match.* 执行 RAG→核验→规则引擎链路；其余保持占位（R022-R024 接入）。"""
+    match.* 执行 RAG→核验→规则引擎链路；announcement.* 执行真实公告搜索/详情入库
+    （R004/F020）；其余保持占位（R022-R024 接入）。"""
     if kind == "knowledge_index":
         _execute_knowledge_index(session, input_ref)
         return
@@ -304,6 +377,12 @@ def _execute(session, kind: str, input_ref: str | None, project_id: str | None =
         return
     if kind == "match.recalculate":
         _execute_match_run(session, project_id, mode="gate")
+        return
+    if kind == "announcement.search":
+        _execute_announcement_search(session, input_ref, job_id)
+        return
+    if kind == "announcement.import_detail":
+        _execute_announcement_import(session, input_ref)
         return
     if not input_ref:
         raise ValueError("任务缺少 input_ref")

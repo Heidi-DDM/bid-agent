@@ -12,7 +12,7 @@
 | 分组 | 最小接口 |
 |---|---|
 | 材料 | `POST/GET /api/v1/materials`、`GET /{id}/versions`、`POST /{id}/verify` |
-| 搜索/推送 | `POST /api/v1/intake/announcement/search`、`GET /api/v1/intake/announcement/search/{job_id}`（测试期 `manual_trigger`；输出结构化公告事实卡） |
+| 搜索/推送 | `POST /api/v1/intake/announcement/search`、`GET /api/v1/intake/announcement/search/{job_id}`（测试期 `manual_trigger`；真实抓取已启用 L1 源列表页 → 候选事实卡）、`POST /api/v1/intake/announcement/candidates/{candidate_id}/import`、`GET /api/v1/intake/announcement/candidates/{candidate_id}`（候选确认→详情原文入库） |
 | 入库 | `POST /api/v1/intake/announcement`、`POST /api/v1/intake/tender-document`、`GET /api/v1/intake/{id}`、`POST /api/v1/intake/{id}/reparse` |
 | 解析/OCR | `POST /api/v1/ocr/route`、`GET /api/v1/ocr/jobs/{id}`、`GET /api/v1/ocr/review-queue`、`POST /api/v1/ocr/review/{id}` |
 | 企业资料 | `POST /api/v1/qualifications`、`/performances`、`/personnel`、`/evidences` |
@@ -46,27 +46,35 @@
 
 ### 2.2.1 搜索与结构化推送（`index.html`）
 
-**`POST /api/v1/intake/announcement/search`** —— 测试期 `manual_trigger`，遵守限频/robots/透明 UA；只保存公开公告事实，不触发解析/匹配/准入。
+**`POST /api/v1/intake/announcement/search`** —— 测试期 `manual_trigger`，遵守限频/robots/透明 UA；由 worker 真实抓取已启用 L1 源列表页 → 候选落库（`announcement_candidates`）。**搜索只产生候选，不创建 Project、不触发解析/匹配/准入**；候选确认入库后（见下）才建档。
 
 ```json
 // 请求
 { "keyword": "房屋建筑施工", "region": "河北省",
-  "sources": ["hebei_ggzy"], "collect_mode": "manual_trigger" }
-// 响应（异步，先返回 job_id）
-{ "request_id": "r-…", "job_id": "jb-…" }
+  "sources": ["hebtig"], "collect_mode": "manual_trigger" }
+// 响应（异步，先返回 job_id；sources 缺省=全部已启用源；未注册源 400 invalid_request）
+{ "request_id": "r-…", "job_id": "jb-…", "created": true }
 ```
 
-**`GET /api/v1/intake/announcement/search/{job_id}`** —— 轮询任务结果，成功返回结构化公告事实卡数组（对齐 `PROTOTYPE.projects` 卡片字段）：
+**`GET /api/v1/intake/announcement/search/{job_id}`** —— 轮询任务结果，返回候选公告事实卡数组（对齐 `PROTOTYPE.projects` 卡片字段；列表页未标注字段一律 `null`=待补，不推断）与逐源执行摘要（限频/robots 拒绝如实展示）：
 
 ```json
-{ "request_id": "r-…", "status": "succeeded",
-  "items": [ { "project_id": "ND-2025", "project_name": "河北农业大学东校区研究生宿舍建设项目施工",
-      "state": "collecting", "region": "保定市", "project_type": "房屋建筑工程 · 公开招标 · 资格后审",
-      "budget_cap": "12,471.59 万元", "bond": "20 万元", "bid_validity": "120 日历天",
-      "deadline": "2025-10-30 09:00", "source": "河北省公共资源交易服务平台",
-      "source_url": "https://ggzy.hebei.gov.cn/…", "parse_status": "pending",
-      "updated": "2026-08-28", "note": null } ] }
+{ "request_id": "r-…", "status": "completed",
+  "items": [ { "candidate_id": "c-…", "project_id": null,
+      "project_name": "某地房屋建筑施工总承包招标公告", "state": "collecting",
+      "region": null, "project_type": "招标专区-工程类",
+      "budget_cap": null, "bond": null, "bid_validity": null, "deadline": null,
+      "source": "惠招标（河北交投）", "source_url": "https://ebidding.hebtig.com/jyxx/…",
+      "parse_status": "pending", "tender_file": null, "updated": null,
+      "import_status": "pending", "note": "候选公告（列表页事实），待投标专员确认后抓详情原文入库" } ],
+  "summary": [ { "source_id": "hebtig", "name": "惠招标（河北交投）", "status": "ok",
+                 "count": 3, "note": "列表命中 10 条，关键词过滤后 3 条" } ],
+  "error_code": null }
 ```
+
+**`POST /api/v1/intake/announcement/candidates/{candidate_id}/import`** —— 投标专员确认候选公告：投递 `announcement.import_detail` 任务（worker 执行 robots 预检 + 限频 → 抓详情原文 → 净化文本（`.txt`，对象库禁 `.html`，F019 §4）→ `material` 固化（public/raw 不可覆盖/哈希去重）→ `Project` 建档）。同源 ≤1 次/5 分钟（红线），紧邻搜索后确认会限频重试属合规预期。已入库候选重复确认 → 400。响应 `{ request_id, job_id, candidate_id }`。
+
+**`GET /api/v1/intake/announcement/candidates/{candidate_id}`** —— 轮询候选导入状态：`candidate`（同卡片字段）+ `job_status` + `error_message`（限频/robots/抓取失败原因如实返回）。
 
 **`GET /api/v1/projects`** —— 结构化推送列表（同卡片字段，追加 `is_main`、`clarify_count`、`tender_file`）；`state` 取 13 态之一。
 
@@ -227,3 +235,4 @@ worker 领取任务使用数据库锁和租约；超时任务由恢复器重新�
 | 2026-08-31 | v1.2 | 补充 §2.2 接口数据契约：按最新原型 `prototype/data.js` 字段对齐各接口请求/响应 schema（搜索推送、选择解析、自动匹配、风险缺失、补录重算、审批审计、资料库后台）；枚举对齐 STATE_META/MATCH_META/ROLES；明确驳回 comment 必填、审批创建满分门槛、结果页只读等约束。 |
 | 2026-09-01 | v1.3 | 增加 F025 知识库检索/索引可观测接口与候选证据契约；禁止检索接口隐式触发匹配或返回准入判定。 |
 | 2026-09-02 | v1.4 | §5.1 正式认证（R024）：Bearer token 登录替换开发期 X-Role/X-Actor 头（AUTH_DEV_HEADERS 显式开关回退）；账号 pbkdf2 哈希存 AUTH_USERS、HMAC token、匿名拒绝留审计；`/auth/login`、`/auth/me` 契约。 |
+| 2026-09-03 | v1.5 | §2.2.1 搜索契约改为真实采集（R004 接线）：worker 执行 `announcement.search`（robots 预检+单源限频+透明 UA，抓已启用 L1 源列表页）→ 候选落库；POST 不再预建 Project（响应 `{request_id, job_id}`）；GET 返回候选事实卡数组 + 逐源 summary（限频/robots 拒绝如实展示）；新增候选确认入库 `candidates/{id}/import`（详情原文净化文本 `.txt` 固化 + Project 建档，raw 不可覆盖）与状态轮询端点。源注册表见 `runtime/collecting/registry.py`，启用登记见 `docs/合规数据源清单.md` §4。 |
