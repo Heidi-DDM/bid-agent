@@ -75,6 +75,23 @@ def match_runs_latest(
     return data
 
 
+@router.get("/{project_id}/match-runs/compare")
+def match_runs_compare(
+    project_id: str,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+    base_run_id: str | None = None,
+    target_run_id: str | None = None,
+) -> dict:
+    """R023-4 结果版本对比：base（默认次新）vs target（默认最新）逐条 diff。"""
+    require_role(role, "match", "read", session=session, actor=role, object_ref=project_id)
+    data = api_service.match_runs_compare(
+        session, project_id, base_run_id=base_run_id, target_run_id=target_run_id)
+    data["request_id"] = request_id
+    return data
+
+
 @router.get("/{project_id}/match-runs/{run_id}")
 def match_run_detail(
     project_id: str,

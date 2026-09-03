@@ -162,6 +162,7 @@ def test_openapi_registers_f020_routes(client):
         "/api/v1/projects",
         "/api/v1/projects/{project_id}/requirements",
         "/api/v1/projects/{project_id}/match-runs/latest",
+        "/api/v1/projects/{project_id}/match-runs/compare",
         "/api/v1/projects/{project_id}/matrix",
         "/api/v1/projects/{project_id}/admission",
         "/api/v1/projects/{project_id}/queues",

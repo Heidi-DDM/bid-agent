@@ -639,3 +639,90 @@ def test_generate_admission_diagnostic_mode_rejected(session):
             session, run=run, engine_result=_engine_result([_hard_entry()]),
             requirements=[_req_dict()], evidence={},
         )
+
+# ---------- R023-4：结果版本对比（match-runs/compare） ----------
+
+def _mk_run_v2(session, run_id="MR-2", created_ts=None, snapshot_hash="f" * 64) -> None:
+    from datetime import timedelta
+
+    ts = created_ts or (_dt.datetime.now(_dt.timezone.utc) - timedelta(minutes=1))
+    session.add(MatchRun(
+        run_id=run_id, project_id="ND-2025", rule_set_id="RS-1", as_of="2025-10-30",
+        mode="gate", coverage={"executed": 20, "declared": 20, "complete": True},
+        status="completed", retrieval_run_id="rr-2", index_version="iv-2",
+        candidate_chunk_ids=["CH-1"], structured_verification={},
+        evidence_snapshot_hash=snapshot_hash,
+        created_at=ts,
+    ))
+    session.commit()
+
+
+def _mk_item(session, run_id, requirement_id, result, score=None) -> None:
+    from runtime.db.models import MatchItem
+
+    session.add(MatchItem(
+        item_id=f"MI-{run_id}-{requirement_id}", run_id=run_id,
+        requirement_id=requirement_id, match_result=result, score=score,
+        match_reason={"text": f"{requirement_id}: {result}"},
+        evaluated_at=_dt.datetime.now(_dt.timezone.utc),
+    ))
+    session.commit()
+
+
+def test_match_runs_compare_diff_and_summary(session):
+    """R023-4：补录后重算 → compare 显示变化（unverifiable→satisfied）与摘要。"""
+    from runtime.db import api_service
+
+    _project(session)
+    # base run：无企业资料 → NQ-H-001 unverifiable
+    _mk_run_v2(session, run_id="MR-BASE")
+    _mk_item(session, "MR-BASE", "NQ-H-001", "unverifiable")
+    _mk_item(session, "MR-BASE", "NQ-A-001", "satisfied")
+    # target run：补录后 → NQ-H-001 satisfied（快照 hash 变化）
+    _mk_run_v2(session, run_id="MR-TGT", snapshot_hash="g" * 64)
+    _mk_item(session, "MR-TGT", "NQ-H-001", "satisfied")
+    _mk_item(session, "MR-TGT", "NQ-A-001", "satisfied")
+
+    data = api_service.match_runs_compare(session, "ND-2025", base_run_id="MR-BASE",
+                                          target_run_id="MR-TGT")
+    assert data["base"]["run_id"] == "MR-BASE"
+    assert data["target"]["run_id"] == "MR-TGT"
+    assert data["summary"]["base_satisfied"] == 1
+    assert data["summary"]["target_satisfied"] == 2
+    assert data["summary"]["target_unverifiable"] == 0
+    assert data["summary"]["changed_count"] == 1
+    assert data["summary"]["input_snapshot_identical"] is False
+    changes = data["changes"]
+    assert changes[0]["requirement_id"] == "NQ-H-001"
+    assert changes[0]["from"] == "unverifiable" and changes[0]["to"] == "satisfied"
+    # matrix 逐条对照
+    by_req = {r["requirement_id"]: r for r in data["matrix"]}
+    assert by_req["NQ-H-001"]["base"] == "unverifiable"
+    assert by_req["NQ-H-001"]["target"] == "satisfied"
+    assert by_req["NQ-H-001"]["changed"] is True
+    assert by_req["NQ-A-001"]["changed"] is False
+
+
+def test_match_runs_compare_identical_snapshot_flags(session):
+    """同快照重跑（无实质变化）→ input_snapshot_identical=True。"""
+    from runtime.db import api_service
+
+    _project(session)
+    _mk_run_v2(session, run_id="MR-1", snapshot_hash="same")
+    _mk_item(session, "MR-1", "NQ-H-001", "satisfied")
+    _mk_run_v2(session, run_id="MR-2", snapshot_hash="same")
+    _mk_item(session, "MR-2", "NQ-H-001", "satisfied")
+    data = api_service.match_runs_compare(session, "ND-2025",
+                                          base_run_id=None, target_run_id=None)
+    assert data["summary"]["input_snapshot_identical"] is True
+    assert data["summary"]["changed_count"] == 0
+
+
+def test_match_runs_compare_no_runs_404(session):
+    from runtime.core.errors import ApiError
+    from runtime.db import api_service
+
+    _project(session)
+    with pytest.raises(ApiError):
+        api_service.match_runs_compare(session, "ND-2025", base_run_id=None,
+                                       target_run_id=None)

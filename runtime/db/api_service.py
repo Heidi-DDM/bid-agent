@@ -555,6 +555,86 @@ def _rule_set_version(session: Session, rule_set_id: str) -> str | None:
     return row.version if row else None
 
 
+def match_runs_compare(session: Session, project_id: str, *, base_run_id: str | None,
+                       target_run_id: str | None) -> dict[str, Any]:
+    """R023-4 结果版本对比：base（默认次新）vs target（默认最新）逐条 diff。
+
+    返回：两 run 元信息（rule_set/as_of/evidence_snapshot_hash/created_at）、
+    逐 requirement 的 (base_result, target_result) 对照、变化列表
+    （按 changed_from→changed_to 分组）与整体摘要（satisfied 增量/缺项收敛）。
+    只读不建 run；任一 run 缺失 → 404。
+    """
+    from runtime.db.models import MatchItem
+
+    runs = session.scalars(
+        select(MatchRun).where(MatchRun.project_id == project_id)
+        .order_by(MatchRun.created_at.desc())
+    ).all()
+    if len(runs) < 1:
+        raise ApiError("not_found", f"项目 {project_id} 无匹配运行可对比")
+    target = next((r for r in runs if r.run_id == (target_run_id or runs[0].run_id)), runs[0])
+    base = next((r for r in runs if r.run_id == (base_run_id or (runs[1].run_id if len(runs) > 1 else runs[0].run_id))), runs[0])
+    # base 默认取 target 之前的最近一次；若同 run（仅一次运行）则 base=target（无变化）
+    if base.run_id == target.run_id and len(runs) > 1:
+        base = runs[1] if runs[1].run_id != target.run_id else target
+
+    def _items_of(run_id: str) -> dict[str, dict]:
+        rows = session.scalars(
+            select(MatchItem).where(MatchItem.run_id == run_id)
+        ).all()
+        return {r.requirement_id: {"match_result": r.match_result,
+                                   "score": r.score, "max_score": r.max_score,
+                                   "reason": (r.match_reason or {}).get("text"),
+                                   "evidence_refs": r.evidence_refs or []}
+                for r in rows}
+
+    base_items = _items_of(base.run_id)
+    target_items = _items_of(target.run_id)
+    all_reqs = sorted(set(base_items) | set(target_items))
+
+    changes: list[dict] = []
+    rows_out: list[dict] = []
+    for rid in all_reqs:
+        b = base_items.get(rid, {})
+        t = target_items.get(rid, {})
+        rows_out.append({
+            "requirement_id": rid,
+            "base": b.get("match_result"), "target": t.get("match_result"),
+            "changed": b.get("match_result") != t.get("match_result"),
+        })
+        if b.get("match_result") != t.get("match_result"):
+            changes.append({
+                "requirement_id": rid,
+                "from": b.get("match_result") or "（新）",
+                "to": t.get("match_result") or "（移除）",
+                "reason": t.get("reason"),
+            })
+
+    summary = {
+        "base_satisfied": sum(1 for r in rows_out if r["base"] == "satisfied"),
+        "target_satisfied": sum(1 for r in rows_out if r["target"] == "satisfied"),
+        "base_unverifiable": sum(1 for r in rows_out if r["base"] == "unverifiable"),
+        "target_unverifiable": sum(1 for r in rows_out if r["target"] == "unverifiable"),
+        "changed_count": len(changes),
+        "input_snapshot_identical": base.evidence_snapshot_hash == target.evidence_snapshot_hash
+        and base.rule_set_id == target.rule_set_id and base.as_of == target.as_of,
+    }
+    return {
+        "project_id": project_id,
+        "base": {"run_id": base.run_id, "rule_set_id": base.rule_set_id,
+                 "as_of": base.as_of,
+                 "evidence_snapshot_hash": base.evidence_snapshot_hash,
+                 "created_at": base.created_at.isoformat() if base.created_at else None},
+        "target": {"run_id": target.run_id, "rule_set_id": target.rule_set_id,
+                   "as_of": target.as_of,
+                   "evidence_snapshot_hash": target.evidence_snapshot_hash,
+                   "created_at": target.created_at.isoformat() if target.created_at else None},
+        "summary": summary,
+        "changes": changes,
+        "matrix": rows_out,
+    }
+
+
 def list_requirements(session: Session, project_id: str) -> list[dict[str, Any]]:
     """项目要求列表（对齐 PROTOTYPE.requirements；无 run 时按最近 RuleSet 展示）。"""
     run = latest_match_run(session, project_id)
