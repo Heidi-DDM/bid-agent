@@ -28,11 +28,17 @@ class RobotsUnavailable(FetchError):
     """robots.txt 不可达：保守处置=人工复核，不静默抓取（schema §5.2）。"""
 
 
-def _request(url: str) -> urllib.request.Request:
-    return urllib.request.Request(url, headers={"User-Agent": TRANSPARENT_UA})
+def _request(url: str, *, user_agent: str = TRANSPARENT_UA) -> urllib.request.Request:
+    """建立请求；UA 必须由采集策略的调用方显式选择。"""
+    return urllib.request.Request(url, headers={"User-Agent": user_agent})
 
 
-def fetch_robots(url: str, *, timeout: int = FETCH_TIMEOUT_SECONDS) -> str | None:
+def fetch_robots(
+    url: str,
+    *,
+    timeout: int = FETCH_TIMEOUT_SECONDS,
+    user_agent: str = TRANSPARENT_UA,
+) -> str | None:
     """获取站点 robots.txt 文本。返回 None 表示站点无 robots.txt（允许抓取）。
 
     HTTP 404/空文件视为"站点无 robots.txt"（RFC 9309：无规则 = 默认允许，
@@ -43,7 +49,7 @@ def fetch_robots(url: str, *, timeout: int = FETCH_TIMEOUT_SECONDS) -> str | Non
     parsed = urlparse(url)
     robots_url = f"{parsed.scheme}://{parsed.netloc}{ROBOTS_PATH}"
     try:
-        with urllib.request.urlopen(_request(robots_url), timeout=timeout) as resp:
+        with urllib.request.urlopen(_request(robots_url, user_agent=user_agent), timeout=timeout) as resp:
             data = resp.read(MAX_CONTENT_BYTES + 1)
             if len(data) > MAX_CONTENT_BYTES:
                 raise RobotsUnavailable("robots.txt 超过大小上限")
@@ -59,13 +65,18 @@ def fetch_robots(url: str, *, timeout: int = FETCH_TIMEOUT_SECONDS) -> str | Non
         raise RobotsUnavailable(f"robots.txt 不可达: {robots_url}（{type(exc).__name__}）") from exc
 
 
-def fetch_text(url: str, *, timeout: int = FETCH_TIMEOUT_SECONDS) -> str:
+def fetch_text(
+    url: str,
+    *,
+    timeout: int = FETCH_TIMEOUT_SECONDS,
+    user_agent: str = TRANSPARENT_UA,
+) -> str:
     """抓取单条 URL 的正文文本（仅文本内容，不解析登录/付费页）。
 
     失败抛 FetchError；调用方捕获后转 manual_review/retryable，不伪造成功。
     """
     try:
-        with urllib.request.urlopen(_request(url), timeout=timeout) as resp:
+        with urllib.request.urlopen(_request(url, user_agent=user_agent), timeout=timeout) as resp:
             ctype = resp.headers.get("Content-Type", "")
             data = resp.read(MAX_CONTENT_BYTES + 1)
             if len(data) > MAX_CONTENT_BYTES:

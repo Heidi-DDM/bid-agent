@@ -1,0 +1,51 @@
+# R021/F004 采集运行策略配置
+# 这是运行时策略的可审计配置；未知策略、缺失字段或非法值必须 fail-closed。
+# 2026-09-08 用户决定：放开采集边界——仅保留 R1 不绕过平台技术保护 + 不做恶意抓取。
+# 限速/模式/UA 一律为运行时可配置项，不再冻结为文档硬红线。
+policies:
+  production:
+    network_allowed: true
+    enforce_robots: true
+    enforce_rate_limit: true
+    fixture_only: false
+    # 2026-09-08 放开：单源 300s→60s、全平台 200→1000/h，仍留保底防封
+    single_source_seconds: 60
+    global_max_calls_per_hour: 1000
+    transparent_ua: true
+    max_pages: 5
+    # 仅保留来源范围元数据；不得填充公告实际 region
+    infer_region: false
+
+  staging:
+    network_allowed: true
+    enforce_robots: true
+    enforce_rate_limit: true
+    fixture_only: false
+    single_source_seconds: 30
+    global_max_calls_per_hour: 500
+    transparent_ua: false
+    max_pages: 5
+    # 历史兼容开关；运行时仍不得把平台范围写入公告 region
+    infer_region: true
+
+  development:
+    network_allowed: true
+    enforce_robots: false
+    enforce_rate_limit: false
+    fixture_only: false
+    single_source_seconds: 0
+    global_max_calls_per_hour: 0
+    transparent_ua: false
+    max_pages: 5
+    infer_region: true
+
+  mock:
+    network_allowed: false
+    enforce_robots: false
+    enforce_rate_limit: false
+    fixture_only: true
+    single_source_seconds: 0
+    global_max_calls_per_hour: 0
+    transparent_ua: true
+    max_pages: 1
+    infer_region: false
