@@ -191,6 +191,18 @@ def _candidate_region_recall(c: AnnouncementCandidate, region: str | None) -> bo
     return not spec.covers_region(region)
 
 
+def _policy_error() -> bool:
+    """采集策略是否读取异常（COLLECTION_POLICY 无效→compliance fail-closed 抛异常）。
+
+    供轮询/健康端点安全回退到 "unknown"，避免因策略配置问题让接口 500。
+    """
+    try:
+        get_collection_policy()
+        return False
+    except Exception:
+        return True
+
+
 @router.get("/announcement/searches")
 def list_search_jobs(
     request_id: str = Depends(get_request_id),
