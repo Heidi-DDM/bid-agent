@@ -67,3 +67,6 @@ Thumbs.db
 # 云端部署（docs/11）：服务器 .env 与脱敏导出产物不入 Git
 deploy/.env
 deploy/seed/out/
+
+# AI CLI 本地配置目录，不入库
+.codex/
