@@ -14,6 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from publish import models as M
 from publish import timeutil as tu
 
+# 冻结测试时钟：样本以 2026-08-17 日报为基准，截止日集中在 2026-08-18～09-10；发布层一律经 tu.now() 取时，
+# 真实时钟越过样本截止日后"可参与性"判定全部失败（2026-09-14 CI 与本地 19 例）。冻结到基准日中午，
+# 与用例编写并通过时的真实日期一致；需要其他时点的用例仍可显式传 now_dt。
+FROZEN_NOW = tu.parse_dt("2026-08-17 12:00")
+tu.now = lambda: FROZEN_NOW
+
 PRIORITY = [
     {"level": "法定官方平台", "keywords": ["中国招标投标公共服务平台", "全国公共资源交易平台", "ggzy.gov.cn"]},
     {"level": "招标人或招标代理官方平台", "keywords": ["ebidding.hebtig.com", "招标与采购服务平台"]},
