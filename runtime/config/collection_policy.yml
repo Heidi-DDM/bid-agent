@@ -8,8 +8,9 @@ policies:
     enforce_robots: true
     enforce_rate_limit: true
     fixture_only: false
-    # 2026-09-08 放开：单源 300s→60s、全平台 200→1000/h，仍留保底防封
-    single_source_seconds: 60
+    # 2026-09-09 用户决定（方案B）：单源 60s→30s，满足"搜索后立即点深入"更顺的诉求，
+    # 仍保留 (30s/源) 防封保底与全局限频(1000/h)；未归零以留余地。
+    single_source_seconds: 30
     global_max_calls_per_hour: 1000
     transparent_ua: true
     max_pages: 5

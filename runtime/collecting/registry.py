@@ -18,7 +18,10 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-# 源对 region 搜索条件的覆盖口径：返回 True 表示该源可能含目标地区公告。
+# 源对 region 搜索条件的覆盖口径（C1，2026-09-10）：
+#   direct  = 检索地区与源范围精确匹配（含：省级检索覆盖其下所有地市源，不标待核实）
+#   broader = 源为省/全国大范围平台，可能含检索地区公告 → 覆盖但候选地区待核实
+#   none    = 检索地区与源范围无交集 → 由 service 放宽二次召回（不整源丢弃）
 _DEFAULT_REGION = "河北省"
 
 # 河北省内行政区（省域平台下辖口径）：省级平台覆盖全省，省内市级检索不跳过。
@@ -38,6 +41,7 @@ class SourceSpec:
     list_path: str               # 公告/列表页路径（第 1 页；首页可达平台可留 "/"）
     category: str                # 分区/平台事实
     region_scope: str = _DEFAULT_REGION
+    parent_region: str | None = None  # 地市源所属省份（如 唐山市源 → 河北省）
     admin_subregions: frozenset[str] = frozenset()  # scope 下辖行政区
     search_param: str | None = None  # 站内检索 query 参数名；None=回默认列表页
     page_param: str | None = None    # 分页参数；"path_page"= /2.html 路径分页
@@ -72,13 +76,41 @@ class SourceSpec:
         return urlunsplit((parsed.scheme, parsed.netloc, parsed.path,
                            urlencode(query), parsed.fragment))
 
-    def covers_region(self, region: str | None) -> bool:
-        """该源是否覆盖给定 region。不做逐条公告地区推断。"""
+    def region_coverage(self, region: str | None) -> str:
+        """检索地区与源范围的覆盖关系（C1 新口径，2026-09-10）。
+
+        返回 "direct" | "broader" | "none"：
+        - direct：region 为空 / region == region_scope / 省级检索覆盖其下地市源
+          （地市源 parent_region == 检索省名）——正常采集，不标待核实；
+        - broader：源为省级平台（检索地区在其 admin_subregions 内）或全国平台，
+          可能含检索地区公告——覆盖采集，但候选逐条地区待核实（列表页不标注）；
+        - none：检索地区与源范围无交集（如检索唐山市、源为北京市）——由
+          service 放宽二次召回，仍抓列表 + 关键词过滤，不整源丢弃。
+        """
         if not region:
-            return True
-        if region == self.region_scope or region in self.admin_subregions:
-            return True
-        return self.region_scope in region or region in self.region_scope
+            return "direct"
+        if region == self.region_scope:
+            return "direct"
+        # 省级检索覆盖其下所有地市源（地市公告当然属于本省，不标待核实）
+        if self.parent_region and region == self.parent_region:
+            return "direct"
+        # 全国平台含各地公告 → 覆盖但逐条地区待核实
+        if self.region_scope == "全国":
+            return "broader"
+        # 省级平台对地市检索：平台范围覆盖该市，但公告可能来自全省任何地市
+        if region in self.admin_subregions:
+            return "broader"
+        if self.region_scope in region or region in self.region_scope:
+            return "broader"
+        return "none"
+
+    def covers_region(self, region: str | None) -> bool:
+        """该源是否覆盖给定 region（direct/broader 均算覆盖；none 由调用方放宽召回）。
+
+        兼容旧口径的布尔视图；需要区分「精确覆盖 / 大范围来源待核实」的调用方
+        （service 摘要、前端卡片）请改用 region_coverage。
+        """
+        return self.region_coverage(region) != "none"
 
 
 # ── 搜索筛选口径（地区/种类/规模三条件） ────────────────────────────────
@@ -103,6 +135,31 @@ def category_matches(category_value: str | None, title: str | None) -> bool:
         return True
     title_norm = _normalize_keyword(title or "")
     return any(word in title_norm for word in _CATEGORY_TITLE_WORDS.get(category_value, (category_value,)))
+
+
+# D1（2026-09-10）：标题确定性「种类」抽取——枚举顺序即优先级（EPC/总承包类标题
+# 常同时含「施工/设计」，先命中先归类）。复用 announcement_prescreen._PROJECT_TYPE
+# 的词根口径，扩展为 施工/EPC总承包/监理/设计/勘察/货物/服务 七类；纯子串命中，
+# 不推断；不命中 → None（种类待详情页确认）。provenance 恒为「标题」。
+_TITLE_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("EPC总承包", ("EPC", "工程总承包", "设计施工总承包", "设计采购施工")),
+    ("施工", ("施工",)),
+    ("监理", ("监理",)),
+    ("勘察", ("勘察",)),
+    ("设计", ("设计",)),
+    ("货物", ("货物",)),
+    ("服务", ("服务",)),
+)
+
+
+def project_type_from_title(title: str | None) -> str | None:
+    """标题确定性种类抽取：命中 → 施工/EPC总承包/监理/设计/勘察/货物/服务；未命中 → None。"""
+    t = title or ""
+    for kind, words in _TITLE_KINDS:
+        for word in words:
+            if word in t:
+                return kind
+    return None
 
 
 def _normalize_keyword(text: str) -> str:
@@ -218,9 +275,13 @@ SOURCES: dict[str, SourceSpec] = {
     ),
     "szj-hebei": SourceSpec(
         source_id="szj-hebei", name="河北省公共资源交易服务平台", level="L1",
-        base_url="https://szj.hebei.gov.cn", list_path="/hbggfwpt/",
-        category="招标公告", region_scope="河北省", admin_subregions=_HEBEI_SUBREGIONS,
-        collectable=True, compliance_status="verified",  # 2026-09-08 实测 /hbggfwpt/ 200 + 各地市入口
+        base_url="https://www.hbggzyfwpt.cn", list_path="/jyxx/index",
+        category="交易信息-工程建设",
+        region_scope="河北省", admin_subregions=_HEBEI_SUBREGIONS,
+        collectable=True, compliance_status="verified",
+        # 2026-09-10 B1：列表入口由门户首页（导航/通知混杂，日期覆盖 5%）改为
+        # 交易信息页（静态条目 + 行内日期 span，实测 15+ 条带日期）；
+        # szj.hebei.gov.cn/hbggfwpt/ 首页官方链接指向本交易门户（同一平台）。
     ),
     "zhjy-bcactc": SourceSpec(
         source_id="zhjy-bcactc", name="北京建设工程交易系统", level="L1",
@@ -229,53 +290,70 @@ SOURCES: dict[str, SourceSpec] = {
         compliance_status="pending",  # SSL BAD_ECPOINT（服务器 TLS 旧）；需备选入口
     ),
 
-    # ====== 河北地市（L2，实测） ======
+    # ====== 河北地市（L2，实测；parent_region=河北省 → 省级检索覆盖，C1） ======
     "sjzsggzy": SourceSpec(
         source_id="sjzsggzy", name="石家庄市公共资源交易中心", level="L2",
-        base_url="http://www.sjzsggzyjyzx.org.cn", list_path="/",
-        category="招标公告", region_scope="石家庄市", collectable=True,
-        compliance_status="verified",  # 2026-09-08 实测静态列表 200 + 30 条公告
+        base_url="https://www.sjzsggzyjyzx.org.cn", list_path="/jyxxgczb/index.jhtml",
+        category="交易信息-招标公告", region_scope="石家庄市", parent_region="河北省",
+        collectable=True,
+        compliance_status="verified",
+        # 2026-09-10 B1：入口由首页（新闻通知，日期覆盖 0%）改为工程招标频道
+        # （静态条目 + 行内 <div>2026.09.10</div> 日期，实测 10 条带日期）
     ),
     "tsggzy": SourceSpec(
         source_id="tsggzy", name="唐山市公共资源交易中心", level="L2",
         base_url="http://ggzyjy.xzspj.tangshan.gov.cn", list_path="/",
-        category="招标公告", region_scope="唐山市", collectable=True,
+        category="招标公告", region_scope="唐山市", parent_region="河北省",
+        collectable=True,
         compliance_status="verified",  # 2026-09-08 实测静态列表 200 + 37 条公告
     ),
     "hdggzy": SourceSpec(
         source_id="hdggzy", name="邯郸市公共资源交易中心", level="L2",
-        base_url="https://ggzy.hd.gov.cn", list_path="/",
-        category="招标公告", region_scope="邯郸市", collectable=True,
-        compliance_status="verified",  # 2026-09-08 实测静态列表 200 + 97 条公告
+        base_url="https://ggzy.hd.gov.cn",
+        list_path="/jydt/003002/003002001/trading_hall.html",
+        category="工程建设-招标/资审公告",
+        region_scope="邯郸市", parent_region="河北省",
+        collectable=True, compliance_status="verified",
+        # 2026-09-10 A2：本机 DNS/TLS/HTTP 探测通过（200）→ 接入工程招标频道；
+        # 实测静态条目：锚内 <span class="inf">标题</span><span class="date">2026-09-09</span>
+        # + URL 日期段 /20260909/，日期双路可提取。旧入口 "/" 为新闻通知混杂页。
     ),
     "qhdggzy": SourceSpec(
         source_id="qhdggzy", name="秦皇岛市公共资源交易中心", level="L2",
         base_url="http://www.qhdggzy.cn/qhdggzy/", list_path="/",
-        category="招标公告", region_scope="秦皇岛市", collectable=False,
+        category="招标公告", region_scope="秦皇岛市", parent_region="河北省",
+        collectable=False,
         compliance_status="blocked",  # 2026-09-08 探测 404（入口未确认，暂不采）
     ),
     "cdggzy": SourceSpec(
         source_id="cdggzy", name="承德市公共资源交易中心", level="L2",
         base_url="http://szj.chengde.gov.cn", list_path="/cdsggzy/",
-        category="招标公告", region_scope="承德市", collectable=True,
+        category="招标公告", region_scope="承德市", parent_region="河北省",
+        collectable=True,
         compliance_status="verified",  # 2026-09-08 实测静态列表 200 + 154 条公告
     ),
     "hsggzy": SourceSpec(
         source_id="hsggzy", name="衡水市公共资源交易中心", level="L2",
         base_url="http://hsggzy.hengshui.gov.cn", list_path="/",
-        category="招标公告", region_scope="衡水市", collectable=True,
+        category="招标公告", region_scope="衡水市", parent_region="河北省",
+        collectable=True,
         compliance_status="verified",  # 2026-09-08 实测静态列表 200 + 182 条公告
     ),
     "cangzhou": SourceSpec(
         source_id="cangzhou", name="沧州市公共资源交易中心", level="L2",
-        base_url="https://xzsp.cangzhou.gov.cn", list_path="xzsp/add100115/",
-        category="招标公告", region_scope="沧州市", collectable=True,
-        compliance_status="verified",  # 2026-09-08 实测静态列表 200 + 公告（1 条首页命中）
+        base_url="https://xzsp.cangzhou.gov.cn", list_path="/xzsp/add100115/",
+        category="招标公告", region_scope="沧州市", parent_region="河北省",
+        collectable=False, compliance_status="pending",
+        # 2026-09-10 A2：修复 list_path 缺前导斜杠的拼接缺陷（旧值 "xzsp/add100115/"
+        # 拼出 https://xzsp.cangzhou.gov.cnxzsp/… 不可达）。实测本路径为门户新闻页，
+        # 公告列表由 JS 动态填充（<ul id="trade11"> 空容器）→ 如实标 pending、
+        # 暂不采集；静态接口（listDisplaySelf 仅政务新闻）待校准后再启用。
     ),
     "xingtai": SourceSpec(
         source_id="xingtai", name="邢台市公共资源交易中心", level="L2",
         base_url="http://60.6.198.121:8888", list_path="/sszt-zyjyPortal/",
-        category="招标公告", region_scope="邢台市", collectable=False,
+        category="招标公告", region_scope="邢台市", parent_region="河北省",
+        collectable=False,
         compliance_status="blocked",  # 2026-09-08 探测 404；JS 门户（IP 直连不可达）
     ),
 
@@ -309,6 +387,26 @@ SOURCES: dict[str, SourceSpec] = {
 
 def get(source_id: str) -> SourceSpec | None:
     return SOURCES.get(source_id)
+
+
+# C3（2026-09-10）：地区下拉由注册表生成——河北省 + 真有可采集源（collectable）的
+# 地市；无源城市不出现（选了也只会得到放宽召回的空结果，徒增困惑）。
+_REGION_ORDER = (
+    "石家庄市", "唐山市", "秦皇岛市", "邯郸市", "邢台市", "保定市",
+    "张家口市", "承德市", "沧州市", "廊坊市", "衡水市",
+    "雄安新区", "定州市", "辛集市",
+)
+
+
+def region_options() -> list[str]:
+    """搜索表单地区选项：[河北省] + 有可采集源的地市（按地理序）。"""
+    cities: set[str] = set()
+    for s in SOURCES.values():
+        if not s.collectable:
+            continue
+        if s.region_scope != _DEFAULT_REGION and (s.region_scope in _REGION_ORDER):
+            cities.add(s.region_scope)
+    return [_DEFAULT_REGION] + [c for c in _REGION_ORDER if c in cities]
 
 
 def validate_sources(sources: list[str] | None) -> tuple[list[str], list[str]]:

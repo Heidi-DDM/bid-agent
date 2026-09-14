@@ -39,7 +39,8 @@ LABELS = {
     "bid_bond_amount": "投标保证金", "performance_bond": "履约/质量保证金",
     "currency": "币种与单位", "pricing_method": "计价方式",
     "qualification": "资质要求", "personnel": "人员要求", "performance": "业绩要求",
-    "finance": "财务要求", "credit": "信用要求", "safety_license": "安全生产许可证",
+    "finance": "财务要求", "credit": "信用要求", "quality_standard": "质量标准",
+    "safety_license": "安全生产许可证",
     "joint_venture": "联合体要求", "other_qualification": "其他资格",
     "review_method": "审查方式", "review_standard": "评审办法",
     "business_scoring": "商务评分", "technical_scoring": "技术评分",
@@ -428,8 +429,8 @@ CARD_SECTIONS = [
               ("投标保证金", "bid_bond_amount")]),
     ("资格要求（原文摘录）", [
         ("资质要求", "qualification"), ("人员要求", "personnel"), ("业绩要求", "performance"),
-        ("财务要求", "finance"), ("信用要求", "credit"), ("联合体", "joint_venture"),
-        ("审查方式", "review_method"),
+        ("财务要求", "finance"), ("信用要求", "credit"), ("质量标准", "quality_standard"),
+        ("联合体", "joint_venture"), ("审查方式", "review_method"),
     ]),
     ("评分规则（原文摘录）", [
         ("评审办法", "review_standard"), ("商务评分", "business_scoring"),

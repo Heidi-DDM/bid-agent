@@ -44,10 +44,11 @@ def test_policy_production():
     assert p.network_allowed is True
     assert p.enforce_rate_limit is True
     assert p.transparent_ua is True
-    # 2026-09-08 放开：production 默认 60s/1000/h/5页（保底防封，非文档硬红线）
+    # 2026-09-08 放开：production 默认 60s/1000/h/5页（保底防封，非文档硬红线）；
+    # 2026-09-09 用户决策（方案B）单源 60s→30s，配合"搜索后立即点深入"
     assert p.max_pages == 5
     assert p.infer_region is False
-    assert p.single_source_seconds == 60
+    assert p.single_source_seconds == 30
     assert p.global_max_calls_per_hour == 1000
 
 

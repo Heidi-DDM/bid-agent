@@ -204,6 +204,10 @@ def search_sources(
     limiter = _policy_limiter(policy)
     valid_ids, unknown = validate_sources(sources)
     summary: list[dict] = []
+    # A1（2026-09-10）：同域分区共享限频——一次搜索批次内每个域只登记一次限频事件
+    # （惠招标 4 分区同域，与「多页只记一次」同口径），批次内后续分区不再互相拒绝；
+    # 批次结束后该域仍受窗口约束（下一批次/详情导入照常预查，红线不放松）。
+    batch_domains: set[str] = set()
     if unknown:
         summary.append({"source_id": ",".join(unknown), "name": "未注册源",
                         "status": "error", "count": 0,
@@ -212,6 +216,17 @@ def search_sources(
     for sid in valid_ids:
         source = get(sid)
         assert source is not None
+        # 只采集合规可采集(collectable=True)源；登记未实测/需合同的源(blocked/collectable=False)
+        # 如千里马/剑鱼/比地等仅登记、不自动抓取（2026-09-08 全量清单接入语义）——
+        # 之前 validate_sources(None) 返回全集，导致 blocked 源被真实抓取，污染候选集。
+        if not source.collectable:
+            summary.append({
+                "source_id": sid, "name": source.name, "status": "skipped", "count": 0,
+                "note": f"登记未开通采集（collectable=False, compliance_status={source.compliance_status}）——"
+                        f"不抓取；如需启用请在 registry 实测后置 True",
+                "environment": policy.name, "data_source": source.source_id,
+            })
+            continue
         pages_to_fetch = _list_page_count(policy, source)
         entry = {"source_id": sid, "name": source.name, "status": "ok", "count": 0, "note": None,
                  "environment": policy.name, "data_source": source.source_id,
@@ -220,7 +235,8 @@ def search_sources(
                      "source_scope_only" if policy.infer_region and source.region_scope
                      else "disabled"
                  )}
-        recalled = False
+        recalled = False      # none：超范围 → 放宽二次召回
+        broader_scope = False  # broader：省/全国平台来源，候选地区待核实（C1 新口径）
         try:
             if policy.fixture_only and fetch is None:
                 entry.update(
@@ -229,15 +245,25 @@ def search_sources(
                 )
                 summary.append(entry)
                 continue
-            # region 覆盖判断（源为河北域平台，不做逐条推断）：
-            # 精确覆盖 → 正常抓取；超范围 → 放宽二次召回（仍抓列表 + 关键词过滤，
-            # 候选地区不推断，标「待核实」交详情页回源）——不整源丢弃（用户实测：
-            # 网页合规空结果断链，地区一卡死就空了）。
-            if not source.covers_region(region):
+            # region 覆盖判断（C1，2026-09-10 三态口径）：
+            #   direct → 正常抓取；
+            #   broader（省/全国平台覆盖检索地区）→ 正常抓取，候选逐条地区待核实
+            #     （省级平台公告可能来自全省任何地市，列表页不标注，不推断归属）；
+            #   none（如检索唐山市、源为北京市）→ 放宽二次召回（仍抓列表 + 关键词过滤，
+            #     不整源丢弃——用户实测：网页合规空结果断链，地区一卡死就空了）。
+            coverage = source.region_coverage(region)
+            if coverage == "none":
                 recalled = True
                 entry["note"] = (
                     f"region={region!r} 超出平台覆盖（{source.region_scope}）→ "
                     f"放宽二次召回，命中项地区待核实（列表页不标注，不推断归属）"
+                )
+            elif coverage == "broader":
+                broader_scope = True
+                scope_label = "全国平台" if source.region_scope == "全国" else "省级平台"
+                entry["note"] = (
+                    f"来源为{scope_label}（{source.region_scope}），覆盖检索地区 {region!r} → "
+                    f"正常采集，逐条公告地区待核实（列表页不标注，不推断归属）"
                 )
             # v1.10：带站内检索的平台（search_param 非空）——有 keyword 时一次任务抓
             # 「平台检索结果页」而非默认首页；robots 预检仍按默认列表路径判定（同域同前缀，
@@ -251,17 +277,23 @@ def search_sources(
             if policy.enforce_robots:
                 _, robots_status, robots_note = _robots_precheck(robots, source.list_url)
                 entry["robots_status"] = robots_status
-            domain = _record_fetch(source.list_url, limiter) if policy.enforce_rate_limit else None
+            # A1：本批次该域已登记过（同域分区）→ 跳过预查，不再互相拒绝
+            src_domain = urllib.parse.urlparse(source.list_url).netloc
+            domain = None
+            if policy.enforce_rate_limit and src_domain not in batch_domains:
+                domain = _record_fetch(source.list_url, limiter)
             assert fetch is not None
             # 多页属于同一个 manual_trigger 搜索批次：只在第 1 页成功后登记一次
             # 源级事件，后续页不重复调用 limiter，避免分页变相绕过或触发“每页一次”
-            # 的错误语义。策略 max_pages 是硬上限，source.max_pages 是源级上限。
+            # 的错误语义。A1：同域多分区同样只登记一次（batch_domains 去重）。
+            # 策略 max_pages 是硬上限，source.max_pages 是源级上限。
             items_by_url: dict[str, dict] = {}
             for page in range(1, pages_to_fetch + 1):
                 page_url = source.page_url(page, list_url=list_url)
                 html = fetch(page_url)
                 if page == 1 and policy.enforce_rate_limit and domain is not None:
                     limiter.check(domain, record=True)
+                    batch_domains.add(domain)
                 entry["pages_fetched"] = page
                 page_items = parse_hebtig_list(html, source)
                 for item in page_items:
@@ -282,6 +314,13 @@ def search_sources(
                 entry["note"] = (
                     f"放宽召回：抓取 {entry['pages_fetched']} 页、去重后 {len(items)} 条，关键词过滤后 {len(hits)} 条；"
                     f"region={region!r} 超出平台覆盖（{source.region_scope}），候选地区待核实"
+                    f"{robots_suffix}"
+                )
+            elif broader_scope:
+                scope_label = "全国平台" if source.region_scope == "全国" else "省级平台"
+                entry["note"] = (
+                    f"{fetch_note}：抓取 {entry['pages_fetched']} 页、去重后 {len(items)} 条，"
+                    f"关键词过滤后 {len(hits)} 条；来源为{scope_label}，逐条公告地区待核实"
                     f"{robots_suffix}"
                 )
             else:
@@ -353,6 +392,31 @@ def import_candidate_detail(
     text = html_to_text(html)
     if not text:
         raise FetchError("详情页净化后无可见文本（疑似非公告正文页面）")
+    # —— 详情初筛抽取（2026-09-09）：抓详情后确定性抽取资质/人员/信用/金额/地区/
+    #    工期/标段/质量标准等初审字段，存入候选表 detail_summary，供候选卡/详情卡显示。
+    #    纯事实、不推断；缺失字段带 missing 标注；抽取失败不阻断存档（降级为空 JSON）。
+    #    P1（2026-09-11，docs/10）：改走 provenance.build_detail_summary——每字段附
+    #    quote/start/end（固化原文偏移）+ content_hash（绑定入库 sha256），落库前
+    #    round-trip 硬校验（审计关键字段不逐字即拒收转人工）。
+    from runtime.parsing.provenance import build_detail_summary, text_sha256
+    try:
+        candidate.detail_summary = build_detail_summary(
+            candidate.title, text, content_hash=text_sha256(text))
+    except Exception:  # 抽取失败不阻断详情入库（存档优先，待补展示）
+        candidate.detail_summary = {}
+    # —— C4（2026-09-10）：详情「建设地点」抽取命中 → 回填候选 region（公告事实）——
+    # 候选卡优先级：详情回填（announcement_fact）> 标题命中（title_fact）> 平台范围
+    # 标注（source_scope_only）；未命中保持 None，不推断。
+    region_field = (candidate.detail_summary or {}).get("region") or {}
+    if region_field and not region_field.get("missing") and region_field.get("value"):
+        candidate.region = str(region_field["value"])[:64]
+    # —— 日期兜底（2026-09-09）：列表页未给发布日时，从详情页提取回填候选表 ——
+    # 至少要有发布日期（用户硬要求），确定性提取，提取不到保持 None（不编造）。
+    from runtime.collecting.parsers import extract_detail_publish_date
+    if not candidate.publish_date:
+        d = extract_detail_publish_date(html, text, url=candidate.url)
+        if d is not None:
+            candidate.publish_date = d
     project = api_service.create_project(
         session,
         project_id=f"PJ-{uuid.uuid4().hex[:10]}",

@@ -572,3 +572,322 @@ def test_fetch_robots_network_error_conservative(monkeypatch):
     monkeypatch.setattr("runtime.core.fetcher.urllib.request.urlopen", _raise_net)
     with pytest.raises(RobotsUnavailable):
         fetch_robots("https://example.com/page")
+
+
+# ── 公告类型分类 + 项目去重（2026-09-08 验收三问题修复） ──
+def test_announcement_type_classify_pure():
+    from runtime.collecting import announcement_type as at
+    # ① 法规/规章（不是招标机会）
+    assert at.classify_type("《公共资源交易中心招标投标现场管理暂行办法》 2026年第43号令") == at.OTHER
+    assert at.classify_type("《招标投标领域信用管理暂行办法》 2026年第44号令") == at.OTHER
+    # ② 中标类
+    assert at.classify_type("XX项目EPC总承包中标候选人公示") == at.WIN
+    assert at.classify_type("XX项目设计施工总承包中标结果公告") == at.WIN
+    # ③ 采购类
+    assert at.classify_type("某单位信息化设备采购公告") == at.PROCURE
+    assert at.classify_type("某项目竞争性磋商公告") == at.PROCURE
+    # ④ 资格预审（属招标）
+    assert at.classify_type("某县道路改造工程资格预审公告") == at.PREQUAL
+    # ⑤ 变更
+    assert at.classify_type("某某项目更正公告") == at.CHANGE
+    # ⑥ 默认 → 招标（不能确证非标，保守保留）
+    assert at.classify_type("太行智慧冷链物流园山体冷库项目施工招标公告") == at.TENDER
+    assert at.is_default_include(at.TENDER) and at.is_default_include(at.PREQUAL)
+    assert not at.is_default_include(at.WIN) and not at.is_default_include(at.OTHER)
+
+
+def test_announcement_classify_split_and_dedup():
+    from runtime.collecting.announcement_type import classify, dedupe_by_project
+    items = [
+        {"title": "河北交投康保县400MW储能项目EPC总承包招标公告", "source_id": "hebtig"},
+        {"title": "河北交投康保县400MW储能项目EPC总承包中标候选人公示", "source_id": "hebtig"},
+        {"title": "河北交投康保县400MW储能项目EPC总承包中标结果公告", "source_id": "szj-hebei"},
+        {"title": "太行智慧冷链物流园山体冷库项目施工招标公告", "source_id": "hebtig_goods"},
+        {"title": "《公共资源交易中心招标投标现场管理暂行办法》2026年第43号令", "source_id": "szj-hebei"},
+    ]
+    kept, excluded = classify(items)
+    assert all(k["announcement_type"] == "tender" or k["announcement_type"] == "prequal" for k in kept)
+    assert len(kept) == 2          # 两个真招标（康保招标 + 太行施工）
+    assert len(excluded) == 3      # 中标候选/中标结果/办法
+    merged = dedupe_by_project(kept)
+    # 康保 招标 与 太行 施工 是不同 key → 不误合并
+    assert len(merged) == 2
+    # 康保若与其中标同组但被过滤（只留招标），此时 keept 只剩招标本身
+    kp = [m for m in merged if "太行" not in m["title"]]
+    assert kp and kp[0]["announcement_type"] == "tender"
+
+
+def test_dedupe_by_project_merges_stages_cross_source():
+    from runtime.collecting.announcement_type import classify, dedupe_by_project
+    items = [
+        {"title": "G2002高速石太段改造工程施工招标公告", "source_id": "szj-hebei"},
+        {"title": "G2002高速石太段改造工程施工中标候选人公示", "source_id": "hebtig"},
+        {"title": "G2002高速石太段改造工程施工YH-1标段招标公告", "source_id": "ccgp-hebei-web"},
+        {"title": "秦皇岛市某道路改造工程施工资格预审公告", "source_id": "sjzsggzy"},
+    ]
+    # 真实调用链：先分类（补 announcement_type），再去重
+    classified, _ = classify(items)
+    merged = dedupe_by_project(classified)
+    # G2002 三种形态 → 归并 1，且保留招标类型（type 优先）
+    g = [m for m in merged if "G2002" in m["title"]]
+    assert len(g) == 1
+    assert g[0]["announcement_type"] == "tender"
+    # 跨源去重：招标公告（szj + ccgp 的 YH 标段）归并为一组；中标候选已被默认类型过滤排除
+    assert set(g[0]["source_group"]) == {"szj-hebei", "ccgp-hebei-web"}
+    assert g[0]["stage_count"] >= 2
+    # 秦皇岛道路资格预审 → prequal（招标型保留）
+    pre = [m for m in merged if "道路改造" in m["title"]]
+    assert pre and pre[0]["announcement_type"] == "prequal"
+    # 不同项目（G2002 vs 市道路）不误合并
+    assert len(merged) == 2
+
+
+def test_search_skips_non_collectable_sources():
+    # 千里马/剑鱼等 collectable=False 的登记源不抓取（2026-09-08 验收：blocked 源曾被真实抓取）
+    no_col = {sid for sid, s in SOURCES.items() if not s.collectable}
+    assert "qianlima" in no_col and "jianyu360" in no_col and "bidcenter" in no_col
+
+
+# ── 2026-09-09：import 详情后 detail_summary 初筛抽取 + 日期兜底 ──
+
+def test_import_candidate_detail_fills_detail_summary_and_date(session, tmp_path):
+    """点深入抓详情后：detail_summary 存资质/人员/日期，publish_date 兜底回填。"""
+    from runtime.collecting.parsers import extract_detail_publish_date
+
+    # 详情页返回真实公告正文（含资质/地区/工期/日期），非壳
+    DETAIL_HTML = ("<html><body><div>发布时间：2026-09-03</div>"
+                   "<p>本项目总投资 1000 万元。</p>"
+                   "<p>建设地点：河北省石家庄市鹿泉区。</p>"
+                   "<p>最高投标限价：842.002736 万元。</p>"
+                   "<p>计划工期：45 日历天；质量标准：合格；本工程共计划分1个标段。</p>"
+                   "<p>3.2 具备建筑工程施工总承包三级及以上资质，并具有有效的安全生产许可证。</p>"
+                   "<p>3.7 拟派项目经理具有注册在投标单位的机电工程一级注册建造师执业资格。</p>"
+                   "<p>3.10 配备专职安全生产管理人员1个。</p>"
+                   "</body></html>")
+
+    def _detail_fetch(url: str) -> str:
+        # 列表页返回两候选，详情页区用真实正文（让抽取有料）
+        if "trade.html" in url:
+            return _HEBTIG_HTML
+        return DETAIL_HTML
+
+    collecting.search_sources(
+        session, keyword="", region=None, sources=["hebtig"],
+        search_job_id="job-detail-1", fetch_fn=_fake_fetch, robots_fn=_fake_robots,
+    )
+    collecting._limiter = RateLimiter()
+    cand = session.scalar(select(AnnouncementCandidate))
+    assert cand is not None
+    # 候选列表页无发布日期 → 依赖详情兜底
+    before = cand.publish_date
+    result = collecting.import_candidate_detail(
+        session, candidate=cand, actor="tester", store_root=str(tmp_path),
+        fetch_fn=_detail_fetch, robots_fn=_fake_robots,
+    )
+    session.refresh(cand)
+    assert cand.import_status == "imported"
+    # —— detail_summary 落库（资质抽取）——
+    assert cand.detail_summary is not None
+    q = (cand.detail_summary.get("qualification") or {}).get("value", "")
+    assert "建筑工程施工总承包" in q
+    # 日期兜底：若列表无日期，从详情「发布时间」回填
+    if before is None:
+        assert cand.publish_date is not None
+    # C4：详情「建设地点」命中 → 候选 region 回填（公告事实）
+    assert cand.region == "河北省石家庄市鹿泉区"
+    # 抽取器也能直接对详情文本出地区/工期/质量
+    assert extract_detail_publish_date(DETAIL_HTML, DETAIL_HTML) is not None
+
+
+# ── 2026-09-10：A1 同域分区共享限频 + B1 逐源日期提取 + C1/C3/C4/D1 ──
+
+def test_search_shared_domain_partitions_one_rate_event(session, monkeypatch):
+    """A1：惠招标 4 分区（同域）一次搜索批次只登记一次域级限频事件，
+    互相不再拒绝（与「多页只记一次」同口径）；下一批次仍被 5 分钟窗口拒。"""
+    monkeypatch.setenv("COLLECTION_POLICY", "staging")
+    collecting._limiter = RateLimiter()
+    collecting._limiter_policy_signature = None
+    partitions = ["hebtig", "hebtig_service", "hebtig_goods", "hebtig_nzb"]
+    summary = collecting.search_sources(
+        session, keyword="", region=None, sources=partitions,
+        search_job_id="job-a1-batch1", fetch_fn=_fake_fetch, robots_fn=_fake_robots,
+    )
+    assert [s["status"] for s in summary] == ["ok"] * 4  # 一次搜索 4 分区全 ok
+    assert len(collecting._limiter._events) == 1         # 域级事件只登记一次
+    # 第二个批次：同域窗口内 → 全部 skipped（红线不放松）
+    second = collecting.search_sources(
+        session, keyword="", region=None, sources=partitions,
+        search_job_id="job-a1-batch2", fetch_fn=_fake_fetch, robots_fn=_fake_robots,
+    )
+    assert all(s["status"] == "skipped" and "限频" in (s["note"] or "") for s in second)
+
+
+# B1：逐源日期提取（合成 HTML，形态取自 2026-09-10 实测页面结构）
+_SJZ_HTML = """<ul class="panel-list">
+  <li><a href="https://www.sjzsggzyjyzx.org.cn:443/jyxxgczb/200381.jhtml" target="_blank">
+    <span>[市本级] </span>河北省档案方志馆建设项目外电引入及配电室工程澄清与答疑公告</a>
+    <div>2026.09.10</div></li>
+</ul>"""
+
+_HBGGZYFWPT_HTML = """<ul id="index3" class="ulActive">
+  <li><img src="/res/new_ico.png"><span class="litype">[工程建设]</span>
+    <a href=/jyxx/jsgcZbggDetail?guid=87783617-a0b8 title="九峰山半导体生产制造基地项目工程总承包（EPC）（第一标段）" target='_blank'>
+      九峰山半导体生产制造基地项目工程总承包（E...</a>
+    <span class="fr">2026-05-22</span></li>
+</ul>
+<script>$("#x").append("<li><a href=/jyxx/t?guid=" + ob.projectName + " title=" + ob.projectName + ">模板串</a></li>");</script>
+<!-- <a href="/jyxx/oldDetail?guid=xx" title="">被注释的废弃锚点</a> -->"""
+
+_CCGP_HEBEI_HTML = """<div class="list-item"><div class="list-item-content">
+  <div class="singleLine"><a href="../../../cd/cd_kfq/cggg/zbggAAAA/202609/t20260910_2426123.html"
+    target="_blank" title="承德高新区上板城工业园区10kV电缆沟新建工程竞争性磋商公告">承德高新区上板城工业园区10kV电缆沟新建工程竞争性磋商公告</a></div>
+  <div class="list-item-meta-content"><span class="list-item-meta" data-label="发布时间：">2026-09-10</span></div>
+</div></div>"""
+
+_HDGGZY_HTML = """<ul class="public-list" id="infolist">
+  <li><a class="public-list-item" href="/jydt/003002/003002001/20260909/80d59359-a117.html">
+    <span class="inf">曲周县振兴路小型消防站项目招标公告</span>
+    <span class="date"> 2026-09-09</span></a></li>
+</ul>"""
+
+
+def test_parse_sjz_channel_row_date():
+    # 石家庄：锚点无 title 属性 + 行内 <div>2026.09.10</div>（点分日期就近回退）
+    items = parse_hebtig_list(_SJZ_HTML, get("sjzsggzy"))
+    assert len(items) == 1
+    assert items[0]["publish_date"] == "2026-09-10"
+    assert "河北省档案方志馆" in items[0]["title"]
+    assert "2026.09.10" not in items[0]["title"]  # 日期不污染标题
+
+
+def test_parse_province_trading_page_unquoted_href_and_script_filter():
+    # 省平台：未加引号 href + span.fr 行内日期；script 模板串与注释锚点不当条目
+    items = parse_hebtig_list(_HBGGZYFWPT_HTML, get("szj-hebei"))
+    assert len(items) == 1
+    it = items[0]
+    assert it["title"] == "九峰山半导体生产制造基地项目工程总承包（EPC）（第一标段）"
+    assert it["publish_date"] == "2026-05-22"
+    assert it["url"].startswith("https://www.hbggzyfwpt.cn/jyxx/jsgcZbggDetail?guid=")
+    assert all("ob.projectName" not in i["title"] for i in items)   # JS 模板串被剥
+    assert all("被注释" not in i["title"] for i in items)            # 注释锚点被剥
+
+
+def test_parse_ccgp_hebei_meta_date_and_url_date():
+    # 河北政采：data-label 发布时间 + 行内就近回退；URL t20260910_ 形态兜底
+    items = parse_hebtig_list(_CCGP_HEBEI_HTML, get("ccgp-hebei-web"))
+    assert len(items) == 1
+    assert items[0]["publish_date"] == "2026-09-10"
+    assert items[0]["url"].endswith("t20260910_2426123.html")
+    # 无行内日期时 URL t 形态兜底可用（_publish_date 直测）
+    from runtime.collecting.parsers import _publish_date
+    d = _publish_date("http://x/cggg/zbggAAAA/202609/t20260908_1.html", "")
+    assert d is not None and d.isoformat() == "2026-09-08"
+
+
+def test_parse_hdggzy_inner_date_and_title_strip():
+    # 邯郸：日期在锚内 <span class="date"> → 兜底文本带尾部日期须剥离，日期照取
+    items = parse_hebtig_list(_HDGGZY_HTML, get("hdggzy"))
+    assert len(items) == 1
+    assert items[0]["title"] == "曲周县振兴路小型消防站项目招标公告"
+    assert items[0]["publish_date"] == "2026-09-09"
+    assert items[0]["url"].startswith("https://ggzy.hd.gov.cn/jydt/003002/003002001/20260909/")
+
+
+def test_parse_row_boundary_prevents_cross_item_date():
+    # 行界截断：当前条目无日期时，不得把下一条目的日期错配过来
+    html = ('<a href="/a.html" title="某项目施工招标公告甲">甲</a></li>'
+            '<li><a href="/b.html" title="某项目施工招标公告乙">乙</a>'
+            '<span>2026-09-01</span></li>')
+    items = parse_hebtig_list(html, get("hebtig"))
+    by_title = {i["title"]: i["publish_date"] for i in items}
+    assert by_title["某项目施工招标公告甲"] is None   # 不跨条目错配
+    assert by_title["某项目施工招标公告乙"] == "2026-09-01"
+
+
+def test_registry_cangzhou_url_and_handan_channel():
+    # A2：沧州 list_path 修复（前导斜杠，URL 可拼接）；邯郸接入工程招标频道
+    cz = get("cangzhou")
+    assert cz.list_url == "https://xzsp.cangzhou.gov.cn/xzsp/add100115/"
+    assert cz.collectable is False and cz.compliance_status == "pending"  # JS 动态列表，如实标注
+    hd = get("hdggzy")
+    assert hd.list_url.endswith("/jydt/003002/003002001/trading_hall.html")
+    assert hd.collectable is True and hd.compliance_status == "verified"
+    assert hd.parent_region == "河北省"
+
+
+def test_region_coverage_three_states():
+    # C1：direct / broader / none 三态
+    heb_tig = get("hebtig")          # 省级平台（admin_subregions=全省）
+    ts = get("tsggzy")               # 地市源（唐山，parent_region=河北省）
+    ggzy = get("ggzy")               # 全国源
+    bj = get("ccgp-beijing")         # 京源
+    # 省级检索：省级平台 direct；地市源 direct（覆盖其下所有地市源，不标待核实）；全国 broader
+    assert heb_tig.region_coverage("河北省") == "direct"
+    assert ts.region_coverage("河北省") == "direct"
+    assert ggzy.region_coverage("河北省") == "broader"
+    # 地市检索：同市 direct；省级/全国平台 broader（候选地区待核实）；他市/外省 none
+    assert ts.region_coverage("唐山市") == "direct"
+    assert heb_tig.region_coverage("唐山市") == "broader"
+    assert ggzy.region_coverage("唐山市") == "broader"
+    assert get("sjzsggzy").region_coverage("唐山市") == "none"
+    assert bj.region_coverage("唐山市") == "none"
+    # 无检索地区 → direct（全检）
+    assert heb_tig.region_coverage(None) == "direct"
+    # 布尔兼容口径
+    assert heb_tig.covers_region("唐山市") is True
+    assert bj.covers_region("唐山市") is False
+
+
+def test_search_broader_scope_note_and_recall_note(session):
+    # C1：地市检索命中省级平台 → 正常采集 + note 标「来源为省级平台，地区待核实」
+    summary = collecting.search_sources(
+        session, keyword="施工", region="石家庄市", sources=["hebtig"],
+        search_job_id="job-c1-broader", fetch_fn=_fake_fetch, robots_fn=_fake_robots,
+    )
+    assert summary[0]["status"] == "ok"
+    assert "来源为省级平台" in summary[0]["note"] and "地区待核实" in summary[0]["note"]
+
+
+def test_region_from_title_city_and_county():
+    # C4：标题地区抽取（市/县字典命中 → 市口径；不命中不填）
+    from runtime.collecting.hebei_regions import region_from_title
+    assert region_from_title("曲周县振兴路小型消防站项目招标公告") == "邯郸市"
+    assert region_from_title("邯郸经济技术开发区中创新航110kV线路工程勘察设计招标公告") == "邯郸市"
+    assert region_from_title("石家庄市轨道交通某项目招标公告") == "石家庄市"
+    assert region_from_title("雄县温泉城片区市政管网改造工程招标公告") == "雄安新区"
+    assert region_from_title("某省外项目招标公告") is None
+    assert region_from_title(None) is None
+
+
+def test_project_type_from_title():
+    # D1：标题确定性种类抽取（枚举优先级：EPC总承包 > 施工 > 监理 > 勘察 > 设计…）
+    from runtime.collecting.registry import project_type_from_title
+    assert project_type_from_title("九峰山基地项目工程总承包（EPC）（第一标段）") == "EPC总承包"
+    assert project_type_from_title("设计施工总承包某项目招标公告") == "EPC总承包"
+    assert project_type_from_title("涉县管网二期改造提升项目施工一标段招标公告") == "施工"
+    assert project_type_from_title("某项目监理招标公告") == "监理"
+    assert project_type_from_title("某线路工程勘察设计招标公告") == "勘察"
+    assert project_type_from_title("某信息化设备采购公告") is None  # 采购不推断为货物/服务
+
+
+def test_region_options_from_registry():
+    # C3：地区下拉由注册表生成——河北省 + 真有可采集源的地市；无源城市不出现
+    from runtime.collecting.registry import region_options
+    opts = region_options()
+    assert opts[0] == "河北省"
+    assert "邯郸市" in opts and "石家庄市" in opts and "唐山市" in opts
+    assert "秦皇岛市" not in opts      # collectable=False（blocked）
+    assert "沧州市" not in opts        # collectable=False（pending，JS 动态列表）
+    assert "邢台市" not in opts        # blocked
+
+
+def test_html_to_text_breaks_table_cells_into_lines():
+    # 2026-09-11 P0：td/th 转块级——表单式公告的标签与值不再粘成「是否接受联合体投标否」。
+    # 注：html_to_text 末尾 _WS 把所有换行折叠为空格（既有口径，输出为单行），故单元格间
+    # 边界体现为空格；净化为保真降级，不发明冒号等原文没有的字符。
+    from runtime.collecting.parsers import html_to_text
+
+    html = "<table><tr><th>是否接受联合体投标</th><td>否</td></tr><tr><td>采购人</td><td>河北工业大学</td></tr></table>"
+    text = html_to_text(html)
+    assert "是否接受联合体投标否" not in text and "采购人河北工业大学" not in text
+    assert "是否接受联合体投标 否" in text and "采购人 河北工业大学" in text

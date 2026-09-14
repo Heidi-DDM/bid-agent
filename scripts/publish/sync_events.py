@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -107,6 +108,74 @@ def _detail_fields(project_id: str) -> dict:
     return d
 
 
+# ── intake 正文（字段化摘录）→ detail_fields 提炼 ────────────────────────────
+# 用途：raw/intake/*.md 正文是" `- 标签：值` "连排的字段化摘录（采集时整理，非逐字公告原文）。
+# 发布卡只展示 detail_fields 里有的值（有值才显示），而 intake 正文里的 人员/信誉(信用)/
+# 财务/联合体/质量标准/工期/标段 等段落常没被提炼进 detail_fields → 推送卡漏展示。
+# 这里做确定性提炼：按「- 标签：值」行按段抓取，detail 缺失时补充；不编造，纯事实红线。
+_INTAKE_LABEL_MAP = {
+    "资质要求": "qualification", "人员要求": "personnel", "业绩要求": "performance",
+    "财务要求": "finance", "信誉要求": "credit", "信用要求": "credit",
+    "质量标准": "quality_standard", "质量要求": "quality_standard",
+    "联合体": "joint_venture", "安全生产许可证": "safety_license",
+    "其他资格": "other_qualification", "审查方式": "review_method",
+}
+# 项目负责人/设计负责人/项目经理 → 人员要求（intake 常拆多行）
+_PERSON_LABELS = ("项目负责人", "设计负责人", "项目经理", "技术负责人")
+
+
+def _intake_distill(body: str) -> dict:
+    """从 intake 正文提炼 detail 字段（确定性：`- 标签：值` 行 + 段直至下一标签/标题）。"""
+    out: dict[str, str] = {}
+    lines = (body or "").splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        m = re.match(r"[-*]?\s*([^\s：:]{1,24})\s*[：:]\s*(.*)", line)
+        if not m:
+            i += 1
+            continue
+        label, first = m.group(1).strip(), m.group(2).strip()
+        if label in ("##", "#"):
+            i += 1
+            continue
+        key = _INTAKE_LABEL_MAP.get(label)
+        if key is None and label in _PERSON_LABELS:
+            key = "personnel"
+        if key is None:
+            i += 1
+            continue
+        chunks = [first] if first else []
+        j = i + 1
+        while j < len(lines):
+            nxt = lines[j].strip()
+            if not nxt:
+                break
+            if re.match(r"[-*]?\s*[^：:]{2,24}\s*[：:]", nxt) or nxt.startswith("##"):
+                break
+            chunks.append(nxt)
+            j += 1
+        val = " ".join(c for c in chunks if c).strip() or None
+        if val:
+            if key in out and out[key]:
+                out[key] = f"{out[key]}；{label}：{val}"
+            else:
+                out[key] = f"{label}：{val}"
+        i = j if j > i else i + 1
+    return out
+
+
+def _apply_intake_distill(d: dict, body: str) -> dict:
+    """把 intake 正文提炼的 detail 字段补进当前为空/待补的 key（源值优先，不覆盖）。"""
+    distilled = _intake_distill(body)
+    for k, v in distilled.items():
+        cur = str(d.get(k) or "").strip()
+        if cur and cur not in ("", "待补", "暂无", "未知"):
+            continue
+        d[k] = v
+    return d
+
+
 def _event_id_for(fm: dict, pt) -> str:
     seq = fm["intake_id"].replace("zb-", "").replace("-", "")
     return f"AE-{pt.strftime('%Y%m%d')}-{seq}"
@@ -182,6 +251,9 @@ def sync_events(cfg: dict | None = None, dry_run: bool = False,
             if v and str(v).strip() not in ("待补", "待补（公告未载明编号）", "暂无", "未知", "None", ""):
                 detail.setdefault(k, v)
         body = _read_body(Path(fm["_path"]))
+        # —— 从 intake 正文提炼 detail 字段（资质/人员/信用/财务/质量/联合体等），
+        #    推送到　detail_fields，供发布卡展示（有值才显示）。不覆盖前端已有值。——
+        detail = _apply_intake_distill(detail, body)
         # content_hash：优先正文快照字段，否则 intake 摘录；记录输入来源
         snapshot = fm.get("content_snapshot")
         if snapshot:
