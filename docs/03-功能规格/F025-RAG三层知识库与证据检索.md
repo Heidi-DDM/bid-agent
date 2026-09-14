@@ -1,6 +1,6 @@
 # F025-RAG 三层知识库与证据检索
 
-- **需求来源**：R025 ｜ **状态**：定稿草案 v1.0（2026-09-01）
+- **需求来源**：R025 ｜ **状态**：定稿草案 v1.1（2026-09-09）
 - **关联**：F003、F004、F005、F006、F007、F008、F017、F018-F024、ADR-001、ADR-002
 
 ## 1. 目标与边界
@@ -19,7 +19,7 @@ L3 企业能力与证据库：资质、人员、业绩、证书、财务及其�
 
 1. **双轨存储**：原文/解析片段不可变保存；结构化字段进入 PostgreSQL；向量只作为检索索引，不能替代结构化字段。
 2. **候选证据而非结论**：RAG 输出候选条款、候选证据及其引用，交由结构化核验和 F008 确定性规则引擎判定。
-3. **混合检索**：默认使用 BM25/关键词 + 向量检索 + metadata filter + 可选 reranker；不得只依赖向量近似度。
+3. **混合检索**：默认使用 BM25/关键词 + pgvector cosine + RRF + 本地 reranker（启用时）；不得只依赖向量近似度。
 4. **权限先于召回**：查询前按 `permission_scope`、`owner_type`、`project_id`、`lot_id`、`status`、`as_of` 过滤；无法确认权限时 fail-closed。
 5. **可回放**：每次索引和检索记录模型/索引版本、输入快照、过滤条件、结果 ID 和耗时；文档或证据版本变化使相关结果 `stale`。
 6. **原文可回跳**：每个 chunk 必须回链 `material_id`、`version`、`content_hash`、页码/段落或坐标；无引用的生成文本不得作为事实入库。
@@ -70,7 +70,7 @@ L1 只允许 `public` 数据；L2 允许公开招标文件及其澄清版本，�
 
 ### 4.2 检索输出
 
-每条结果至少返回 `chunk_id`、`material_id`、`material_version`、`content_hash`、`text`、`location`、`knowledge_layer`、`permission_scope`、`retrieval_score`、`verification_status` 和 `citation`。检索结果必须标注 `candidate_only=true`，不得返回 `satisfied`、`not_satisfied` 或 `qualified` 等判定字段。
+每条结果至少返回 `chunk_id`、`material_id`、`material_version`、`content_hash`、`text`、`location`、`knowledge_layer`、`permission_scope`、`retrieval_score`、`verification_status` 和 `citation`；并返回 `ranking_strategy`、`reranker_model`（未启用则为 null）以便审计。检索结果必须标注 `candidate_only=true`，不得返回 `satisfied`、`not_satisfied` 或 `qualified` 等判定字段。
 
 检索层应支持：
 
@@ -79,12 +79,21 @@ L1 只允许 `public` 数据；L2 允许公开招标文件及其澄清版本，�
 - `project_id`/`lot_id`/版本/有效期/权限过滤；
 - 召回结果不足时显式返回 `insufficient_evidence=true`，不能补写。
 
+
+### 4.3 召回与重排执行规则（2026-09-09）
+
+1. 先由 SQL 执行 `permission_scope`、层级、项目、标段、核验状态和 `as_of` 过滤；无权限或不在适用时点的 chunk 不得进入 embedding、RRF 或 reranker。
+2. `hybrid` 模式将关键词和向量候选以 RRF 合并；以 `max(top_k, min(top_k × 3, RAG_RERANK_CANDIDATE_K))` 形成候选池，默认上限为 60；本地 reranker 成功后才截取最终 `top_k`。
+3. `RERANKER_ENABLED=true` 时，本机模型服务必须暴露 `/v1/rerank` 且本地资产可用；`/readyz` 否则返回未就绪。运行中 reranker 失败时仅保留基础排序并记录 `*_rerank_degraded`，不得伪造重排成功。
+4. `retrieval_runs` 记录 `ranking_strategy`、`reranker_model` 和候选 ID；重排开关、模型、候选池及结果策略进入检索配置哈希，防止复用不同策略的旧快照。
+
 ## 5. 模型与数据出域边界
 
 | 能力 | 模型 | 数据范围 | 允许输出 |
 |---|---|---|---|
 | 公告/公开招标文件初步抽取 | DeepSeek API（经批准） | `permission_scope=public_read` 的文本 | 候选字段、条款分类、规则草案 |
-| 企业资料 embedding | 本地/内网 embedding（如 BGE-M3） | L3 企业资料 | 向量和索引元数据，不出内网 |
+| 企业资料 embedding | 本地/内网 `BAAI/bge-m3` | L2/L3 原文分片 | 向量和索引元数据，不出内网 |
+| 候选重排 | 本地/内网 `BAAI/bge-reranker-v2-m3` | 已通过权限/项目/时点过滤的 L1/L2/L3 候选 | 候选排序；不得输出或参与资格/评分结论 |
 | 企业资料 OCR | 本地 Tesseract/PaddleOCR | L3 扫描件 | 页码、候选字段、置信度 |
 | 严格比对 | Python/SQL/确定性规则引擎 | 已核验结构化字段 | 四类结论和状态 |
 
@@ -132,3 +141,4 @@ L1 公告入库 → L2 招标文件解析并索引 → L3 企业资料核验并�
 | 日期 | 版本 | 变更 |
 |---|---|---|
 | 2026-09-01 | v1.0 | 新增 RAG 三层知识库、混合检索、权限过滤、模型出域边界、结构化核验和验收门禁；明确 RAG 只产生候选证据，确定性规则引擎负责判定。 |
+| 2026-09-09 | v1.1 | 明确 RRF 候选池→本地 reranker→最终 top-k 的执行/失败降级/审计规则；补充 `ranking_strategy`、`reranker_model`、候选池配置哈希及 `/readyz` 门禁。 |

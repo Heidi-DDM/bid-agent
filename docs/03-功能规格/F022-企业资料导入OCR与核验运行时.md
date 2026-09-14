@@ -1,7 +1,7 @@
 # F022-企业资料导入、OCR 与核验运行时
 
-- **需求来源**：R022 ｜ **状态**：定稿草案 v1.1（2026-08-31）
-- **关联**：F006、F007、F017、F019、F020、F025、ADR-001、ADR-002
+- **需求来源**：R022 ｜ **状态**：定稿草案 v1.3（2026-09-04）
+- **关联**：F006、F007、F017、F019、F020、F021、F025、ADR-001、ADR-002
 
 ## 1. 目标
 
@@ -42,6 +42,13 @@
 - L3 企业证据 Recall@10 `>= 0.90`；召回结果必须含 `material_id/version/content_hash/page_no`，权限过滤错误率为 0；向量索引失败时进入 `retryable`/人工复核，不得影响原文和结构化事实的保存。
 - 企业资料 embedding 仅使用本地/内网模型（如 BGE-M3）；向量与 metadata 仍按企业私有数据权限保护，不因“只存向量”而降低密级。
 
+## 5.1 Excel/CSV 受控导入契约（v1.3 / 09-优化方案 §3.5）
+
+- **入口分离**：“招标文件”入口只收 `.pdf/.docx`；“补录证据/企业资料”入口收 `.pdf/.docx/.xlsx/.xls/.csv`（图片型证据待 OCR 方案确认后开放）。Excel 不作为“不可见附件”直接入库。
+- **`POST /api/v1/enterprise/import/preview`**（multipart：`file` + `kind` ∈ qualifications/performances/personnel/managers）——服务端安全嗅探后返回 `{kind, sheet_name, headers[], row_count, preview_rows[≤5], unmapped_columns[], warnings[]}`：扩展名 + 魔数（XLSX=ZIP `PK`、XLS=OLE `D0 CF 11 E0`、CSV=文本）+ 大小上限（50 MB）+ 空文件校验；XLSX 用 openpyxl 只读模式解析并拒绝加密（BadZipFile/密码保护）、损坏与含外部链接（`xl/externalLinks/`）文件；`.xlsm/.xlsb/.doc` 等不在白名单 → 400；无法识别的列列入 `unmapped_columns` 待人工确认，不得静默丢弃。CSV 按 UTF-8（含 BOM）读取。
+- **`POST /api/v1/enterprise/import/commit`**（multipart：`file` + `kind` + `category`(personnel 必填) + `data_owner` + `source` + `mapping` JSON：列名→字段 key）——按映射把行转换为 `ImportBatchBody.rows` 调既有导入服务；原文件同时作为企业私有材料（evidence 类，owner_type=enterprise）落不可变版本并回链 material_id；结构化记录保留来源行号（`evidence_refs`/`source` 记 sheet+行号），缺映射列标“待人工确认”，不推断。
+- 单份证明（PDF/DOCX）走既有 Material/OCR/核验链；台账（Excel）走本导入服务；两者都必须记录数据责任人、来源、有效期、核验状态与关联缺失要求（requirement 回链，F020 §2.2.5 v1.7）。
+
 ## 6. 变更记录
 
 | 日期 | 版本 | 变更 |
@@ -49,3 +56,4 @@
 | 2026-08-31 | v1.0 | 新增企业资料导入、OCR、复核、有效性和农大最小资料集操作规范 |
 | 2026-08-31 | v1.1 | 对齐原型联通：企业资料页定位为数据管理员后台，匹配自动读取有效资料；补录以新版本核验后触发重算，不再提供项目内资料选择。 |
 | 2026-09-01 | v1.2 | 接入 F025 L3 企业能力与证据索引；明确本地 embedding、active/as_of 过滤、权限零泄漏和证据 Recall@10 验收。 |
+| 2026-09-04 | v1.3 | 按 09-优化方案 §3.5 冻结：§5.1 Excel/CSV 受控导入契约（入口分离、preview 安全嗅探与预览、commit 映射导入+原文不可变落库+行回链、风险文件拒绝无残留；.jpg 图片证据待 OCR 方案确认后开放）。 |

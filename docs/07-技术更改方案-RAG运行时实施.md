@@ -230,7 +230,7 @@ python scripts/matching/run_golden_lab.py
 git diff --check
 ```
 
-其中 `-m rag` 测试在 R025 运行时代码完成后启用；当前文档阶段只能验收契约和配置，不能宣称 R025 运行时已完成。
+R025 运行时代码已接通本地 query embedding、RRF 候选池与本地 reranker。2026-09-09 已验证 PostgreSQL/API/worker 与本地 BGE-M3 embedding 服务：`/readyz`=ready，安全 E2E 覆盖真实向量索引、混合/向量召回、项目隔离和 run 幂等。`BAAI/bge-reranker-v2-m3` 仍需显式下载；模型资产缺失时应保持 `RERANKER_ENABLED=false`，不得把基础排序误报为重排成功；启用该开关后 `/readyz` 必须检查 reranker。
 
 ## 6. 变更管理
 
@@ -249,7 +249,7 @@ git diff --check
 | 文档 | `pdftotext`、PyMuPDF/Docling、`python-docx` | PDF/DOCX 文本、页码和表格解析 |
 | OCR | Tesseract 5.5+ `chi_sim`（必要时 PaddleOCR） | 扫描件和图片型 PDF |
 | Embedding | 本地/内网 BGE-M3 量化模型 | L2/L3 向量化，不出内网 |
-| 检索 | PostgreSQL FTS/BM25 + pgvector cosine + RRF | 混合检索；reranker 为可选本地组件 |
+| 检索 | PostgreSQL FTS/BM25 + pgvector cosine + RRF + 本地 cross-encoder | 混合检索；`BAAI/bge-reranker-v2-m3` 重排候选池后再截取 top-k |
 | 外部模型 | DeepSeek API | 仅 public 抽取，结构化 JSON |
 | 测试 | pytest、pytest-cov、现有 golden lab、PostgreSQL 集成测试 | 单元、契约、回归和验收 |
 | 质量 | `ruff`/`black --check`（若纳入 CI）、`py_compile`、GitHub Actions | 静态检查和 CI 门禁 |
@@ -499,3 +499,10 @@ AND no_auto_bid_or_quote_action = true
 - 安全负例、版本重放、失败降级、重启恢复均有测试证据；
 - 经营负责人确认业务结论，法务确认 DeepSeek 出域和个人信息处理；
 - 未满足上述条件时，只能标记 R025 `in_progress`，不得宣称生产可用。
+
+### 7.4 2026-09-09 重排闭环补充
+
+- 自动匹配 worker 调用 `hybrid_search` 时注入 `runtime.rag.indexer._embed`，不再遗漏查询向量而退化为关键词检索。
+- 本地模型服务新增 `/v1/rerank`，默认模型为 `BAAI/bge-reranker-v2-m3`；服务仅绑定 `127.0.0.1`，下载需显式执行 `bash embedding_serve/start.sh download-models`，不会在请求时联网下载。
+- `RERANKER_ENABLED=true` 时 `/readyz` 检查模型服务及 reranker 资产；故障会使就绪检查失败，运行中单次重排异常则保留 RRF 基础排序并将检索运行标为 `*_rerank_degraded`。
+- 检索分数只用于候选排列。候选仍须通过结构化字段、证据版本/有效期核验及 F008/F023 确定性规则，不能用 reranker 结果代替资格或准入判定。

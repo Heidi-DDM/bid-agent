@@ -1,7 +1,7 @@
 # F020-后端 API、任务编排与权限实现
 
-- **需求来源**：R020 ｜ **状态**：定稿草案 v1.2（2026-08-31）
-- **关联**：F003-F010、F017-F019、F025、ADR-001、ADR-002
+- **需求来源**：R020 ｜ **状态**：定稿草案 v1.13（2026-09-08）
+- **关联**：F003-F010、F017-F019、F021-F025、ADR-001、ADR-002
 
 ## 1. 目标
 
@@ -48,44 +48,67 @@
 
 **`POST /api/v1/intake/announcement/search`** —— 测试期 `manual_trigger`，遵守限频/robots/透明 UA；由 worker 真实抓取已启用 L1 源列表页 → 候选落库（`announcement_candidates`）。**搜索只产生候选，不创建 Project、不触发解析/匹配/准入**；候选确认入库后（见下）才建档。
 
+> v1.7（09-优化方案 §3.1）：「种类」「规模」**不再是搜索请求的采集过滤条件**——联网检索先返回完整候选集；种类/规模只在候选结果内做列表筛选（见下 `candidates` 接口与前端筛选栏）。请求体若仍携带 `category`/`scale`，服务端忽略且不写入任务（不缩小联网检索范围）。
+>
+> v1.10（源覆盖与匹配增强）：① 关键词过滤改**确定性多词 AND + 全半角/空白归一**（`registry.keyword_matches`：关键词按空白切词，归一后各词在标题中连续子串命中才入选；空关键词恒命中）——减少「词没写全整串失败」，仍是确定性匹配不做模型推断；② 源注册表扩展惠招标同平台**服务/货物/非招标分区**（`hebtig_service`/`hebtig_goods`/`hebtig_nzb`，同域同结构实测）；③ 带 `search_param` 的源在有关键词时抓**平台站内检索结果页**（`?keyword=…`，robots 预检仍按默认列表路径，query 不改变 robots 路径匹配），无关键词回落默认列表页——一次任务 1 次抓取覆盖服务端关键字过滤结果，本地多词 AND 兜底。
+
 ```json
-// 请求
+// 请求（只定义联网检索范围：关键词/地区/来源）
 { "keyword": "房屋建筑施工", "region": "河北省",
   "sources": ["hebtig"], "collect_mode": "manual_trigger" }
 // 响应（异步，先返回 job_id；sources 缺省=全部已启用源；未注册源 400 invalid_request）
 { "request_id": "r-…", "job_id": "jb-…", "created": true }
 ```
 
-**`GET /api/v1/intake/announcement/search/{job_id}`** —— 轮询任务结果，返回候选公告事实卡数组（对齐 `PROTOTYPE.projects` 卡片字段；列表页未标注字段一律 `null`=待补，不推断）与逐源执行摘要（限频/robots 拒绝如实展示）：
+`region` 为**源级覆盖过滤**（源注册表 `registry.py`）：源是省域平台（如惠招标覆盖河北省，含省内 11 地级市/雄安新区等下辖行政区）时，`region` 为空、`河北省` 或省内市级行政区均视为覆盖并抓取列表页。平台覆盖范围之外（如 `北京市`）不再整源跳过：仍抓取已启用源的列表页并做确定性关键词过滤，摘要标记 `region_recall=true`/“放宽召回”，候选地区保持待核实；这只是扩大召回范围，不代表公告属于所请求地区。列表页不逐条标注地区：候选卡片 `region` 一律 `null`=待补、不推断，精确地区待详情回源/人工确认（禁止编造红线）。策略中的 `infer_region` 仅为历史兼容配置，最多输出 `source_scope_only` 来源元数据，不能把平台覆盖范围写入公告实际地区。
+
+**`GET /api/v1/intake/announcement/search/{job_id}`** —— 轮询任务结果，返回任务状态 + 候选公告卡片数组（v1.7 候选卡 DTO；列表页未标注字段一律 `null`=待补，不推断）与逐源执行摘要（限频拒绝如实展示；robots 为**预检留痕不阻断**，见 ADR-003）：
 
 ```json
 { "request_id": "r-…", "status": "completed",
   "items": [ { "candidate_id": "c-…", "project_id": null,
-      "project_name": "某地房屋建筑施工总承包招标公告", "state": "collecting",
-      "region": null, "project_type": "招标专区-工程类",
-      "budget_cap": null, "bond": null, "bid_validity": null, "deadline": null,
-      "source": "惠招标（河北交投）", "source_url": "https://ebidding.hebtig.com/jyxx/…",
-      "parse_status": "pending", "tender_file": null, "updated": null,
-      "import_status": "pending", "note": "候选公告（列表页事实），待投标专员确认后抓详情原文入库" } ],
+      "title": "某地房屋建筑施工总承包招标公告", "publish_date": "2026-09-03",
+      "source_name": "惠招标（河北交投）", "source_url": "https://ebidding.hebtig.com/jyxx/…",
+      "source_category": "工程类", "region": null,
+      "source_region_scope": "河北省", "region_inferred": false,
+      "region_provenance": "source_scope_only",
+      "project_type": null, "scale": null, "fact_status": "list_fact_only",
+      "missing_fields": ["region", "project_type", "scale"],
+      "region_recall": false, "import_status": "pending" } ],
   "summary": [ { "source_id": "hebtig", "name": "惠招标（河北交投）", "status": "ok",
-                 "count": 3, "note": "列表命中 10 条，关键词过滤后 3 条" } ],
+                 "count": 3, "pages_requested": 5, "pages_fetched": 5,
+                 "note": "平台检索页命中 10 条，抓取 5 页、去重后 10 条，关键词过滤后 3 条" } ],
   "error_code": null }
 ```
 
+候选卡 DTO 语义（09-优化方案 §3.1.3）：`title/publish_date/source_name/source_url/source_category/region` 为列表页可确证事实；v1.12：`publish_date` 由列表页**发布日期明文（span）或详情 URL 日期段**确定性提取（无则 `null`=待详情页确认），不再恒 `null`；`project_type`/`scale` 列表页未标注一律 `null`（**显示“待详情页确认”，禁止推断**）；`fact_status=list_fact_only` 表明仅列表事实；`missing_fields[]` 如实列出待详情回源的字段；`import_status` ∈ pending/imported/failed。v1.13 补充地区来源元数据：`region` 仍只表示公告事实，列表页未逐条确认时必须为 `null`；`source_region_scope` 表示注册表的平台覆盖范围，`region_inferred=false`，`region_provenance=source_scope_only` 仅说明来源范围，不得当作项目地区。v1.9 增 `region_recall`（bool）：检索地区超出源覆盖 → 放宽二次召回所得，地区待核实（不推断归属），前端候选卡标「地区待核实」。搜索状态不泛化为“测试期不联网”——前端按 `job.status` + `summary[].status` + `error_code` 区分：命中 / 零命中 / 合规跳过（robots/限频，原因打全命中规则与可重试时刻）/ 抓取失败 / worker 未运行（job 长期 pending 且健康检查 worker 不可用）。region 超范围不再产生“合规跳过空结果”，而是放宽召回（摘要 note 注明 `放宽召回…地区待核实`）。
+
+**`GET /api/v1/intake/announcement/search/{job_id}/candidates`** —— 对**已保存候选**的分页筛选（只过滤本任务落库候选；不触发任何外网请求、不改变原搜索任务与候选事实）。查询参数：`project_type`（按候选 `category` 字段相等或标题确定性关键词匹配）、`scale`（候选无规模事实时仅接受 `unknown`=规模待确认组；具体范围无法证实则返回空并在 `note` 说明，不推断）、`limit`/`offset`。响应 `{items, total, note}`，item 同候选卡 DTO。
+
+**`GET /api/v1/intake/announcement/searches`** —— 最近搜索任务列表（F020 §2.2.1 / 09-方案 §3.1.7）：`{items:[{job_id, status, keyword, region, sources, created_at, summary, candidates_count}], total}`；仅返回未软删除且至少有候选的搜索任务，供页面默认展示最近任务、重新打开候选（候选不只在临时 DOM 中）。零候选任务保留用于诊断但不进入首页历史列表。
+
+**`DELETE /api/v1/intake/announcement/search/{job_id}`** —— 删除最近搜索任务（软删除）：要求 `announcement:write`；仅允许 `announcement.search`/`announcement.manual_entry`，写入 `deleted_at` 和 `announcement.search.delete` 审计事件，保留任务、候选及原文事实；重复删除幂等返回 `deleted=true`。已删除任务的状态/候选读取返回 `404 not_found`。
+
+**`GET /api/v1/intake/announcement/health`** —— 搜索前健康检查（匿名可读，与 /readyz 同级诊断，不返回业务数据）：`{api:"ok", db:{available}, worker:{available|unknown, reason}, sources:[{source_id,name,enabled,region_scope,admin_subregions,next_allowed_at}]}`。worker 判定：最近 60 秒内有任务心跳 → available；从未有任务 → unknown（前端显示“任务已创建，等待处理服务”+任务 ID，不假装零结果）。v1.8：`sources[]` 增 `region_scope`（源覆盖地区，前端提交前预检）与 `next_allowed_at`（进程级限频器查询的该源下次可抓时刻，纯查询不计数——健康检查不占用采集配额）。v1.9：`sources[]` 再增 `admin_subregions`（省域平台下辖行政区数组，前端地区预检与服务端 `covers_region` 同口径）。
+
+**`POST /api/v1/intake/announcement/candidates/manual`** —— Agent 聊天等外部线索转人工登记为候选（v1.8 / 09-优化方案 §3.1.9）。请求 `{title, url, note?}`（title ≤500、url 仅 http/https 且归一化、note ≤500）；RBAC `announcement:write`（投标专员）。语义：网页合规采集空结果 ≠ 外部渠道无线索——人工转录 Agent 找到的公告标题/链接为候选（只登记原文链接事实，不抓取、不推断地区/日期等字段），之后走既有「选择深入」合规链（robots+限频+详情原文净化固化+Project 建档）。登记幂等：同一 URL 重复提交返回既有候选（`created=false`）。容器 job `kind=announcement.manual_entry`、`status=completed`（终态，worker 不领取执行），在 `GET /announcement/searches` 列表中以 `manual=true` + `sources=["Agent 线索（人工转录）"]` 展示，可打开候选继续处理。
+
 **`POST /api/v1/intake/announcement/candidates/{candidate_id}/import`** —— 投标专员确认候选公告：投递 `announcement.import_detail` 任务（worker 执行 robots 预检 + 限频 → 抓详情原文 → 净化文本（`.txt`，对象库禁 `.html`，F019 §4）→ `material` 固化（public/raw 不可覆盖/哈希去重）→ `Project` 建档）。同源 ≤1 次/5 分钟（红线），紧邻搜索后确认会限频重试属合规预期。已入库候选重复确认 → 400。响应 `{ request_id, job_id, candidate_id }`。
 
-**`GET /api/v1/intake/announcement/candidates/{candidate_id}`** —— 轮询候选导入状态：`candidate`（同卡片字段）+ `job_status` + `error_message`（限频/robots/抓取失败原因如实返回）。
+**`GET /api/v1/intake/announcement/candidates/{candidate_id}`** —— 轮询候选导入状态：`candidate`（同候选卡 DTO + `job_status` + `error_message`，导入成功后 `project_id` 非空）。前端轮询到 `import_status=imported` 后携带 `project_id` 跳转 `import.html?project_id=…`（不再使用固定演示项目）。
 
-**`GET /api/v1/projects`** —— 结构化推送列表（同卡片字段，追加 `is_main`、`clarify_count`、`tender_file`）；`state` 取 13 态之一。
+**`GET /api/v1/projects`** —— 结构化推送列表（项目卡片）；`state` 取 13 态之一。候选确认导入后自动出现在此列表。
 
 ### 2.2.2 选择与解析（`import.html`）
 
-**`POST /api/v1/intake/tender-document`** —— multipart 上传完整招标文件（docx/pdf）。必填：`file`、`project_id`、`material_type=tender_document`、`source_type`、`data_owner`、`Idempotency-Key`。**未上传完整文件（缺 file 或空文件）→ 400 `invalid_request`，不创建解析任务**；`.gef/.etb` → 400 `unsupported_format`；sha256 重复 → 200 返回既有版本（`created=false`），不重复建任务。响应：
+**`POST /api/v1/intake/tender-document`** —— multipart 上传完整招标文件（docx/pdf）。必填：`file`、`project_id`、`material_type=tender_document`、`source_type`、`data_owner`、`Idempotency-Key`。**未上传完整文件（缺 file 或空文件）→ 400 `invalid_request`，不创建解析任务**；`.gef/.etb` → 400 `unsupported_format`（提示“不支持且不会绕过加密保护”）；sha256 重复 → 200 返回既有版本（`created=false`），不重复建任务。响应：
 
 ```json
 { "request_id": "r-…", "job_id": "jb-…", "material_id": "MAT-ND-001",
   "version": 1, "content_hash": "9c42…77be", "created": true }
 ```
+
+v1.7 校验与幂等（09-优化方案 §3.2）：① 前后端均校验后缀、魔数（PDF=`%PDF`、DOCX=ZIP `PK`）、空文件与大小上限（100 MB）；② `Idempotency-Key` 由客户端在**每次新文件/新项目/新用户提交时生成新值**（推荐：`project_id+文件名+大小+修改时间+操作者`的稳定哈希），仅“同一文件、同一项目、同一用户的重复提交”复用；③ 上传失败必须如实分类提示：未登录（401）、权限不足（403）、API 不可达/跨域（网络错误）、worker 未运行（任务排队不处理），禁止把失败写成“已选择招标文件正文”。
 
 **`GET /api/v1/intake/{id}`** —— 入库任务状态（`status` + `parse_status`：pending/parsed/partial/failed/manual_review）。
 
@@ -144,11 +167,13 @@
 
 ### 2.2.5 人工补录与重算（`queue.html`）
 
-**`POST /api/v1/materials`** —— 补录材料上传（multipart）：`owner_type=enterprise`，核验前 `status=pending_verification`；响应含 `material_id/version/content_hash`。
+**`POST /api/v1/materials`** —— 补录材料上传（multipart）：`owner_type=enterprise`，核验前 `status=pending_verification`；响应含 `material_id/version/content_hash`。v1.7 扩展（09-优化方案 §3.4/§3.5）：可选表单字段 `material_subtype`（资质/业绩/人员/项目经理/财务信用/项目专用证明/其他）、`intake_mode`（`supplement_evidence` 单份补录证明 / `enterprise_ledger` 台账资料）、`requirement_ids`（JSON 数组，回链缺失要求）；`requirement_ids` 落 `material.evidence_refs`（前缀 `requirement:`），`material_subtype`/`intake_mode` 写入审计 basis，禁止使用无语义默认 ID（如 `MAT-ND-SUPPLEMENT` 空泛默认）。**补录入口**与**招标文件入口** accept 规则分离：补录/证据支持 `.pdf,.docx,.xlsx,.xls,.csv`；图片型证据待 OCR 方案确认后开放（当前不开放 `.jpg/.jpeg/.png`）。上传成功后材料须先进入 `pending_verification`，数据管理员核验后才可重算（既有流程不变）。
 
 **`POST /api/v1/materials/{material_id}/verify`** —— 核验通过（`actor`、`data_owner` 必填）→ `status=active`，写审计。
 
 **`POST /api/v1/projects/{project_id}/recalculate`** —— 补录核验后重算：以新证据版本创建新匹配 run，旧 `admission_results` 标记 `stale`；幂等（同一证据版本重复调用返回既有 run）。响应 `{job_id, run_id?}`。
+
+**`GET /api/v1/projects/{project_id}/queues`**（v1.7 队列 DTO 扩展）—— 每项在 `{project_id, requirement_id, clause, text}` 基础上增加：`clause_ref`（条款号）、`missing_field`（缺失字段名，来自 match item 的 `missing_items`，无则 `null`）、`reason`（缺因文本：无 active 证据/未核验/待补录，不编造）、`purpose`（“补来做什么”：该要求用途说明或 `null` 待补录人确认）、`recommended_material_types`（仅当规则 `evidence_required` 可如实映射时给出；否则 `null`=由补录人按材料类型选择，禁止推断）、`owner_role`（责任人：投标专员上传/数据管理员核验，测试期口径）、`due_at`（投标截止或动作截止，无则 `null`）。前端“补录材料”按钮把整项上下文（requirement_id/clause_ref/missing_field/reason/purpose）带入补录表单预填。
 
 **`POST /api/v1/projects/{project_id}/match`** —— 仅任务编排器（`parse.completed` 触发）或重算流程内部调用；**前端不暴露手动匹配按钮**（F020 §2.1）。
 
@@ -216,7 +241,7 @@ worker 领取任务使用数据库锁和租约；超时任务由恢复器重新�
 
 ## 6. 错误码
 
-至少统一：`invalid_request`、`unauthorized`（R024 登录/未认证）、`forbidden`、`not_found`、`duplicate_material`、`hash_mismatch`、`unsupported_format`、`parse_failed`、`manual_review_required`、`invalid_state_transition`、`dependency_unavailable`、`internal_error`。
+至少统一：`invalid_request`、`unauthorized`（R024 登录/未认证）、`forbidden`、`not_found`、`duplicate_material`、`hash_mismatch`、`unsupported_format`、`parse_failed`、`manual_review_required`、`invalid_state_transition`、`dependency_unavailable`、`internal_error`。v1.8 增 `rate_limited`（HTTP 429，R004/schema §5.2 单源/全局限频拒绝；错误体 `detail.retry_after_seconds` 携带红线窗口剩余秒数，前端倒计时展示——不提供任何绕过红线通道）。
 
 ## 7. 验收与测试
 
@@ -236,3 +261,14 @@ worker 领取任务使用数据库锁和租约；超时任务由恢复器重新�
 | 2026-09-01 | v1.3 | 增加 F025 知识库检索/索引可观测接口与候选证据契约；禁止检索接口隐式触发匹配或返回准入判定。 |
 | 2026-09-02 | v1.4 | §5.1 正式认证（R024）：Bearer token 登录替换开发期 X-Role/X-Actor 头（AUTH_DEV_HEADERS 显式开关回退）；账号 pbkdf2 哈希存 AUTH_USERS、HMAC token、匿名拒绝留审计；`/auth/login`、`/auth/me` 契约。 |
 | 2026-09-03 | v1.5 | §2.2.1 搜索契约改为真实采集（R004 接线）：worker 执行 `announcement.search`（robots 预检+单源限频+透明 UA，抓已启用 L1 源列表页）→ 候选落库；POST 不再预建 Project（响应 `{request_id, job_id}`）；GET 返回候选事实卡数组 + 逐源 summary（限频/robots 拒绝如实展示）；新增候选确认入库 `candidates/{id}/import`（详情原文净化文本 `.txt` 固化 + Project 建档，raw 不可覆盖）与状态轮询端点。源注册表见 `runtime/collecting/registry.py`，启用登记见 `docs/合规数据源清单.md` §4。 |
+| 2026-09-03 | v1.6 | §2.2.1 明确 `region` 覆盖语义（验收暴露修复）：省域平台（覆盖河北省）对省内市级行政区（11 地级市/雄安新区等）检索视为覆盖并抓取，平台范围外（北京市）才 `skipped`；候选 `region` 列表页未标注一律 `null`=待补。实现：`registry.py` 新增 `admin_subregions`。 |
+| 2026-09-04 | v1.7 | 按 `docs/09-网页功能测试技术优化方案-20260904.md` 冻结：① 搜索请求只接收关键词/地区/来源（`category`/`scale` 不再作为搜索前采集过滤，服务端忽略）；新增候选卡 DTO（title/publish_date/source_name/source_url/source_category/fact_status/missing_fields[] 等，`project_type`/`scale` 列表页未标注=null 待详情确认，禁止推断）；② 新增 `search/{job_id}/candidates`（已保存候选分页筛选，不触发外网）、`announcement/searches`（历史任务列表+候选重开）、`announcement/health`（API/DB/worker/源健康检查，worker 心跳判定）三接口；③ 上传契约补魔数/大小上限校验与 Idempotency-Key 生成语义（同文件同项目同用户才复用）；④ §2.2.5 补录队列 DTO 扩展（missing_field/reason/purpose/recommended_material_types/owner_role/due_at/clause_ref），`POST /materials` 增 `material_subtype`/`intake_mode`/`requirement_ids[]`（回链 requirement，落 evidence_refs，禁止无语义默认 ID），补录入口 accept 分离（pdf/docx/xlsx/xls/csv）。 |
+| 2026-09-04 | v1.8 | ① `announcement/health` 落实 v1.7「匿名可读」契约（代码曾误加 RBAC 门禁，data_admin 等角色登录后健康检查 403 伪失败——移除，与 /readyz 同级）；`sources[]` 增 `region_scope`/`next_allowed_at`（提交前地区覆盖预检 + 源级限频窗口展示，健康检查不占采集配额）。② 新增 `POST /announcement/candidates/manual`（Agent 线索人工转录候选，登记幂等、容器 job 终态不执行、不推断字段，详情仍走合规链），`GET /announcement/searches` 增 `manual` 标识。③ 限频语义：`ComplianceError` 携带 `retry_after_seconds`，worker 对限频失败终态 `failed`（不快速 3 连败），候选 `error_message` 附可重试时刻，错误码表增 `rate_limited`（429）。 |
+| 2026-09-04 | v1.9 | ① 搜索 region 语义升级：超出源覆盖（如检索“北京市”）不再整源 `skipped`——执行**放宽二次召回**（仍抓列表 + 关键词过滤，候选落库），候选卡 DTO 增 `region_recall`（地区待核实，列表页不标注不推断，详情回源确认）；`announcement/health` `sources[]` 增 `admin_subregions`（省域平台下辖行政区，前端地区预检与服务端 `covers_region` 同口径，消除“石家庄市被误报超范围”）；robots 拒绝原因打全命中规则（`Disallow:` 前缀，RFC 9309 Allow 优先）。 |
+| 2026-09-04 | v1.10 | ① 关键词过滤改确定性多词 AND + 全半角/空白归一（`registry.keyword_matches`，空关键词恒命中，词序不敏感可审计）；② 惠招标源扩为同平台四分区（工程/服务/货物/非招标，同域同结构实测，限频按域共享）；③ 带 `search_param` 的源有关键词时抓平台站内检索结果页（`?keyword=`，robots 按默认列表路径预检），无关键词回落默认列表；④ 解析器通用化（`parse_announce_list`，历史 `parse_hebtig_list` 保留别名）。数据源清单 §2.2/§4.1 同步：ccgp-hebei/cebpubservice robots 全站禁止（依法不接入）、ggzy 不可达、szj.hbjyzx 列表 JS 动态（待评估）。 |
+| 2026-09-07 | v1.11 | robots 由阻断红线改为**预检留痕不阻断**（ADR-003）：搜索/详情导入的 robots 检查不再跳过源、不再抛 ComplianceError，改为摘要/审计记录 `robots_status`（allowed/disallowed/missing/unreachable）+ 命中规则；ccgp-hebei/cebpubservice 由「禁用」改「已冻结（预检留痕）」，移入待实测队列。 |
+| 2026-09-07 | v1.12 | 惠招标修复闭环：① 列表解析器提取**发布日期**（行内「发布日期：」明文 span 优先、详情 URL 日期段 `/YYYYMMDD/` 回退；均无可证 → `null` 待详情回源，不推断）——候选卡 `publish_date` 不再恒 `null` 待补；② 候选卡 DTO 示例与 `missing_fields[]` 口径同步（publish_date 可提取即展示，region/project_type/scale 仍待详情回源）；③ 合规清单 §4.1 惠招标四分区标注由「接线未达标」校正为「已接线（2026-09-07 修复闭环）」，P0 验收（≥10 条真实公告）待用户本机实测。 |
+| 2026-09-08 | v1.13 | ① 引入 `runtime/config/collection_policy.yml` 的 production/staging/development/mock 策略口径，明确 production 单源 300 秒/全平台 200 次红线不可放宽、仍仅 `manual_trigger`；② 搜索摘要增加 `pages_requested/pages_fetched`，分页受策略与源双重上限控制，同一源同一搜索批次只计一次限频事件；③ `SourceSpec` 增 `page_param/max_pages/date_param` 与分页 URL 构造规则；④ 候选卡增加 `source_region_scope/region_inferred/region_provenance`，明确平台覆盖范围不填充公告 `region`。 |
+| 2026-09-10 | v1.15 | ① **B2 推送两周窗口收紧**：`search/{job_id}/candidates` 默认严格「两周内且有日期」——`>14 天`照旧剔除；发布日缺失候选不再默认展示，折叠为 `date_window{days,pending}` 计数（前端「N 条日期待确认，可展开」），逐卡增 `in_date_window`；② **C1 地区三态**：`SourceSpec.parent_region` + `region_coverage()`（direct/broader/none）——省级检索覆盖地市源不标待核实；地市检索覆盖同市源 + 省/全国源（候选卡增 `region_note` 区分文案）；`covers_region` 保留布尔兼容；③ **C4/D1 候选卡**：region 优先级=详情回填/detail_summary（announcement_fact）>标题命中（title_fact）>平台范围（source_scope_only），`missing_fields` 相应收缩；project_type 由标题确定性抽取（施工/EPC总承包/监理/设计/勘察/货物/服务，`project_type_provenance=标题`）；④ **E1** 新增 `GET /announcement/candidates/by-project/{project_id}`（按项目反查最近候选，只读）；⑤ **C3** `announcement/health` 增 `region_options` + `sources[].parent_region`（前端地区下拉由注册表生成，无源城市不出现）。 |
+| 2026-09-11 | v1.16 | §5 权限矩阵变更（用户决策）：**business_head（经营负责人）增加 `announcement:write`**（原只读）——经营负责人可执行搜索提交、候选确认入库、搜索任务删除等公告写操作；与投标专员同过 RBAC 门。契约测试同步（data_admin/legal 仍 403）。演示账号体系同日调整：`toubiao/123456`（投标专员）、`jingying/123456`（经营负责人）、`data_admin/data_admin`、`legal/legal`；`admin` 账号移除（此前被误配为 business_head 造成角色混淆）。 |
+| 2026-09-11 | v1.17 | **新增 `GET /intake/announcement/candidates/{candidate_id}/text`**（docs/10 §5 P1-5 溯源定位）：返回候选公告最新版本的固化净化正文全文 + `content_hash`（直读 material_versions 反查对象库，只读）——前端"在原文中定位"按 detail_summary 的 quote/start/end 高亮，hash 不一致走重定位兜底。权限=announcement:read（与候选读同门）。detail_summary 字段 schema 扩展（quote/start/end/enum/truncated/review/content_hash）见 F004 v1.6。 |

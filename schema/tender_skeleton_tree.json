@@ -997,7 +997,7 @@
         "id": "5.2",
         "name": "robots",
         "kind": "rule",
-        "note": "遵守 robots.txt，禁止路径不采集"
+        "note": "预检留痕不阻断（ADR-003）；不绕过技术保护"
       },
       {
         "id": "5.3",
