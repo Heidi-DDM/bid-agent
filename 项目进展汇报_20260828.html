@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>某建设集团 · 投标智能体 — 开发进展汇报（2026-08-28）</title>
+<style>
+  :root {
+    --navy:#123a63; --navy2:#1e4e8c; --navy3:#eaf1f9;
+    --gold:#c9a24b; --ink:#1f2937; --ink2:#4b5563; --ink3:#9ca3af;
+    --line:#e5e7eb; --bg:#f3f5f8;
+    --ok:#15803d; --okbg:#f0fdf4; --warn:#b45309; --warnbg:#fffbeb;
+    --danger:#b91c1c; --dangerbg:#fef2f2; --review:#6d28d9; --reviewbg:#f5f3ff;
+    --info:#0369a1; --infobg:#f0f9ff;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; color:var(--ink); background:var(--bg); line-height:1.65; font-size:14.5px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:24px 28px 60px; }
+
+  /* 封面 */
+  .cover { background:linear-gradient(120deg,var(--navy),var(--navy2)); color:#fff; border-radius:14px; padding:36px 40px; margin-bottom:24px; }
+  .cover .tag { display:inline-block; background:var(--gold); color:#3d2f0c; font-size:12px; font-weight:700; padding:2px 10px; border-radius:999px; margin-bottom:12px; }
+  .cover h1 { font-size:26px; margin-bottom:6px; letter-spacing:.5px; }
+  .cover .sub { color:#cbd5e1; font-size:14px; }
+  .cover .meta { margin-top:16px; display:flex; gap:10px; flex-wrap:wrap; }
+  .cover .meta span { background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.2); padding:4px 12px; border-radius:8px; font-size:13px; }
+
+  /* 章节 */
+  section { background:#fff; border:1px solid var(--line); border-radius:12px; padding:22px 26px; margin-bottom:18px; box-shadow:0 1px 3px rgba(17,24,39,.06); }
+  h2 { font-size:18px; color:var(--navy); margin-bottom:14px; padding-bottom:8px; border-bottom:2px solid var(--navy3); display:flex; align-items:center; gap:8px; }
+  h2 .no { background:var(--navy); color:#fff; font-size:13px; border-radius:6px; padding:1px 8px; }
+  h3 { font-size:15px; color:var(--ink); margin:16px 0 8px; }
+  p { margin-bottom:8px; }
+  .muted { color:var(--ink3); font-size:12.5px; }
+
+  /* 表格 */
+  table { width:100%; border-collapse:collapse; font-size:13.5px; margin:10px 0; }
+  th { background:var(--navy3); color:var(--navy); text-align:left; padding:8px 10px; border-bottom:2px solid var(--line); font-weight:600; white-space:nowrap; }
+  td { padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  .num { font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+  /* 徽标 */
+  .badge { display:inline-block; font-size:12px; font-weight:600; padding:1px 9px; border-radius:999px; white-space:nowrap; }
+  .b-ok { color:var(--ok); background:var(--okbg); }
+  .b-run { color:var(--info); background:var(--infobg); }
+  .b-warn { color:var(--warn); background:var(--warnbg); }
+  .b-danger { color:var(--danger); background:var(--dangerbg); }
+  .b-review { color:var(--review); background:var(--reviewbg); }
+  .b-gray { color:var(--ink2); background:var(--bg); }
+  .b-gold { color:#3d2f0c; background:#faf3df; border:1px solid #ecd9a8; }
+
+  /* 统计卡 */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:14px 0; }
+  .stat { border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--bg); }
+  .stat .v { font-size:26px; font-weight:800; color:var(--navy); line-height:1.2; }
+  .stat .k { font-size:12.5px; color:var(--ink2); }
+
+  /* 需求描述卡片 */
+  .req { border:1px solid var(--line); border-radius:12px; margin-bottom:14px; overflow:hidden; }
+  .req-head { background:linear-gradient(90deg,var(--navy3),#fff); padding:12px 18px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  .req-head .rid { font-weight:800; color:var(--navy); font-size:15px; }
+  .req-head .rtitle { font-weight:700; font-size:14.5px; }
+  .req-head .rphase { margin-left:auto; font-size:12px; color:var(--ink3); }
+  .req-body { padding:14px 18px; display:grid; grid-template-columns:1fr 1fr; gap:12px 22px; }
+  .req .dim { background:var(--bg); border-left:3px solid var(--navy2); border-radius:0 8px 8px 0; padding:10px 14px; font-size:13.5px; }
+  .req .dim.wide { grid-column:1 / -1; }
+  .req .dim .dk { font-weight:700; color:var(--navy); font-size:13px; display:block; margin-bottom:3px; }
+  .req .dim ul { margin:4px 0 0 16px; }
+  .req .dim li { margin-bottom:3px; }
+  .req .dim.why { border-left-color:var(--gold); }
+  .req .dim.did { border-left-color:var(--info); }
+  .req .dim.vis { border-left-color:var(--review); }
+  .req .dim.gain { border-left-color:var(--ok); }
+  @media (max-width:860px) { .req-body { grid-template-columns:1fr; } }
+
+  /* 时间线 */
+  .timeline { position:relative; padding-left:24px; }
+  .timeline::before { content:""; position:absolute; left:7px; top:6px; bottom:6px; width:2px; background:var(--line); }
+  .tl { position:relative; padding:0 0 16px 10px; }
+  .tl::before { content:""; position:absolute; left:-22px; top:6px; width:10px; height:10px; border-radius:50%; background:var(--navy2); border:2px solid #fff; box-shadow:0 0 0 1px var(--line); }
+  .tl .date { font-size:12.5px; color:var(--gold); font-weight:700; }
+  .tl .ttl { font-weight:700; }
+  .tl .dsc { font-size:13px; color:var(--ink2); }
+
+  /* 提示块 */
+  .note { border-radius:8px; padding:10px 14px; font-size:13px; margin:10px 0; border:1px solid var(--line); background:var(--bg); color:var(--ink2); }
+  .note.ok { border-color:#b7e4c0; background:var(--okbg); color:#14532d; }
+  .note.warn { border-color:#f3d9a4; background:var(--warnbg); color:#7c4a03; }
+  .note.danger { border-color:#f3c1c1; background:var(--dangerbg); color:#7f1d1d; }
+  .note.info { border-color:#b7d7ea; background:var(--infobg); color:#0c4a6e; }
+
+  /* 两列 */
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:860px) { .cols { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,1fr); } }
+
+  code { background:var(--navy3); color:var(--navy); border-radius:4px; padding:1px 6px; font-size:12.5px; }
+  .foot { text-align:center; color:var(--ink3); font-size:12px; margin-top:20px; }
+
+  @media print {
+    body { background:#fff; }
+    .cover { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    section { box-shadow:none; page-break-inside:avoid; }
+    .req { page-break-inside:avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 封面 -->
+  <div class="cover">
+    <span class="tag">项目进展汇报 · 2026-08-28</span>
+    <h1>某建设集团 · 投标智能体</h1>
+    <div class="sub">公开招标情报收集 → 企业私有资料匹配 → 满分准入门禁 → 人工投标审批（端到端最小验证闭环）</div>
+    <div class="meta">
+      <span>阶段：Iteration 0-2（文档治理 + 契约冻结 + 原型交付完成）</span>
+      <span>需求：R001-R017（P0 17 项：done 3 / 执行中 10 / 待排期 4）</span>
+      <span>代码：匹配引擎 + 审批流 + 可点击原型</span>
+      <span>Git：远端 private + CI 全绿（86 项测试）</span>
+    </div>
+  </div>
+
+  <!-- 01 项目定位 -->
+  <section>
+    <h2><span class="no">01</span>项目定位与核心边界</h2>
+    <p>系统定位为<strong>“满分才进投标审批”的准入门禁</strong>：将招标资格、人员、业绩、资信及评分要求与企业私有资料逐项匹配打分，只有满足内部“满分准入”的项目进入人工审批队列，最终由企业经营负责人决定是否投标。系统永远不自动投标、不自动报价、不代替公司作出法律或商业承诺。</p>
+    <div class="cols">
+      <div>
+        <h3>四层职责架构（ADR-001）</h3>
+        <table>
+          <tr><th>层级</th><th>是否允许判断</th></tr>
+          <tr><td>公开情报采集层</td><td><span class="badge b-gray">否，只保留原文事实</span></td></tr>
+          <tr><td>企业私有资料层</td><td><span class="badge b-gray">否，只维护已验证资料</span></td></tr>
+          <tr><td>资格与资源匹配层</td><td><span class="badge b-run">是，仅限可配置规则 + 证据化结果</span></td></tr>
+          <tr><td>投标审批层</td><td><span class="badge b-warn">必须由企业负责人完成</span></td></tr>
+        </table>
+      </div>
+      <div>
+        <h3>硬性红线（已固化为工程约束）</h3>
+        <p style="font-size:13px">① 禁止编造，缺失一律“待补/待核实/不可判定”；② 纯事实红线，公开层无分析断语；③ raw 原文不可变、多版本不覆盖；④ 测试期仅 manual_trigger，不启动定时采集；⑤ <strong>满分 ≠ 自动投标</strong>；⑥ 企业资料/招标文件/原文/密钥一律不入 Git。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 02 总体进展 -->
+  <section>
+    <h2><span class="no">02</span>总体进展一览</h2>
+    <div class="stats">
+      <div class="stat"><div class="v">3</div><div class="k">需求完成（R001-R003）</div></div>
+      <div class="stat"><div class="v">10</div><div class="k">需求执行中（R004-R011、R017）</div></div>
+      <div class="stat"><div class="v">86</div><div class="k">自动化回归测试全绿</div></div>
+      <div class="stat"><div class="v">10+5</div><div class="k">原型页面 + 异常态</div></div>
+    </div>
+    <table>
+      <tr><th style="width:80px">需求</th><th>内容</th><th style="width:90px">优先级</th><th style="width:100px">状态</th><th style="width:200px">最新进展</th></tr>
+      <tr><td><b>R001</b></td><td>文档体系、Git 与产品决策记录</td><td>P0</td><td><span class="badge b-ok">done</span></td><td>AGENTS + docs 全套 + ADR-001</td></tr>
+      <tr><td><b>R002</b></td><td>招投标骨架树与 Schema 审计/激活</td><td>P0</td><td><span class="badge b-ok">done</span></td><td>schema v0.5.0，coverage 125/125</td></tr>
+      <tr><td><b>R003</b></td><td>最小数据治理契约与权限边界</td><td>P0</td><td><span class="badge b-ok">done</span></td><td>Material 15 字段契约冻结</td></tr>
+      <tr><td><b>R004</b></td><td>合规数据源、手动触发、原文入库</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td>F004 v1.1 定稿；运行时验收随 Iteration 2</td></tr>
+      <tr><td><b>R005</b></td><td>招标文件解析、主卡/子卡、字段溯源</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td>F005 v1.3 定稿；双项目解析演练跑通</td></tr>
+      <tr><td><b>R006</b></td><td>企业资质/业绩/证据最小资料库</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td>F006 v1.2 定稿；素材全量盘点</td></tr>
+      <tr><td><b>R007</b></td><td>可投标项目经理名录与证据管理</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td>F007 v1.1 定稿；1145 人名录演练</td></tr>
+      <tr><td><b>R008</b></td><td>资格/评分/硬性否决规则配置</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td>F008 v1.3 定稿；规则引擎演练跑通</td></tr>
+      <tr><td><b>R009</b></td><td>逐项匹配、满分准入门禁</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td>黄金样本验证 V-001~V-007 完成，农大 20 条重跑全绿</td></tr>
+      <tr><td><b>R010</b></td><td>审批/驳回/人工豁免/审计</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td>审批流实现 + 端到端演示 8 步全过</td></tr>
+      <tr><td><b>R011</b></td><td>可点击原型与目标用户验证</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td><strong>原型已搭建交付</strong>，待 Iteration 3 用户验证</td></tr>
+      <tr><td><b>R012/R013</b></td><td>端到端薄切片 / 三项目价值验证</td><td>P1</td><td><span class="badge b-gray">planned</span></td><td>依赖契约冻结（Iteration 4/5）</td></tr>
+      <tr><td><b>R014-R016</b></td><td>日报推送 / 定时采集 / 辅助编标</td><td>后置</td><td><span class="badge b-gray">backlog</span></td><td>不进入本期</td></tr>
+      <tr><td><b>R017</b></td><td>企业资料 OCR 解析（Document Router）</td><td>P0</td><td><span class="badge b-run">in_progress</span></td><td>F017 v1.0 定稿；OCR 引擎真实扫描件跑通</td></tr>
+    </table>
+    <div class="note info"><b>说明</b>：R004-R011/R017 均处于“规格/演练/验证完成，运行时验收并入 Iteration 2 原型 + Iteration 3 契约冻结”状态，按规则不提前标 done。各需求详情见下一章。</div>
+  </section>
+
+  <!-- 03 需求详解 -->
+  <section>
+    <h2><span class="no">03</span>需求详解：背景 · 做了什么 · 可视化 · 对目标的贡献</h2>
+
+    <!-- R001 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R001</span><span class="rtitle">文档体系、Git 和产品决策记录</span><span class="badge b-ok">done</span><span class="badge b-gray">Iteration 0</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>项目目录散落旧 PRD 与素材，无统一协作规则、无版本管理；更关键的是，旧 PRD 明确把“投/不投判断”列为非目标，而新业务要求“满分才进投标审批”——<b>这是显式范围变更</b>，必须登记而非静默改写，否则后续所有开发都在错误基线上进行。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>建立 AGENTS.md + docs 全套（规则总纲、需求池、迭代计划、功能规格、修改日志、项目现状）</li><li>初始化 Git，建立敏感资产白名单（企业资料/招标文件/原文/密钥不入库）</li><li>起草 ADR-001：登记范围变更、四层职责、准入状态机、满分定义</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>docs/ 文档地图（目录树即项目蓝图）、ADR-001 决策记录、Git 提交历史（13e9765 起）、.gitignore 白名单清单</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>奠定全项目协作基线：文档是单一事实源，一切后续工作的合规闸门；范围变更显式留痕，避免“旧 PRD 被悄悄改掉”的信任风险。</div>
+      </div>
+    </div>
+
+    <!-- R002 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R002</span><span class="rtitle">招投标骨架树与独立 Schema 审计/激活</span><span class="badge b-ok">done</span><span class="badge b-gray">Iteration 1</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>旧智库方案已有招投标骨架树 v1，但只覆盖“信息收集”域；新增的资格/资源核查、项目经理、满分准入是新域，且 schema 无独立版本管理与审计门禁——字段若失控，匹配结论就不可信。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>骨架树 8→11 章扩展（新增匹配域/状态机域/数据治理域）</li><li>schema v0.4.0→v0.5.0 三次全量审计：coverage 125/125、占位符 0、无重复定义</li><li>准入状态机 12 态与 ADR-001 逐项核对一致</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>骨架树 JSON/MD（11 章 2005 行，机器可读）、schema.md §十一~§十三、三次审计轨迹（_schema_generation_log.md）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>成为字段唯一事实源：后续 F005-F009 全部字段定义都锚定在此，避免多文档字段漂移——这是“匹配结论可溯源”的契约底座。</div>
+      </div>
+    </div>
+
+    <!-- R003 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R003</span><span class="rtitle">最小数据治理契约与权限边界</span><span class="badge b-ok">done</span><span class="badge b-gray">Iteration 1</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>企业私有资料（资质/业绩/人员证照）与公开情报混放、无权限隔离、无有效期与证据约束——不治理，则“证据化匹配”无从谈起，也无法回答“这条结论依据什么”。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>Material 15 字段契约冻结：source_type/owner/classification/permission_scope、hash、版本、有效期、解析状态</li><li>四层权限矩阵契约冻结（公开层全员可读 / 私有层受限 / 匹配层 / 审批层仅负责人）</li><li>raw 不可变、缺失/过期处置规则冻结</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>F003 §4.1 字段契约表、§6.2 权限矩阵、schema §13 数据治理域</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>数据层合规底座：每条匹配结论可回链到证据（hash + 有效期 + 责任人），为“满分准入可审计”提供工程前提。</div>
+      </div>
+    </div>
+
+    <!-- R004 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R004</span><span class="rtitle">合规数据源、手动触发、公告/招标文件原文入库</span><span class="badge b-run">in_progress</span><span class="badge b-gray">Iteration 1/2</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>招标情报来自互联网，采集有硬性合规红线（robots/限频/透明 UA/不抓登录付费内容），且测试期只能 manual_trigger；原文必须不可变入库才能支撑后续溯源。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>《合规数据源清单》：L0/L1/L2 共 24 平台冻结 + 法务审核状态跟踪（未审核不启用）</li><li>F004 v1.1 定稿：原文对象对齐 Material 15 字段契约，raw 存储层扩展字段登记</li><li>解析契约标注待 R005，不提前冻结</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>合规数据源清单.md（分级平台表）、F004 原文对象契约、入库门禁 G0-G6′ 流程图（既有资产）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>公开情报层的合规闸门：保证“系统只吃合规来源的原文事实”，测试期不启动定时采集，守住采集红线。</div>
+      </div>
+    </div>
+
+    <!-- R005 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R005</span><span class="rtitle">招标文件解析、项目主卡、事实子卡与字段级引用</span><span class="badge b-run">in_progress</span><span class="badge b-gray">Iteration 1/2</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>招标文件是 docx/pdf 混合、版式多样，且有 .gef/.etb 加密固化件无法解析；招标要求必须变成“字段级、可溯源”的结构，匹配层才有输入。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>F005 v1.3 定稿：主卡 20 字段与旧 PRD §6.1 逐项对齐，子卡 9 类，溯源规范（clause/source_link/assertion/confidence）冻结</li><li>打分边界契约：客观项必须无遗漏提取并自动计分，主观项人工判定留痕</li><li>博野+邢台双项目真实素材解析演练跑通</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>主卡/子卡演示样例（脱敏）、双项目解析演练报告、字段溯源链示例（每个字段绑定条款行号）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>把“招标文件”变成“可匹配的要求数据”——资格、评分、废标条款逐条可查、可引用，是匹配层的入口。</div>
+      </div>
+    </div>
+
+    <!-- R006 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R006</span><span class="rtitle">企业资质、业绩与证据文件最小资料库</span><span class="badge b-run">in_progress</span><span class="badge b-gray">Iteration 2</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>企业资料散落为 xlsx/扫描件：字段半结构化、合同扫描件证据缺链、清单存在空壳——资料不足将直接导致匹配“不可判定”，而不可判定必须阻断而非推断。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>F006 v1.1→v1.2 定稿：最小字段集、导入映射规则（空壳不导入、占位符→待补、日期序列号→ISO 844/844 生效）</li><li>130 文件全量盘点修正：建造师 1181 / 职称 2962 / 岗位证书 2280（非空壳，纠正误读）/ 业绩 844 / 资质 24 项（有效期全部正常）</li><li>OCR 链路接入 R017：扫描件结构化后人工复核入库</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>素材盘点表（规模/结构化状态/缺口三列）、导入映射演练样例、企业资料规模漏斗图（人数/业绩数比早期估算高一个数量级）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>企业私有资料层的结构化底座——决定匹配“可判定率”；缺口如实登记为待补，为数据责任人提供补数清单。</div>
+      </div>
+    </div>
+
+    <!-- R007 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R007</span><span class="rtitle">可投标项目经理名录与项目经理证据管理</span><span class="badge b-run">in_progress</span><span class="badge b-gray">Iteration 2</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>项目经理是资格硬条件核心（专业/注册等级/B 证/社保/在建冲突），而源清单缺注册编号、B 证、有效期、在建状态；<b>不可核验的经理绝不能计入满分</b>——这是真实性红线。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>F007 v1.1 定稿：ProjectManagerProfile 21 字段 + 硬条件核查规则 + 主推荐/备选机制 + 测试期核验人指定</li><li>1145 人名录最小技术闭环演练：结构化名录 → 业绩 join 353 人 → 硬条件筛选</li><li>导入映射规则（占位符→待补、专业列合并、等级解析、默认 pending_verification）</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>名录结构化样例、硬条件筛选漏斗（1145 → 353 → 候选 0 / 阻断 923 / 待补 222）、候选人卡片（主推荐/备选）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>满分判定中“至少一名合格经理”的规则底座：候选 0 时如实阻断（本案例），防止把无法核验的经理“无中生有”计入满分。</div>
+      </div>
+    </div>
+
+    <!-- R008 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R008</span><span class="rtitle">资格条件、评分项、硬性否决项的规则配置</span><span class="badge b-run">in_progress</span><span class="badge b-gray">Iteration 2/3</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>资格要求、评分公式、废标条款因项目而异且会随澄清变更——规则必须可配置、版本化、可解释，不能写死在代码里；否则规则一改，历史结论全部不可追溯。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>F008 v1.2→v1.3 定稿：三类要求（hard/scored/action）字段级契约、RuleSet 版本化、AdmissionResult 准入结果对象</li><li>可解释执行 + 判定短路：hard→scored→action→manager→evidence 按序，阻断即停</li><li>博野 12 + 邢台 7 条真实要求实例化演练：空证据→blocked_missing_data、证据过期→一票否决短路、规则版本回溯有效</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>RuleSet v1.0.0 版本快照、匹配矩阵（satisfied/not_satisfied/unverifiable/manual_review + match_reason 判定链）、准入结果对象（总分/差距/阻断/待补/复核）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>匹配层的“规则引擎”契约：满分定义可配置、可解释、可回溯（澄清后失效重算），规则默认值待 Iteration 3 与经营部确认后冻结。</div>
+      </div>
+    </div>
+
+    <!-- R009 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R009</span><span class="rtitle">企业资料与招标要求逐项匹配、满分准入门禁</span><span class="badge b-run">in_progress</span><span class="badge b-gold">核心验证</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>本项目的价值核心：引擎判定必须与“当年实际投标并中标”的事实一致。此前的本地演练存在“12 条实际执行 vs 16 条黄金拆分不一致”与 as_of 证据污染缺陷，结论不可作验收依据——必须重建受控验证。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>受 Git 管理的黄金规则源：博野 16 条 / 农大 20 条 + 确定性引擎 + 时点/字段执行校验</li><li>验证执行 V-001~V-007：远端 CI 全绿（run #33038973222）、受控证据快照（sha256+as_of）、博野 8 标段矩阵（标段证据隔离实证）、农大 20 条重跑 <b>blocked=0</b></li><li>农大补拆类似业绩客观项 NQ-S-003/004（2.5+2.5 可复算），保函 OCR 复核入库；负例回归补齐至 86 项</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>匹配矩阵（20 行×四类结论）、V-008 逐条对照表（引擎判定 vs 实际中标事实）、CI 全绿徽章、评分环图（原型评分面板）、逐条核对表（V-004，待签署）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>系统核心价值验证：<b>“满分才进审批”与历史事实一致、可复现、可解释、可审计</b>；当前唯一待补 NQ-H-007（财务审计素材，当年必有），补齐后重跑可复现满分路径。</div>
+      </div>
+    </div>
+
+    <!-- R010 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R010</span><span class="rtitle">投标负责人审批、驳回、人工豁免和审计</span><span class="badge b-run">in_progress</span><span class="badge b-gray">Iteration 2/3</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>满分 ≠ 自动投标——审批必须留痕（谁/何时/依据什么/结论）、豁免必须有授权人与有效期、驳回必须填意见；否则“人决策”只是一句口号。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>审批流纯函数实现：create_approval / approve / reject / add_waiver / decide_waived / expire_waivers / audit_log</li><li>端到端 8 步演示全过：非满分拒绝创建审批 → 满分进 pending_bid_approval → 空意见驳回被拒 → 审批通过 → 终态防重 → 带豁免批准 → 豁免过期自动回阻断 → 审计导出完整</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>审批状态迁移演示、豁免表单（授权人/原因/证据/有效期）、审计时间线（原型审批页 + 演示结果 JSON）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>把“人决策”落到工程：审计留痕 + 豁免生命周期（过期自动失效回阻断）闭环，满足合规要求且不改变满分定义。</div>
+      </div>
+    </div>
+
+    <!-- R011 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R011</span><span class="rtitle">可点击原型与目标用户验证</span><span class="badge b-run">in_progress</span><span class="badge b-gold">本期交付</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>冻结契约前，必须让投标专员/经营负责人“看见并点击”全流程——流程是否合理、评分规则是否认可，只有业务方亲手走一遍才能确认，避免拍脑袋冻结。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>纯静态可点击原型（8 页面，无构建无依赖），数据 = 农大真实脱敏案例</li><li>F010 十类必含页面 + 5 类异常态全覆盖；首页入口即“新建投标准入任务”</li><li>行业模式 UI：资格后审、评标办法（技术 30%/商务 64%/信用 6%）、保证金/限价/有效期、澄清挂接、动作四阶段</li><li>右上角角色切换模拟四层权限（非审批人访问审批页 403）</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span><b>可点击原型</b>：7 步用户旅程（新建→导入→矩阵→资料→评分→队列→审批）、字段级证据抽屉（条款+证据+摘录）、评分环图、审批时间线、异常态演示页</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>Iteration 3 用户验证的载体 + F011 薄切片的交互基线；让业务方“所见即所得”地评审流程与评分规则，验证结果将直接冻结准入状态机与 API 契约。</div>
+      </div>
+    </div>
+
+    <!-- R012/R013 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R012 / R013</span><span class="rtitle">端到端薄切片 / 三项目价值与质量验证</span><span class="badge b-gray">planned</span><span class="badge b-gray">Iteration 4/5</span><span class="rphase">优先级 P1</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>契约冻结后，用“一条真实项目端到端跑通”证明系统可落地；再用 ≥3 个项目量化价值（耗时/准确率/人工修改率/漏项发现率）。</div>
+        <div class="dim did"><span class="dk">做了什么</span>尚未开始——严格依赖 R008-R011 的契约冻结与验证结论（R012 依赖 R011，R013 依赖 R012），不扩范围（不做批量/定时/推送）。</div>
+        <div class="dim vis"><span class="dk">可视化产出</span>（规划）薄切片演示脚本、三项目质量验证报告（四项量化指标图表）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>从“验证过”到“可落地、可量化”：证明价值并闭环到规则/Schema 修订。</div>
+      </div>
+    </div>
+
+    <!-- R014-R016 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R014-R016</span><span class="rtitle">日报推送 / 定时采集 / 辅助编标</span><span class="badge b-gray">backlog</span><span class="badge b-gray">后续</span><span class="rphase">后置</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>属于正式期/扩展能力，且“定时采集”须 P0 验收 + 法务签字门槛；辅助编标与准入链路解耦，须单独立项评估。</div>
+        <div class="dim did"><span class="dk">做了什么</span>强制后置，不进入本期；需求池硬约束“全网监控/自动投标/自动报价”永不入 P0。</div>
+        <div class="dim vis"><span class="dk">可视化产出</span>—</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>范围护栏：保证最小验证闭环聚焦准入链路，防止范围蔓延拖垮交付。</div>
+      </div>
+    </div>
+
+    <!-- R017 -->
+    <div class="req">
+      <div class="req-head"><span class="rid">R017</span><span class="rtitle">企业私有资料文档 OCR 解析（Document Router）</span><span class="badge b-run">in_progress</span><span class="badge b-gray">Iteration 2</span><span class="rphase">优先级 P0</span></div>
+      <div class="req-body">
+        <div class="dim why"><span class="dk">背景（为什么）</span>资质/安许证/岗位证书多为扫描件（图片型 PDF），人工录入慢且易错；多模态 LLM 整份喂入成本高。需要本地分流：文本走 Parser、扫描走 OCR，且私有资料不出内网。</div>
+        <div class="dim did"><span class="dk">做了什么</span><ul><li>F017 v1.0 定稿：Document Router 契约（分流→统一 Structured JSON；sha256 + 置信度 + 页码；阈值 0.6/0.9）</li><li>本地开源 tesseract OCR 引擎真实扫描件跑通：资质 2.pdf 提取企业名称/信用代码/证书编号/有效期；损坏件 conf=0 进复核；保函 OCR 复核细节入库</li><li>路由判定实测发现：文本+图片混合 PDF 需补图片占比检测（已登记待改）</li></ul></div>
+        <div class="dim vis"><span class="dk">可视化产出</span>OCR 结构化输出样例（字段+置信度）、路由判定流程、人工复核队列（低置信不静默入库）</div>
+        <div class="dim gain"><span class="dk">对目标的贡献</span>企业资料“可机读化”转换器：直接提升资料库可判定率（资质/安许证/保函均可 OCR 复核）；本地处理 0 软件成本、不出内网，合规达标。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 04 里程碑时间线 -->
+  <section>
+    <h2><span class="no">04</span>里程碑时间线（08-25 → 08-28）</h2>
+    <div class="timeline">
+      <div class="tl"><div class="date">08-25</div><div class="ttl">Iteration 0 完成：文档体系建立（R001）+ 范围变更登记（ADR-001）</div>
+        <div class="dsc">AGENTS/docs 全套 42 文件首次提交；“投/不投判断”由非目标 → 显式变更为“满分准入门禁”，未静默改写旧 PRD。</div></div>
+      <div class="tl"><div class="date">08-25</div><div class="ttl">Iteration 1 完成：Schema 审计 + 契约冻结（R002/R003）</div>
+        <div class="dsc">骨架树 8→11 章；schema v0.5.0 三次全量审计 coverage 125/125、占位符 0；Material 15 字段与四层权限矩阵契约冻结。</div></div>
+      <div class="tl"><div class="date">08-26</div><div class="ttl">规格定稿潮：F004/F005/F006/F017 + OCR 引擎演练</div>
+        <div class="dsc">入库契约、主卡/子卡溯源、打分边界（客观自动/主观人工）、资料库导入映射、OCR Document Router；企业素材 130 文件全量盘点。</div></div>
+      <div class="tl"><div class="date">08-27</div><div class="ttl">匹配引擎最小技术闭环（R007/R008/R009）</div>
+        <div class="dsc">F007 名录契约（1145 人演练）、F008 v1.3 规则引擎（三类要求+版本化+短路）、黄金样本规则源（16 条）与确定性引擎入库。</div></div>
+      <div class="tl"><div class="date">08-28</div><div class="ttl">黄金样本验证 + 审批流 + 原型（R009/R010/R011）</div>
+        <div class="dsc">远端 Git + CI 建立（V-001 闭环）；农大 20 条重跑 blocked=0；R010 审批流 8 步演示全过；可点击原型搭建完成并提交（fb84f83）。</div></div>
+    </div>
+  </section>
+
+  <!-- 05 核心验证成果 -->
+  <section>
+    <h2><span class="no">05</span>核心验证成果（R009/R010）</h2>
+    <div class="cols">
+      <div>
+        <h3>农大项目 · 匹配引擎事后验证（黄金样本）</h3>
+        <table>
+          <tr><td>规则源</td><td>20 条（hard 12 / scored 4 / action 4）</td></tr>
+          <tr><td>执行覆盖</td><td>declared=20 / executed=20 / <span class="badge b-ok">complete=true</span></td></tr>
+          <tr><td>硬性条件</td><td>11/12 satisfied；NQ-H-007 财务审计素材待补（当年必有，补齐后重跑可复现满分路径）</td></tr>
+          <tr><td>客观计分</td><td>类似业绩双 satisfied（投标人 2.5 + 项目经理 2.5，可复算）</td></tr>
+          <tr><td>主观项</td><td>2 项待内部质量评审（不计入内部满分）</td></tr>
+          <tr><td>报价边界</td><td>121,598,056.76 ≤ 最高限价 124,715,908.89 ✓</td></tr>
+          <tr><td>对照基线</td><td>实际已中标（客户评判满分、已投标、已施工、已验收）——与引擎判定无矛盾</td></tr>
+        </table>
+        <div class="note ok" style="margin-top:6px">博野 8 标段矩阵同步保留：16 条规则 × 8 标段全通过，标段证据隔离实证。</div>
+      </div>
+      <div>
+        <h3>审批流（R010）端到端 8 步演示</h3>
+        <p style="font-size:13px">非满分拒绝创建审批 → 满分进入 <code>pending_bid_approval</code> → 空意见驳回被拒（意见必填）→ 审批通过 → 终态防重 → 带豁免批准（不改变满分定义）→ 豁免过期自动回阻断 → 审计导出完整。</p>
+        <h3>工程保障</h3>
+        <table>
+          <tr><td>自动化回归</td><td>86 项全绿（引擎/负例/审批/集成）</td></tr>
+          <tr><td>CI</td><td>GitHub Actions（依赖安装 + 单测 + py_compile + 黄金样本）<span class="badge b-ok">run #33038973222 全绿</span></td></tr>
+          <tr><td>远端</td><td>github.com/Heidi-DDM/bid-agent（private）</td></tr>
+          <tr><td>OCR</td><td>本地开源 tesseract，资质/安许证/保函 OCR 复核通过，不出内网</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 06 原型交付 -->
+  <section>
+    <h2><span class="no">06</span>本期重点交付：可点击原型（R011）</h2>
+    <p>纯静态 HTML/CSS/JS 原型（无构建、无后端、无依赖），数据使用<strong>农大真实脱敏案例</strong>，流程遵循行业招投标模式（资格后审、评标办法、保证金/限价/有效期、澄清挂接、动作四阶段）。</p>
+    <div class="stats">
+      <div class="stat"><div class="v">8</div><div class="k">页面</div></div>
+      <div class="stat"><div class="v">10</div><div class="k">F010 必含页面覆盖</div></div>
+      <div class="stat"><div class="v">5</div><div class="k">异常态</div></div>
+      <div class="stat"><div class="v">4</div><div class="k">模拟角色（权限演示）</div></div>
+    </div>
+    <h3>用户旅程（7 步可点走通）</h3>
+    <table>
+      <tr><th style="width:130px">步骤</th><th>页面</th><th>要点</th></tr>
+      <tr><td>1</td><td>首页（入口）</td><td><strong>入口即“新建投标准入任务”</strong>（验收硬性要求）+ 现有任务列表</td></tr>
+      <tr><td>2</td><td>导入与解析</td><td>表单（URL/上传/粘贴）；原文不可变、sha256、澄清多版本挂接、解析状态</td></tr>
+      <tr><td>3</td><td>招标要求矩阵</td><td>hard/scored/action 三类 tab；点击任意行打开<strong>字段级证据抽屉</strong>（条款引用 + 企业证据 + 原文摘录）</td></tr>
+      <tr><td>4</td><td>公司资料选择</td><td>资质/安许证/项目经理（主推荐/备选、active/unavailable、硬条件核查）</td></tr>
+      <tr><td>5</td><td>匹配与评分面板</td><td>四类结论（资格/评分/准备度/内部准入）、硬条件 12 项、计分项、报价边界；“满分 ≠ 自动投标”</td></tr>
+      <tr><td>6</td><td>阻断/待补/复核队列</td><td>blocked_hard_requirement / blocked_missing_data / manual_review 三类处置</td></tr>
+      <tr><td>7</td><td>审批/豁免/审计</td><td>审批通过/驳回（意见必填）/豁免表单（授权人/原因/证据/有效期）；审计时间线；非审批角色 403</td></tr>
+    </table>
+    <h3>5 类异常态（F010 §7 全覆盖）</h3>
+    <p style="font-size:13px">空态（资料库为空 → 不可判定）｜ 资料过期（安许证过期 → 一票否决）｜ 解析失败（部分解析 → 人工复核）｜ 权限不足（403 模拟）｜ 无合格可用项目经理（候选 0 → 阻断，不生成不存在的经理）</p>
+    <div class="note info"><b>运行方式</b>：直接双击 <code>prototype/index.html</code> 即可浏览（相对路径跳转，无需服务器）；或 <code>python3 -m http.server 8080 --directory prototype</code> 后访问 <code>http://localhost:8080</code>。右上角角色切换模拟四层权限。</div>
+  </section>
+
+  <!-- 07 企业素材盘点 -->
+  <section>
+    <h2><span class="no">07</span>企业私有资料盘点（已实测，脱敏）</h2>
+    <table>
+      <tr><th>素材</th><th>实测规模</th><th>结构化状态</th><th>缺口（标“待补”，不推断）</th></tr>
+      <tr><td>注册建造师</td><td class="num">1,181 人</td><td>主表字段齐（注册编号/等级）</td><td>在施信息口径待数据管理员确认</td></tr>
+      <tr><td>技术职称</td><td class="num">2,962 人</td><td>正高 197 / 高级 1062 / 中级 1083 / 初级 441</td><td>—</td></tr>
+      <tr><td>岗位证书</td><td class="num">2,280 人</td><td>证书编号/发证机关齐全；公司确认长期有效</td><td>—</td></tr>
+      <tr><td>竣工业绩</td><td class="num">844 条</td><td>日期序列号 → ISO 转换 844/844 生效</td><td>合同扫描件文件名列 0 条（证据缺链）</td></tr>
+      <tr><td>企业资质</td><td class="num">24 项</td><td>总承包特级/一级 10 项等；有效期全部正常（2028-2029）</td><td>扫描件需 OCR 结构化（R017 已跑通）</td></tr>
+      <tr><td>安许证 / 信用 AAA</td><td class="num">2 项</td><td>安许证（冀）JZ…[2005]000049 + 信用 AAA 证书</td><td>—</td></tr>
+      <tr><td>资料清单 12 项要求</td><td class="num">10/12 覆盖</td><td>—</td><td>银行授信信息、计价软件清单（公司确认暂无）</td></tr>
+    </table>
+  </section>
+
+  <!-- 08 待确认与下一步 -->
+  <section>
+    <h2><span class="no">08</span>待确认事项与下一步</h2>
+    <div class="cols">
+      <div>
+        <h3>待公司确认（阻塞项，登记于项目现状 §5）</h3>
+        <table>
+          <tr><th>事项</th><th>期望确认方</th></tr>
+          <tr><td>评分规则与“满分”定义（三类要求划分、满分值、硬性否决清单）</td><td>经营部/投标负责人</td></tr>
+          <tr><td>企业私有资料范围与字段责任人</td><td>数据管理员/人力资源</td></tr>
+          <tr><td>项目经理名录字段责任人</td><td>人事/工程部</td></tr>
+          <tr><td>投标审批人名单与豁免授权上限</td><td>经营负责人</td></tr>
+          <tr><td>《数据来源合规清单》法务签字（R004 前置）</td><td>法务</td></tr>
+          <tr><td>验证签署：V-004 博野核对表 / V-008 农大对照</td><td>投标专员</td></tr>
+          <tr><td>名称一致性（某建设 vs 某建投）</td><td>公司</td></tr>
+        </table>
+      </div>
+      <div>
+        <h3>下一步计划</h3>
+        <table>
+          <tr><th>迭代</th><th>计划</th></tr>
+          <tr><td><b>Iteration 3</b>（近期）</td><td>目标用户（投标专员/经营负责人/数据管理员）验证原型 ≥3 场，记录反馈；冻结准入状态机、API 与权限契约；F008/F009/F010 定稿</td></tr>
+          <tr><td><b>Iteration 4</b></td><td>端到端薄切片：单条 URL/上传 + 最小资料 + 项目经理 + 审批（R012）</td></tr>
+          <tr><td><b>Iteration 5</b></td><td>≥3 个真实/脱敏项目价值与质量验证（R013）</td></tr>
+        </table>
+        <h3>主要风险</h3>
+        <p style="font-size:13px">① 评分规则/满分定义依赖公司确认，延迟阻塞 Iteration 3（对策：只冻结结构，规则值配置化）；② 企业资料质量不足 → 缺失即阻断 + 待补队列，不推断；③ 招标文件解析版式多样（对策：限定类型 + 失败进人工复核）；④ 范围蔓延（对策：P0/P1/后置硬约束，薄切片明确非目标清单）。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 09 交付物与工程资产 -->
+  <section>
+    <h2><span class="no">09</span>交付物与工程资产</h2>
+    <table>
+      <tr><th style="width:200px">资产</th><th>说明</th></tr>
+      <tr><td><code>docs/</code></td><td>规则总纲、需求池（R001-R017）、迭代计划、功能规格 F001-F011/F017（4 份定稿）、修改日志、项目现状、ADR-001、合规数据源清单</td></tr>
+      <tr><td><code>schema/</code></td><td>骨架树（11 章）、schema v0.5.0（coverage 125/125）、审计轨迹</td></tr>
+      <tr><td><code>scripts/matching/</code></td><td>确定性匹配引擎 + 黄金规则源（博野 16 条 / 农大 20 条）+ 自动化测试（86 项）</td></tr>
+      <tr><td><code>scripts/approval/</code></td><td>审批工作流（create/approve/reject/waiver/expire/audit）+ 端到端演示</td></tr>
+      <tr><td><code>prototype/</code></td><td>可点击原型（8 页面 + 脱敏数据 + 使用说明）<span class="badge b-ok">已提交 fb84f83</span></td></tr>
+      <tr><td><code>.github/workflows/</code></td><td>CI：依赖安装、单测、py_compile、黄金样本门禁</td></tr>
+      <tr><td>Git 治理</td><td>白名单机制生效：企业资料/招标文件/原文/密钥/日志/构建产物全部禁止提交（.gitignore 覆盖 + 人工确认）</td></tr>
+    </table>
+    <div class="note"><b>一句话总结</b>：文档契约层（Iteration 0-1）已收口，匹配引擎与审批流（R008-R010）经真实脱敏样本验证达标，<strong>可点击原型（R011）已交付</strong>——项目已具备进入“用户验证 + 契约冻结”（Iteration 3）的充分条件，主要阻塞为公司侧确认（评分规则、责任人、法务签字、验证签署）。</div>
+  </section>
+
+  <div class="foot">某建设集团 · 投标智能体项目 ｜ 本汇报由项目文档（docs/）自动整理生成，数据截至 2026-08-28</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>某建设集团投标智能体项目进展汇报（客户版｜农大20条要求与AI能力说明）</title>
+<style>
+  :root {
+    --navy: #163c63;
+    --navy-2: #255a89;
+    --blue-light: #eaf2f9;
+    --gold: #b58a32;
+    --gold-light: #fbf5e7;
+    --ink: #1f2933;
+    --muted: #5d6875;
+    --soft: #f5f7fa;
+    --line: #d9e0e7;
+    --green: #237a4b;
+    --green-bg: #eef8f1;
+    --amber: #a56608;
+    --amber-bg: #fff7e7;
+    --red: #a33a36;
+    --red-bg: #fff1f0;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: #eef1f5;
+    font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+  }
+  .page { max-width: 1180px; margin: 0 auto; padding: 28px 28px 60px; }
+  .cover {
+    color: #fff;
+    background: var(--navy);
+    border: 1px solid #0f2f4e;
+    padding: 42px 46px 38px;
+    margin-bottom: 20px;
+  }
+  .cover .eyebrow {
+    display: inline-block;
+    color: #f7e8bf;
+    border: 1px solid rgba(255,255,255,.35);
+    padding: 2px 12px;
+    font-size: 12px;
+    letter-spacing: .08em;
+  }
+  .cover h1 { margin: 16px 0 8px; font-size: 31px; font-weight: 700; letter-spacing: .03em; }
+  .cover .subtitle { color: #dbe8f5; font-size: 17px; max-width: 820px; }
+  .cover .meta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 24px; }
+  .cover .meta span { border-left: 3px solid var(--gold); padding-left: 9px; color: #e8eef6; font-size: 13px; }
+  .section {
+    background: #fff;
+    border: 1px solid var(--line);
+    margin-bottom: 18px;
+    padding: 26px 30px;
+  }
+  .section-title { display: flex; gap: 12px; align-items: center; margin: 0 0 16px; color: var(--navy); font-size: 21px; }
+  .section-title .no { color: #fff; background: var(--navy); font-size: 13px; padding: 2px 9px; }
+  .section-title::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+  h3 { color: var(--navy); font-size: 17px; margin: 18px 0 8px; }
+  p { margin: 7px 0; }
+  .lead { font-size: 17px; color: #334155; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .em { color: var(--navy); font-weight: 700; }
+  .gold { color: var(--gold); font-weight: 700; }
+  .callout { padding: 15px 18px; margin: 16px 0; border-left: 4px solid var(--gold); background: var(--gold-light); color: #5b481d; }
+  .callout.green { border-left-color: var(--green); background: var(--green-bg); color: #245437; }
+  .callout.red { border-left-color: var(--red); background: var(--red-bg); color: #6d2926; }
+  .callout.blue { border-left-color: var(--navy-2); background: var(--blue-light); color: #244665; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .panel { border: 1px solid var(--line); background: #fff; padding: 17px 18px; }
+  .panel.soft { background: var(--soft); }
+  .panel h4 { color: var(--navy); margin: 0 0 7px; font-size: 16px; }
+  .panel p:last-child { margin-bottom: 0; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 9px; border: 1px solid var(--line); color: var(--muted); background: var(--soft); }
+  .tag.ok { color: var(--green); border-color: #b6ddc2; background: var(--green-bg); }
+  .tag.run { color: var(--amber); border-color: #efd39e; background: var(--amber-bg); }
+  .tag.todo { color: var(--red); border-color: #edb9b5; background: var(--red-bg); }
+  .stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+  .stat { border-top: 3px solid var(--navy-2); background: var(--soft); padding: 13px 15px; }
+  .stat .value { display: block; color: var(--navy); font-size: 27px; font-weight: 700; line-height: 1.2; }
+  .stat .label { display: block; color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+
+  /* 两阶段目标图 */
+  .phase-track { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .phase { position: relative; border: 1px solid var(--line); padding: 20px 22px 19px; min-height: 174px; }
+  .phase.phase-one { border-top: 4px solid var(--navy); }
+  .phase.phase-two { border-top: 4px solid var(--gold); }
+  .phase .phase-no { color: var(--gold); font-size: 12px; letter-spacing: .12em; }
+  .phase h3 { margin: 5px 0 7px; }
+  .phase .phase-foot { position: absolute; bottom: 15px; color: var(--muted); font-size: 13px; }
+
+  /* 主流程图 */
+  .flow-wrap { margin-top: 18px; overflow-x: auto; padding-bottom: 4px; }
+  .flow { display: flex; align-items: stretch; min-width: 1030px; }
+  .flow-step { flex: 1; min-width: 116px; }
+  .flow-node { height: 118px; border: 1px solid var(--line); background: var(--soft); padding: 12px 11px; position: relative; }
+  .flow-node .n { color: #fff; background: var(--navy); width: 25px; height: 25px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; margin-bottom: 7px; }
+  .flow-node strong { display: block; color: var(--navy); font-size: 14px; line-height: 1.4; }
+  .flow-node small { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.4; margin-top: 4px; }
+  .flow-node.focus { background: var(--blue-light); border-color: #9ebbd4; }
+  .flow-node.manual { background: var(--gold-light); border-color: #dfc78f; }
+  .flow-arrow { width: 28px; flex: 0 0 28px; display: flex; align-items: center; justify-content: center; color: var(--gold); font-size: 22px; }
+  .flow-note { margin-top: 12px; color: var(--muted); font-size: 13px; }
+
+  /* 阶段地图 */
+  .roadmap { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; margin: 20px 0 10px; }
+  .road { position: relative; border-top: 4px solid var(--line); padding: 13px 12px 0 0; min-height: 116px; }
+  .road::before { content: ""; position: absolute; top: -11px; left: 0; width: 16px; height: 16px; background: #fff; border: 4px solid var(--line); }
+  .road.done { border-top-color: var(--green); }
+  .road.done::before { border-color: var(--green); background: var(--green); }
+  .road.current { border-top-color: var(--amber); }
+  .road.current::before { border-color: var(--amber); background: var(--amber); }
+  .road.next { border-top-color: #9ebbd4; }
+  .road.next::before { border-color: #9ebbd4; }
+  .road h4 { margin: 0 0 4px; color: var(--navy); font-size: 14px; }
+  .road p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; padding-right: 8px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+  th { text-align: left; color: var(--navy); background: var(--blue-light); padding: 9px 10px; border-bottom: 2px solid var(--line); }
+  td { padding: 9px 10px; vertical-align: top; border-bottom: 1px solid var(--line); }
+  tr:last-child td { border-bottom: 0; }
+  ul { margin: 7px 0 7px 20px; padding: 0; }
+  li { margin: 3px 0; }
+  .checklist { list-style: none; margin-left: 0; }
+  .checklist li { padding-left: 22px; position: relative; }
+  .checklist li::before { content: ""; position: absolute; left: 0; top: .62em; width: 9px; height: 9px; border: 2px solid var(--navy-2); }
+  .checklist li.done::before { background: var(--green); border-color: var(--green); }
+  .checklist li.wait::before { border-color: var(--amber); }
+  .distance { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 15px; }
+  .distance .side { padding: 18px; border: 1px solid var(--line); }
+  .distance .side h3 { margin-top: 0; }
+  .distance .side.have { background: var(--green-bg); border-color: #c6e4ce; }
+  .distance .side.need { background: var(--amber-bg); border-color: #efd9a7; }
+  .footer { text-align: center; color: var(--muted); font-size: 12px; padding-top: 4px; }
+  @media (max-width: 850px) {
+    .page { padding: 14px 12px 36px; }
+    .cover { padding: 28px 24px; }
+    .cover h1 { font-size: 25px; }
+    .grid-2, .phase-track, .distance { grid-template-columns: 1fr; }
+    .grid-3 { grid-template-columns: 1fr; }
+    .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .roadmap { grid-template-columns: 1fr; gap: 12px; }
+    .road { border-top: 0; border-left: 4px solid var(--line); min-height: 70px; padding: 0 0 0 17px; }
+    .road::before { top: 0; left: -11px; }
+    .road.done { border-left-color: var(--green); }
+    .road.current { border-left-color: var(--amber); }
+    .road.next { border-left-color: #9ebbd4; }
+    .section { padding: 21px 18px; }
+    .card-grid, .card-grid.c2 { grid-template-columns: 1fr; }
+    .ck-card.hot { grid-column: auto; }
+    .action-track { flex-direction: column; }
+    .action-arrow { transform: rotate(90deg); flex: 0 0 26px; }
+  }
+  @media print {
+    body { background: #fff; }
+    .page { max-width: none; padding: 0; }
+    .cover { break-after: page; }
+    .section { break-inside: avoid; border-color: #cfd6df; }
+    .flow-wrap { overflow: visible; }
+  }
+
+  /* 农大 20 条分组卡片 */
+  .card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0 6px; }
+  .card-grid.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ck-card { border: 1px solid var(--line); background: #fff; padding: 13px 15px 14px; }
+  .ck-card .no { display: inline-block; color: #fff; background: var(--navy-2); font-size: 11px; padding: 1px 8px; margin-bottom: 8px; letter-spacing: .05em; }
+  .ck-card h5 { margin: 0 0 4px; color: var(--navy); font-size: 15px; line-height: 1.45; }
+  .ck-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+  .ck-card.hot { grid-column: 1 / -1; border: 2px solid var(--red); background: var(--red-bg); }
+  .ck-card.hot .no { background: var(--red); }
+  .ck-card.hot h5 { color: var(--red); font-size: 17px; margin-bottom: 6px; }
+  .ck-card.hot p { color: #6d2926; font-size: 14px; }
+  .ck-card.hot .hot-focus { font-weight: 700; margin-top: 6px; }
+  .ck-card.score { border-top: 4px solid var(--gold); }
+  .ck-card.score .no { background: var(--gold); }
+  .ck-card.edge { background: var(--soft); border: 1px dashed var(--line); }
+  .ck-card.edge h5 { font-size: 14px; color: var(--muted); }
+  .ck-tags { margin-top: 9px; }
+  .ck-tags .tag { margin: 0 5px 4px 0; }
+  .ck-summary { margin-top: 16px; color: var(--navy); font-weight: 600; font-size: 15px; }
+  .action-track { display: flex; align-items: stretch; margin: 16px 0 6px; }
+  .action-step { flex: 1; min-width: 0; border-top: 4px solid var(--gold); background: var(--gold-light); padding: 13px 14px 12px; position: relative; }
+  .action-step::before { content: ""; position: absolute; top: -10px; left: 16px; width: 16px; height: 16px; background: #fff; border: 4px solid var(--gold); border-radius: 50%; }
+  .action-step .a-no { color: var(--gold); font-size: 11px; letter-spacing: .1em; }
+  .action-step strong { display: block; color: var(--navy); font-size: 15px; margin-top: 3px; }
+  .action-step small { display: block; color: #6d5b1d; font-size: 12.5px; line-height: 1.6; margin-top: 5px; }
+  .action-arrow { flex: 0 0 30px; display: flex; align-items: center; justify-content: center; color: var(--gold); font-size: 20px; }
+</style>
+</head>
+<body>
+<main class="page"><header class="cover">
+    <span class="eyebrow">项目进展汇报 · 客户沟通版</span>
+    <h1>某建设集团投标智能体项目</h1>
+    <div class="subtitle">围绕“发现招标机会、看懂招标要求、核对企业能力、提示风险缺口、支撑人工审核”的一阶段演示闭环，汇报当前进展、已完成工作与需要客户确认的事项。</div>
+    <div class="meta">
+      <span>汇报日期：2026年8月31日</span>
+      <span>试点项目：河北农业大学东校区研究生宿舍建设项目施工（农大）</span>
+      <span>当前定位：样板流程已形成，真实业务闭环正在建设</span>
+    </div>
+  </header>
+
+<section class="section">
+    <h2 class="section-title"><span class="no">01</span>先看结论</h2>
+    <p class="lead"><span class="em">目前已经完成“把事情想清楚、把流程画出来、把样板做出来、把部分判断方法验证过”</span>；正在从“可演示的样板”走向“可以接真实文件、真实资料和真实人员使用的系统”。</p>
+    <div class="callout blue"><strong>形象说明：</strong>现在像是房子的设计图、施工标准和样板间已经准备好，基础运行的水电也已接通；下一步要把正式房门、资料柜、传送通道和审批窗口全部接上，才能让工作人员真正拿农大项目跑一遍。</div>
+    <div class="stat-row">
+      <div class="stat"><span class="value">4项</span><span class="label">核心工作已经形成</span></div>
+      <div class="stat"><span class="value">20条</span><span class="label">农大项目要求已梳理</span></div>
+      <div class="stat"><span class="value">1,000+</span><span class="label">名企业人员资料已盘点</span></div>
+      <div class="stat"><span class="value">已完成</span><span class="label">运行基础已完成验收</span></div>
+    </div>
+    <p class="muted">这里的“已盘点”不等于“已经全部核验入库”；这里的“已梳理”不等于“已经在正式系统中自动处理”。项目进展按实际情况如实区分。</p>
+  </section>
+
+<section class="section">
+    <h2 class="section-title"><span class="no">02</span>两阶段建设目标</h2>
+    <div class="phase-track">
+      <article class="phase phase-one">
+        <div class="phase-no">第一阶段 · 先把“是否值得深入、缺什么”看清楚</div>
+        <h3>招标机会发现与投标准入辅助</h3>
+        <p>系统先从公开渠道寻找招标信息，形成清晰的项目推送；投标专员选中要深入的项目后，上传完整招标文件；系统再把招标要求与企业已有能力逐项对照，展示风险和缺口，由人员补充、复核。</p>
+        <div class="phase-foot">产出：结构化招标信息 + 风险缺失清单 + 人工审核结果</div>
+      </article>
+      <article class="phase phase-two">
+        <div class="phase-no">第二阶段 · 在确认可以投之后支撑“写标书”</div>
+        <h3>基于第一阶段结果撰写投标书</h3>
+        <p>在第一阶段形成的招标要求、企业能力和已确认资料基础上，进一步组织投标文件素材，辅助完成投标书编写。第二阶段不替代人工签字、盖章和最终决策。</p>
+        <div class="phase-foot">前提：第一阶段资料完整、风险明确、审核流程稳定</div>
+      </article>
+    </div>
+    <div class="callout"><strong>边界说明：</strong>系统可以帮助发现事实、整理资料、逐条比对和提示风险；是否投标、是否报价、是否作出企业承诺，始终由企业负责人决定。</div>
+  </section>
+
+<section class="section">
+    <h2 class="section-title"><span class="no">03</span>第一阶段 Demo 流程</h2>
+    <p>整条流程可以理解为“先看机会，再看全套文件；先找要求，再对照家底；先把问题摆出来，再由人补齐和审核”。</p>
+    <div class="flow-wrap">
+      <div class="flow" aria-label="第一阶段演示流程">
+        <div class="flow-step"><div class="flow-node focus"><span class="n">1</span><strong>联网搜索招标信息</strong><small>优先保定、河北、京津冀</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node focus"><span class="n">2</span><strong>结构化推送</strong><small>把项目名称、地点、时间等整理清楚</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node manual"><span class="n">3</span><strong>人工选择项目</strong><small>投标专员选择需要深入的招标机会</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node manual"><span class="n">4</span><strong>上传完整招标文件</strong><small>因 CA 锁限制，完整文件由人工上传</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node focus"><span class="n">5</span><strong>招标文件解析</strong><small>提炼资格要求、评分项、时间和风险条款</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node focus"><span class="n">6</span><strong>与企业能力对照</strong><small>使用已整理的企业投标能力与证据知识库</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node focus"><span class="n">7</span><strong>展示风险与缺失</strong><small>告诉使用者哪里满足、哪里待补、哪里待核实</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node manual"><span class="n">8</span><strong>人工补录与审核</strong><small>补资料、核证据、确认最终结果</small></div></div>
+      </div>
+    </div>
+    <p class="flow-note">流程中的两个关键控制点：①没有完整招标文件，不进入深入解析；②资料不完整时不猜测、不自动放行，必须进入人工补录或人工审核。</p>
+  </section>
+
+<section class="section">
+    <h2 class="section-title"><span class="no">04</span>目前已经完成的工作</h2>
+    <div class="grid-2">
+      <article class="panel">
+        <h4>一、招标信息与商机发现</h4>
+        <p><span class="tag ok">已形成基础能力</span></p>
+        <p>已经完成公开招标信息的搜索、筛选、整理和结构化推送基础工作。当前优先关注<span class="em">保定市内、河北省、京津冀</span>，后续可根据业务需要扩大到全国。</p>
+        <ul>
+          <li>能够把分散的公告整理成便于阅读的项目卡片。</li>
+          <li>能够保留项目来源和原文事实，便于后续追溯。</li>
+          <li>当前以人工触发为主，暂不启动定时全量推送。</li>
+        </ul>
+        <p class="muted">通俗理解：已经有了“招标信息雷达”，下一步要把雷达接入正式工作台。</p>
+      </article>
+      <article class="panel">
+        <h4>二、招标信息分解与要求提炼</h4>
+        <p><span class="tag run">已完成样例验证，正式闭环待接入</span></p>
+        <p>针对公告和完整招标文件，已经明确如何提炼项目基本情况、资格要求、评分要求、时间节点、保证金和否决投标情形等内容。</p>
+        <ul>
+          <li>由于完整招标文件需要 CA 锁，当前采用“投标专员人工上传完整文件”的方式。</li>
+          <li>农大项目已完成材料盘点，形成了 20 条需要逐项核对的要求。</li>
+          <li>已经做过文件解析、条款拆分和规则比对演练，缺失内容会标记为待补或待核实。</li>
+        </ul>
+        <p class="muted">通俗理解：已经知道“应该从厚厚的招标文件里找什么”，下一步是把这套能力装进真实上传流程。</p>
+      </article>
+      <article class="panel">
+        <h4>三、企业投标能力与证据知识库</h4>
+        <p><span class="tag run">资料已盘点整理，正式入库核验待完成</span></p>
+        <p>建议将企业资料体系命名为<span class="em">“企业投标能力与证据知识库”</span>：不仅记录企业有什么资质和人员，还记录每项能力由哪份材料证明、是否有效、谁负责核验。</p>
+        <div class="grid-3" style="margin-top:12px">
+          <div class="panel soft"><strong class="em">1,181</strong><br><span class="muted">注册建造师资料已盘点</span></div>
+          <div class="panel soft"><strong class="em">2,963</strong><br><span class="muted">技术职称人员资料已盘点</span></div>
+          <div class="panel soft"><strong class="em">2,280</strong><br><span class="muted">岗位证书人员资料已盘点</span></div>
+          <div class="panel soft"><strong class="em">844</strong><br><span class="muted">近年业绩资料已盘点</span></div>
+          <div class="panel soft"><strong class="em">24项</strong><br><span class="muted">企业资质资料已盘点</span></div>
+          <div class="panel soft"><strong class="em">扫描件</strong><br><span class="muted">已开展文字识别试验</span></div>
+        </div>
+        <p class="muted">当前状态是“资料盘点和整理已经完成一轮”，还要完成正式入库、证据核验、有效期确认和责任人确认，才能作为正式判断依据。</p>
+      </article>
+      <article class="panel">
+        <h4>四、招标要求与企业能力对比分析</h4>
+        <p><span class="tag run">判断方法已验证，真实系统接入待完成</span></p>
+        <p>已经形成逐条对比的判断方法：把招标要求和企业资质、业绩、人员、证书等资料放在一起，明确哪些条件满足、哪些资料缺失、哪些内容需要人工确认。</p>
+        <ul>
+          <li>农大项目 20 条要求已形成规则清单并完成样例重跑。</li>
+          <li>可以展示风险项、缺失项和待审核项，并给出补充资料建议。</li>
+          <li>输出的是“基于事实的商机研判建议”，不是系统替企业作出最终投标决定。</li>
+        </ul>
+        <p class="muted">通俗理解：已经有了“对照检查表”，下一步要让检查表能够随真实上传、补录和审核自动更新。</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2 class="section-title"><span class="no">05</span>农大项目 20 条核对标准</h2>
+    <p>这 20 条不是泛泛而谈的“项目画像”，而是后续系统要逐条回答的检查问题。每一条都要能回答三件事：<span class="em">招标文件原文怎么说、企业哪份资料能证明、当前结论是什么</span>。20 条按“12 条投标门槛、4 条评分重点、4 个关键动作”三组展示。</p>
+
+    <h3>第一组 · 12 条投标门槛</h3>
+    <div class="callout blue">以下 12 条属于投标前必须逐项核对的条件。资料缺失或无法确认时，只能标记为“待补”或“待核实”，不能默认满足。</div>
+    <div class="card-grid">
+      <div class="ck-card"><span class="no">01</span><h5>企业资质</h5><p>建筑工程施工总承包二级及以上，且没有资质预警或异常。</p></div>
+      <div class="ck-card"><span class="no">02</span><h5>安全许可</h5><p>具备有效的安全生产许可证。</p></div>
+      <div class="ck-card"><span class="no">03</span><h5>项目经理</h5><p>建筑工程二级及以上建造师，具备有效 B 证，且没有在建项目。</p></div>
+      <div class="ck-card"><span class="no">04</span><h5>项目经理社保</h5><p>投标截止前能够提供任意连续三个月的社保证明。</p></div>
+      <div class="ck-card"><span class="no">05</span><h5>安全人员</h5><p>至少配备两名具备有效 C 证的专职安全人员。</p></div>
+      <div class="ck-card"><span class="no">06</span><h5>技术团队</h5><p>建筑、给排水、暖通、电气四个专业均需配备人员。</p></div>
+      <div class="ck-card hot"><span class="no">07</span><h5>当前重点待补：财务材料</h5><p>需要提供 2022、2023、2024 年度审计报告。</p><p class="hot-focus">目前尚未取得完整的 2022、2023、2024 年度审计报告。该项不能根据历史中标情况推定为满足，补齐并核实前不能进入投标审批。</p></div>
+      <div class="ck-card"><span class="no">08</span><h5>信用情况</h5><p>企业和拟派项目经理均不能被列入失信被执行人。</p></div>
+      <div class="ck-card"><span class="no">09</span><h5>联合体要求</h5><p>本项目不接受联合体投标。</p></div>
+      <div class="ck-card"><span class="no">10</span><h5>投标有效期</h5><p>投标有效期必须承诺为 120 日历天。</p></div>
+      <div class="ck-card"><span class="no">11</span><h5>投标保证金</h5><p>20 万元，并在规定时间前到账。</p></div>
+      <div class="ck-card"><span class="no">12</span><h5>投标报价</h5><p>不超过最高限价，报价唯一，格式和签章符合要求。</p></div>
+      <div class="ck-card edge"><h5>报价边界说明</h5><p>系统只负责核对人工录入的报价是否超过最高限价，以及格式是否完整，不自动生成报价，不代替企业确定最终报价。</p></div>
+    </div>
+
+    <h3>第二组 · 4 条评分重点</h3>
+    <div class="callout blue">以下内容不只是判断“能不能投”，还会影响项目最终得分，需要提前准备更有竞争力的证明材料。</div>
+    <div class="card-grid c2">
+      <div class="ck-card score"><span class="no">13</span><h5>技术标</h5><p>技术标占 30%，系统协助整理结构，具体内容由专业人员审核。</p></div>
+      <div class="ck-card score"><span class="no">14</span><h5>商务与信用</h5><p>商务标占 64%，信用占 6%，报价由人工确定和录入。</p></div>
+      <div class="ck-card score"><span class="no">15</span><h5>企业类似业绩</h5><p>至少准备一项符合时间、面积和工程类别要求的企业业绩。</p><div class="ck-tags"><span class="tag ok">时间符合</span><span class="tag ok">面积符合</span><span class="tag ok">工程类型符合</span></div></div>
+      <div class="ck-card score"><span class="no">16</span><h5>项目经理业绩</h5><p>至少准备一项符合要求，并能证明项目经理身份的类似业绩。</p><div class="ck-tags"><span class="tag ok">时间符合</span><span class="tag ok">面积符合</span><span class="tag ok">工程类型符合</span></div></div>
+    </div>
+    <div class="callout">只有项目名称相似还不够，必须同时核对时间、建筑面积、工程类型以及中标通知书、合同、竣工验收材料等证明文件。</div>
+
+    <h3>第三组 · 4 个关键投标动作</h3>
+    <div class="action-track">
+      <div class="action-step"><span class="a-no">第一步</span><strong>获取文件</strong><small>2025年9月30日至10月13日<br>完成招标文件获取</small></div>
+      <div class="action-arrow">→</div>
+      <div class="action-step"><span class="a-no">第二步</span><strong>保证金到账</strong><small>2025年10月30日 09:00 前<br>20 万元投标保证金到账</small></div>
+      <div class="action-arrow">→</div>
+      <div class="action-step"><span class="a-no">第三步</span><strong>递交文件</strong><small>2025年10月30日 09:00 前<br>完成投标文件递交</small></div>
+      <div class="action-arrow">→</div>
+      <div class="action-step"><span class="a-no">第四步</span><strong>开标解密</strong><small>开标规定时间内<br>完成开标及文件解密</small></div>
+    </div>
+
+    <p class="ck-summary">农大项目不是简单看一张资质证书，而是对企业条件、人员配置、财务信用、类似业绩、报价响应和关键时间共 20 项内容逐一核对。</p>
+  </section>
+
+<section class="section">
+    <h2 class="section-title"><span class="no">06</span>招标文件解析与条款拆分</h2>
+    <p>面对几百页的招标文件，系统不是简单地“读一遍后给一句总结”，而是按固定规则把文件拆成一张张可检查的清单，保证后面每一项都能找到依据。</p>
+    <div class="flow-wrap">
+      <div class="flow" aria-label="招标文件解析逻辑">
+        <div class="flow-step"><div class="flow-node manual"><span class="n">1</span><strong>完整招标文件</strong><small>投标专员上传 PDF/Word 等文件</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node focus"><span class="n">2</span><strong>判断文件类型</strong><small>文字版、扫描件、加密固化件分别处理</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node focus"><span class="n">3</span><strong>读取文字</strong><small>直接读取或先做扫描件文字识别</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node focus"><span class="n">4</span><strong>AI 提炼条款</strong><small>找项目、资格、评分、时间和风险</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node focus"><span class="n">5</span><strong>拆成 20 条要求</strong><small>每条绑定原文、证据和处理方式</small></div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-node manual"><span class="n">6</span><strong>人工确认</strong><small>确认后才进入企业能力对照</small></div></div>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="panel soft"><h4>第一步：先确定文件身份</h4><p>公告用于建立项目基本信息；完整招标文件用于提炼资格、评分和投标动作。没有完整招标文件，不开始深入解析和比对。</p></div>
+      <div class="panel soft"><h4>第二步：按文件类型处理</h4><p>文字版 PDF 和 Word 直接读取；扫描件先做文字识别；加密固化文件（如 .gef、.etb）不破解，转人工处理。</p></div>
+      <div class="panel soft"><h4>第三步：按同一项目管理版本</h4><p>招标文件、补遗和澄清都挂在同一个项目下。新文件不覆盖旧文件，若要求发生变化，原来的比对结果自动标记为需要重新确认。</p></div>
+      <div class="panel soft"><h4>第四步：每个字段必须能追溯</h4><p>项目名称、限价、保证金、每一条资格和评分要求，都要保留条款位置、原文摘录、来源和可信程度。</p></div>
+      <div class="panel soft"><h4>第五步：一条要求拆成一条记录</h4><p>把“资质、人员、时间、证据、失败后果”拆开登记；有“并且/或者”时拆成清楚的组合关系，不能把多个要求揉成一句。</p></div>
+      <div class="panel soft"><h4>第六步：企业和项目经理分开核对</h4><p>企业类似业绩和项目经理类似业绩分别登记；企业有业绩，不代表项目经理自动满足，人员与业绩必须一一对应。</p></div>
+      <div class="panel soft"><h4>第七步：评分项分两种处理</h4><p>有明确数字和公式的客观评分项，逐项提取并按证据核对；施工组织设计等主观评分项，只整理评分结构，交人工评审。</p></div>
+      <div class="panel soft"><h4>第八步：缺失不猜测</h4><p>找不到原文、没有企业证据或识别不清楚时，统一标记为“待补、待核实或人工复核”，不自动填成“满足”。</p></div>
+    </div>
+    <div class="callout blue"><strong>条款拆分的最终产物：</strong>不是一段长摘要，而是“20 条要求清单 + 每条的原文出处 + 所需企业证据 + 当前状态 + 下一步动作”。</div>
+  </section>
+
+  <section class="section">
+    <h2 class="section-title"><span class="no">07</span>目前已经完成的 AI 相关工作</h2>
+    <p class="muted">AI 负责从复杂材料中找信息、做整理和提示；固定规则负责逐条核对；人工负责确认和最终决策。</p>
+    <div class="grid-3">
+      <div class="panel"><h4>发现商机</h4><p>从公开招标信息中筛选并推送重点项目。</p></div>
+      <div class="panel"><h4>读懂文件</h4><p>从长篇招标文件中提炼资格、评分、时限和风险要求。</p></div>
+      <div class="panel"><h4>拆解要求</h4><p>将分散条款整理成可以逐项核对的标准清单。</p></div>
+      <div class="panel"><h4>整理资料</h4><p>从企业资料和扫描文件中整理资质、人员、业绩及证明材料。</p></div>
+      <div class="panel"><h4>比对风险</h4><p>自动提示已满足、待补、待核实和明确风险事项。</p></div>
+      <div class="panel"><h4>辅助研判</h4><p>为商机筛选、资料补充和人工审核提供参考依据。</p></div>
+    </div>
+    <div class="callout blue">目前上述工作已经完成规则梳理、样例处理和离线演练，正在向真实数据贯通和正式业务应用推进；AI 提供辅助，不代替企业作出投标、报价和审批决定。</div>
+  </section>
+
+<section class="section">
+    <h2 class="section-title"><span class="no">08</span>距离目标还有什么</h2>
+    <div class="distance">
+      <div class="side have">
+        <h3>已经具备的基础</h3>
+        <ul class="checklist">
+          <li class="done">公开招标信息搜索与结构化整理思路已经形成。</li>
+          <li class="done">完整招标文件由人工上传的现实流程已经确定。</li>
+          <li class="done">招标要求、评分项和风险项的整理方法已经形成。</li>
+          <li class="done">企业人员、资质、业绩资料已经完成一轮盘点。</li>
+          <li class="done">农大 20 条规则和匹配判断已经有样例依据。</li>
+          <li class="done">运行基础和可点击原型已经准备好。</li>
+        </ul>
+      </div>
+      <div class="side need">
+        <h3>还需要补齐的关键环节</h3>
+        <ul class="checklist">
+          <li class="wait">把资料真正放进一个可持续使用的统一资料库。</li>
+          <li class="wait">把“搜索—上传—解析—对照—补录—审核”串成一条真实流程。</li>
+          <li class="wait">让页面展示真实数据，而不只是样板数据。</li>
+          <li class="wait">确认企业资料责任人、审批人和评分规则口径。</li>
+          <li class="wait">补齐农大当前缺少的财务审计材料等证据。</li>
+          <li class="wait">完成一次由客户人员参与的农大完整演示验收。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout red"><strong>农大当前特别需要说明的一点：</strong>财务审计材料目前仍属于待补证据。因此系统即使看到该项目历史上已经中标，也不能直接把缺失材料当成“已满足”；正确做法是标记待补、暂不进入审批。</div>
+  </section>
+
+<section class="section">
+    <h2 class="section-title"><span class="no">09</span>需要客户确认的事项</h2>
+    <div class="grid-2">
+      <div class="panel soft"><h4>业务口径</h4><ul><li>什么条件属于必须满足，什么条件属于评分项。</li><li>什么情况下可以进入负责人审核。</li><li>项目经理、资质、业绩等资料由谁负责确认。</li></ul></div>
+      <div class="panel soft"><h4>使用口径</h4><ul><li>第一阶段优先覆盖哪些招标来源和区域。</li><li>农大项目哪些文件可以作为演示资料使用。</li><li>正式使用时哪些人员可以查看、补录和审核。</li></ul></div>
+      <div class="panel soft"><h4>资料口径</h4><ul><li>财务审计、银行资信、B 证等待补材料的提供安排。</li><li>企业资料更新频率和失效后的处理方式。</li><li>扫描件、个人信息和内部资料的使用边界。</li></ul></div>
+      <div class="panel soft"><h4>第二阶段边界</h4><ul><li>投标书撰写希望优先覆盖哪些章节。</li><li>哪些内容只做素材整理，哪些内容需要人工编写。</li><li>最终签字、盖章、报价和投标提交仍由谁负责。</li></ul></div>
+    </div>
+  </section>
+
+<section class="section">
+    <h2 class="section-title"><span class="no">10</span>汇报结语</h2>
+    <p class="lead">项目当前已经完成从“概念”到“可演示流程”的关键跨越，下一步重点不是继续堆叠页面，而是把真实招标文件、真实企业资料和真实审核人员接入同一条流程。</p>
+    <div class="callout blue"><strong>阶段性目标：</strong>先让农大项目完整走通第一阶段 Demo，做到“信息来源清楚、招标要求清楚、企业能力清楚、风险缺口清楚、人工审核清楚”；在此基础上，再稳妥进入第二阶段投标书撰写辅助。</div>
+    <p class="muted">本汇报依据截至 2026 年 8 月 31 日的项目资料整理。所有“待补、待核实、尚未接入”的内容均按实际状态保留。</p>
+  </section>
+
+<div class="footer">某建设集团投标智能体项目 · 客户汇报材料 · 2026年8月31日</div></main>
+</body>
+</html>
