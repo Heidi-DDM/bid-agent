@@ -21,49 +21,79 @@
         </div>
       </div>
 
-      <!-- 新建任务表单（模拟） -->
-      <section class="card">
-        <h2>选择深入的招标项目并上传完整文件</h2>
-        <p class="sub">结构化推送只用于浏览公告事实；点击进入本页后，必须人工上传完整招标文件，系统才开始解析和后续自动匹配（对应项目 ND-2025）。</p>
-        <div class="form-grid" style="margin-top:14px">
-          <div class="form-item full">
-            <label>项目名称 <span class="req">*</span></label>
-            <input type="text" id="f-name" value="河北农业大学东校区研究生宿舍建设项目施工">
+      <!-- 项目上下文：来自人工选择（§3.2.1，不再绑定固定 ND-2025） -->
+      <section class="card" id="context-card">
+        <h2>选择深入的项目并上传完整文件</h2>
+        <div id="project-context"><div class="hint">解析项目上下文…</div></div>
+        <div id="no-project" style="display:none">
+          <div class="notice warn">
+            <b>尚未选择项目</b>：本页需要来自「搜索与推送」页人工选择（候选卡“选择深入”）的
+            <code>project_id</code>。请先返回搜索结果选择一条公告候选，确认建档后再回到这里上传完整招标文件。
           </div>
-          <div class="form-item full">
-            <label>公告来源 URL <span class="req">*</span></label>
-            <input type="url" id="f-url" value="https://ggzy.hebei.gov.cn/（演示：河北省公共资源交易服务平台公告页）">
-          </div>
-          <div class="form-item full">
-            <label>完整招标文件上传（docx / pdf） <span class="req">*</span></label>
-            <div class="dropzone" id="dropzone">
-              <div class="big" id="dz-text">点击或拖拽上传招标文件</div>
-              <div class="hint">农大演示：招标文件.pdf（476 页，原文 sha256 指纹登记 · raw 不可变）；不上传完整文件不进入匹配。文件上传走真实 API（multipart → POST /intake/tender-document）。</div>
-            </div>
-            <input type="file" id="file-input" accept=".pdf,.docx" style="display:none">
-          </div>
-          <div class="form-item full">
-            <label>公告正文（结构化推送已自动带入，只读）</label>
-            <textarea id="f-body" placeholder="演示项目公告事实已结构化入库，招标文件上传后开始解析…"></textarea>
-          </div>
+          <a class="btn" href="index.html">返回搜索结果选择项目</a>
         </div>
+      </section>
+
+      <!-- 公告自动详情（2026-09-09：选择深入后，import 详情自动抽取的初审字段展示；
+           资质/人员/信用/金额/地区/工期/标段/质量，有则显示、无则隐藏） -->
+      <section class="card" id="detail-panel" style="display:none">
+        <div class="card-title-row">
+          <h2>公告自动详情</h2>
+          <span class="badge info">详情自动抓取 + 初筛抽取</span>
+        </div>
+        <div id="detail-body" class="hint">加载详情…</div>
+      </section>
+
+      <!-- 公告原文视图（P1 溯源定位，docs/10 §5 P1-5）：按 quote/start/end 高亮；
+           hash 不一致或偏移失效走折叠重定位兜底，仍失败则明示"回原页核实"，不猜测定位 -->
+      <div id="source-modal" class="source-modal" style="display:none">
+        <div class="source-modal-box">
+          <div class="source-modal-head">
+            <b>公告原文</b>
+            <span id="source-modal-meta" class="hint"></span>
+            <button type="button" class="btn ghost" id="source-modal-close">关闭</button>
+          </div>
+          <div id="source-modal-text" class="source-modal-text"></div>
+        </div>
+      </div>
+
+      <!-- 上传完整招标文件（原生控件 + 可见按钮/拖放区，§3.2.2） -->
+      <section class="card" id="upload-card" style="display:none">
+        <div class="card-title-row">
+          <h2>上传完整招标文件</h2>
+          <span class="badge info">.pdf / .docx</span>
+        </div>
+        <div class="notice info" style="margin-top:0">
+          <b>格式约定</b>：仅支持 <code>.pdf</code>、<code>.docx</code>；
+          加密固化格式 <code>.gef/.etb</code> 不支持，且系统不会绕过加密保护；空文件、伪装后缀（内容魔数与扩展名不符）与超过 100 MB 的文件都会被拒绝。
+        </div>
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择招标文件">
+          <div class="big" id="dz-text">点击选择文件，或将文件拖拽到此处</div>
+          <div class="hint">也可点下方「选择文件…」按钮；选择后需点击「上传并开始解析」才真正上传。</div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;align-items:center">
+          <input type="file" id="file-input" accept=".pdf,.docx" class="native-file">
+          <button type="button" class="btn sm ghost" id="btn-pick">选择文件…</button>
+          <span id="file-info" class="hint"></span>
+        </div>
+        <div id="file-error" style="margin-top:8px"></div>
         <div style="display:flex;gap:10px;margin-top:14px">
-          <button class="btn" id="btn-parse">上传并开始解析</button>
-          <a class="btn ghost" href="index.html">返回结构化推送</a>
+          <button class="btn" id="btn-parse" disabled>上传并开始解析</button>
+          <a class="btn ghost" href="index.html">返回搜索结果</a>
         </div>
         <div id="api-error" style="display:none"></div>
         <div id="parse-progress" style="margin-top:14px"></div>
       </section>
 
-      <!-- 原文与解析状态（真实项目材料） -->
-      <section class="card" id="raw-panel">
+      <!-- 原文与解析状态（内部编码与哈希在审计信息中展示，§3.3 折叠） -->
+      <section class="card" id="raw-panel" style="display:none">
         <div class="card-title-row">
-          <h2>原文与解析状态（项目 <span id="proj-id">ND-2025</span>）</h2>
+          <h2>原文与解析状态（项目 <span id="proj-id">—</span>）</h2>
           <span class="badge" id="parse-badge">加载中…</span>
         </div>
         <table class="tbl">
           <thead>
-            <tr><th>材料</th><th>版本</th><th>解析状态</th><th>原文指纹</th><th>操作</th></tr>
+            <tr><th>材料</th><th>版本</th><th>解析状态</th><th>原文指纹（审计）</th><th>操作</th></tr>
           </thead>
           <tbody id="raw-rows"><tr><td colspan="5" class="hint">加载中…</td></tr></tbody>
         </table>
@@ -95,58 +125,387 @@
   <script>
     initPage("import.html", "import");
 
-    /* ---- R012：真实文件上传 → 解析任务（job 轮询） ---- */
+    /* ============================================================
+       §3.2（09-优化方案）：项目上下文 + 原生文件上传
+       - project_id/candidate_id 从 URL 参数进入（不再绑定固定 ND-2025）
+       - 原生 input[type=file] + 可见按钮 + 拖放区
+       - 选择取消/格式/超限/空文件/网络失败/401/403 独立提示
+       - 每次点击上传生成新的 Idempotency-Key（同文件同项目同用户才复用）
+       - 解析完成后跳「解析结果」而非直接进入人工补录
+       ============================================================ */
+
+    const params = new URLSearchParams(window.location.search);
+    let projectId = (params.get("project_id") || "").trim();
+    let candidateId = (params.get("candidate_id") || "").trim();
+
     const progress = document.getElementById("parse-progress");
     const dropzone = document.getElementById("dropzone");
     const fileInput = document.getElementById("file-input");
+    const btnParse = document.getElementById("btn-parse");
+    const btnPick = document.getElementById("btn-pick");
     let selectedFile = null;
+    let pendingUploadKey = "";      // 当前文件已登记幂等键（上传成功后作废）
 
-    dropzone.addEventListener("click", () => fileInput.click());
-    fileInput.addEventListener("change", () => {
-      selectedFile = fileInput.files[0] || null;
-      if (selectedFile) {
-        document.getElementById("dz-text").textContent =
-          `已选择：${selectedFile.name}（${(selectedFile.size / 1024 / 1024).toFixed(1)} MB）`;
-        dropzone.classList.add("has-file");
+    const TENDER_MAX_MB = 100;
+    const TENDER_SUFFIXES = [".pdf", ".docx"];
+
+    /* ---------- 项目上下文（§3.2.1：未选择时禁用上传，先返回搜索页选择） ---------- */
+    /* E1（2026-09-10）：URL 未携带 candidate_id 时按 project_id 反查候选——
+       「继续项目」从历史/书签进入也能展示公告自动详情卡与「来源候选」上下文 */
+    async function resolveCandidateId() {
+      if (candidateId || !projectId) return;
+      try {
+        const r = await apiGet(`/intake/announcement/candidates/by-project/${encodeURIComponent(projectId)}`);
+        if (r && r.candidate && r.candidate.candidate_id) {
+          candidateId = r.candidate.candidate_id;
+        }
+      } catch (_) {
+        /* 无关联候选（如手工建档项目）——保持无详情卡，不打断上传流程 */
       }
+    }
+
+    async function loadProjectContext() {
+      const box = document.getElementById("project-context");
+      const noProject = document.getElementById("no-project");
+      if (!projectId) {
+        box.innerHTML = "";
+        noProject.style.display = "block";
+        document.getElementById("upload-card").style.display = "none";
+        document.getElementById("raw-panel").style.display = "none";
+        return;
+      }
+      await resolveCandidateId();
+      try {
+        const p = await apiGet(`/projects/${projectId}`);
+        noProject.style.display = "none";
+        document.getElementById("upload-card").style.display = "block";
+        const isParsed = (p.materials || []).some((m) => m.material_type === "tender_document" && m.parse_status === "parsed");
+        box.innerHTML = `
+          <div class="pc-main" style="border:1px solid var(--line);border-radius:10px;padding:12px">
+            <div class="pc-title">${p.project_name || projectId} ${apiBadge(isParsed ? "ok" : "info", isParsed ? "招标文件已解析" : "待上传完整招标文件")}</div>
+            <div class="pc-meta">
+              <span><b>项目</b>：<code>${p.project_id}</code></span>
+              ${candidateId ? `<span><b>来源候选</b>：<code>${candidateId}</code></span>` : ""}
+              <span><b>公告</b>：${p.announcement ? p.announcement.title || "已入库" : "—"}</span>
+              <span><b>解析状态</b>：${apiStatusBadge(p.parse_status || "pending")}</span>
+            </div>
+          </div>`;
+        document.getElementById("raw-panel").style.display = "block";
+        document.getElementById("proj-id").textContent = p.project_id;
+        loadMaterials();
+        renderDetail(candidateId);
+      } catch (err) {
+        if (err.status === 401) {
+          noProject.style.display = "none";
+          box.innerHTML = `<div class="notice warn"><b>登录已失效或未登录</b>：请使用右上角账号登录（投标专员 toubiao / 经营负责人 jingying，密码 123456）后重试。</div>`;
+        } else if (err.status === 403) {
+          noProject.style.display = "none";
+          box.innerHTML = `<div class="notice error"><b>权限不足</b>：当前角色 ${apiRoleLabel()} 无权查看或上传本项目。</div>`;
+        } else if (err.status === 404) {
+          noProject.style.display = "block";
+          box.innerHTML = "";
+        } else {
+          noProject.style.display = "none";
+          box.innerHTML = `<div class="notice error"><b>加载项目失败</b>：${err.message}（若 API 未启动，请确认 127.0.0.1:8000 的 runtime 已运行）。</div>`;
+        }
+      }
+    }
+
+    /* ---------- 公告自动详情（2026-09-09）：candidate.status → detail_summary 渲染 ---------- */
+    // 文本转义（防注入，公告原文含任意字符）
+    function escapeHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+    // 详情字段标签（detail_summary 的 field_key → 中文），value 为完整条款谓语
+    // （2026-09-10 抽取层升级：句界对齐不再截断、新增 采购人/业绩要求/建设规模），missing 则跳过
+    // （2026-09-11 P1/P2：字段附 quote/start/end 可"在原文中定位"；sme_dedicated 新增）
+    const DETAIL_LABELS = {
+      region: "地区", project_type: "项目类型", budget_amount: "预算/总投资", ceiling_price: "最高投标限价",
+      equip_amount: "设备购置费限价", work_amount: "工程费限价", duration: "计划工期",
+      quality: "质量标准", section_count: "标段数", qualification: "资质要求",
+      performance: "业绩要求", scale: "建设规模", purchaser: "采购人/招标人",
+      personnel: "人员要求", pm_registered: "项目经理", pm_b_cert: "安全B证",
+      safety_officer: "专职安全员", joint_venture: "联合体", sme_dedicated: "面向中小企业",
+      credit_ok: "信用要求",
+      deadline_signup: "报名截止", deadline_bid: "投标截止",
+    };
+    const DETAIL_ORDER = ["region", "project_type", "purchaser", "budget_amount", "ceiling_price",
+      "equip_amount", "work_amount", "scale", "duration", "quality", "section_count",
+      "qualification", "performance", "pm_registered", "pm_b_cert", "safety_officer",
+      "joint_venture", "sme_dedicated", "credit_ok", "deadline_signup", "deadline_bid"];
+    function renderDetail(candidateId) {
+      const panel = document.getElementById("detail-panel");
+      const body = document.getElementById("detail-body");
+      if (!candidateId) { panel.style.display = "none"; return; }
+      (async () => {
+        try {
+          const st = await apiGet(`/intake/announcement/candidates/${candidateId}`);
+          const cand = st.candidate || {};
+          const ds = cand.detail_summary || null;
+          if (!ds || Object.keys(ds).length === 0) {
+            body.innerHTML = `<div class="notice info">公告详情已抓取，但未抽取出可展示的初审字段（正文未载明，不编造）。</div>`;
+            panel.style.display = "block";
+            return;
+          }
+          const keys = DETAIL_ORDER.filter((k) => ds[k]).concat(
+            Object.keys(ds).filter((k) => !DETAIL_ORDER.includes(k)));
+          const rows = keys.map((k) => {
+            const f = ds[k] || {};
+            if (f.missing && !f.review) return "";   // 缺失字段隐藏（quote 不逐字转复核的除外）
+            if (!f.value && !f.review) return "";
+            const label = DETAIL_LABELS[k] || k;
+            // 原文摘录折叠展示（条款级、句界对齐）：核实用，不与字段值混排
+            const src = f.assertion
+              ? `<details class="src-detail"><summary>原文摘录</summary><div>${escapeHtml(f.assertion)}</div></details>`
+              : "";
+            // P1：带偏移的字段提供"在原文中定位"（高亮跳转）；旧数据无偏移不显示按钮
+            const loc = (typeof f.start === "number" && typeof f.end === "number" && f.quote)
+              ? ` <button type="button" class="btn ghost locate-btn" data-key="${k}">在原文中定位</button>`
+              : "";
+            const rev = f.review === "quote_not_verbatim"
+              ? ` <span class="badge warn" title="摘录未通过逐字校验，已转人工复核">待人工复核</span>` : "";
+            const prov = f.clause === "标题" ? ` <span class="hint">（标题）</span>` : "";
+            return `<tr><td class="nowrap"><b>${label}</b></td><td style="word-break:break-word;min-width:320px">${escapeHtml(f.value)}${prov}${rev}${src}${loc}</td></tr>`;
+          }).filter(Boolean).join("");
+          if (!rows) {
+            body.innerHTML = `<div class="notice info">详情初筛抽取完成，但正文未载明可初审字段。（仅显示有内容的字段）</div>`;
+          } else {
+            body.innerHTML = `<div style="max-width:100%;overflow-x:auto"><table class="tbl">${rows}</table></div>`;
+            body.querySelectorAll(".locate-btn").forEach((b) =>
+              b.addEventListener("click", () => openSourceAt(candidateId, ds[b.dataset.key] || {})));
+          }
+          panel.style.display = "block";
+        } catch (err) {
+          body.innerHTML = `<div class="notice warn">公告详情加载失败：${escapeHtml(err.message)}</div>`;
+          panel.style.display = "block";
+        }
+      })();
+    }
+
+    /* ---------- 原文定位（P1，docs/10 §5 P1-5）：quote/start/end + content_hash ----------
+       原则：宁可不高亮，不许错高亮。偏移按 hash 校验且逐字比对通过才高亮；否则折叠重定位
+       （与后端 _collapse_with_map 同口径，构造性精确）；仍失败明示回原页核实。 */
+    let sourceTextCache = null;   // { candidateId, text, content_hash, version }
+    function foldWithOffsets(text) {
+      const folded = [], offsets = [];
+      let i = 0; const n = text.length;
+      while (i < n && /\s/.test(text[i])) i++;
+      let tail = n;
+      while (tail > i && /\s/.test(text[tail - 1])) tail--;
+      while (i < tail) {
+        if (/\s/.test(text[i])) {
+          const j0 = i;
+          while (i < tail && /\s/.test(text[i])) i++;
+          folded.push(" "); offsets.push(j0);
+        } else { folded.push(text[i]); offsets.push(i); i++; }
+      }
+      return { folded: folded.join(""), offsets };
+    }
+    function relocateQuote(text, quote) {
+      const i = text.indexOf(quote);
+      if (i >= 0) return [i, i + quote.length];
+      const { folded, offsets } = foldWithOffsets(text);
+      const fq = String(quote).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+      const j = folded.indexOf(fq);
+      if (j < 0) return null;
+      const e = j + fq.length;
+      return [offsets[j], offsets[Math.min(e, offsets.length) - 1] + 1];
+    }
+    async function openSourceAt(candidateId, field) {
+      const modal = document.getElementById("source-modal");
+      const box = document.getElementById("source-modal-text");
+      const meta = document.getElementById("source-modal-meta");
+      try {
+        if (!sourceTextCache || sourceTextCache.candidateId !== candidateId) {
+          const r = await apiGet(`/intake/announcement/candidates/${candidateId}/text`);
+          sourceTextCache = {
+            candidateId, text: r.text || "", contentHash: r.content_hash, version: r.version,
+          };
+        }
+        const src = sourceTextCache;
+        const hashOk = !field.content_hash || field.content_hash === src.contentHash;
+        let span = null, note;
+        if (hashOk && typeof field.start === "number" && typeof field.end === "number"
+            && src.text.slice(field.start, field.end) === field.quote) {
+          span = [field.start, field.end];
+          note = `定位成功 · v${src.version} · 逐字校验通过`;
+        } else {
+          span = field.quote ? relocateQuote(src.text, field.quote) : null;
+          note = hashOk ? "偏移未通过逐字比对，已按摘录重定位"
+                        : `原文版本已变化（detail 为旧版抽取，当前 v${src.version}），已按摘录重定位`;
+        }
+        box.innerHTML = "";
+        const mk = (chunk, hl) => {
+          const el = document.createElement(hl ? "mark" : "span");
+          el.textContent = chunk;
+          return el;
+        };
+        if (span) {
+          box.appendChild(mk(src.text.slice(0, span[0]), false));
+          box.appendChild(mk(src.text.slice(span[0], span[1]), true));
+          box.appendChild(mk(src.text.slice(span[1]), false));
+          requestAnimationFrame(() => {
+            const m = box.querySelector("mark");
+            if (m) m.scrollIntoView({ block: "center" });
+          });
+        } else {
+          box.textContent = src.text;
+          note = "定位失败：摘录在当前原文中未找到——请回公告原页核实（不猜测定位）";
+        }
+        meta.textContent = note;
+        modal.style.display = "flex";
+      } catch (err) {
+        alert(`原文视图打开失败：${err.message}（候选未导入或服务未启动）`);
+      }
+    }
+    document.getElementById("source-modal-close").addEventListener("click", () => {
+      document.getElementById("source-modal").style.display = "none";
+    });
+    document.getElementById("source-modal").addEventListener("click", (e) => {
+      if (e.target.id === "source-modal") e.currentTarget.style.display = "none";
     });
 
+    /* ---------- 文件选择：独立的状态提示（§3.2.2） ---------- */
+    function resetFileSelection() {
+      selectedFile = null;
+      pendingUploadKey = "";
+      btnParse.disabled = true;
+      document.getElementById("file-info").textContent = "";
+      document.getElementById("file-error").innerHTML = "";
+      document.getElementById("dz-text").textContent = "点击选择文件，或将文件拖拽到此处";
+      dropzone.classList.remove("has-file");
+    }
+
+    function describeFile(f) {
+      const sizeMB = f.size / 1024 / 1024;
+      const mtime = new Date(f.lastModified).toLocaleString("zh-CN", { hour12: false });
+      return { name: f.name, sizeMB, mtime };
+    }
+
+    function setFileError(html) {
+      document.getElementById("file-error").innerHTML = `<div class="notice error">${html}</div>`;
+    }
+
+    function acceptFile(f) {
+      document.getElementById("file-error").innerHTML = "";
+      if (!f) { resetFileSelection(); return; }
+      const { name, sizeMB, mtime } = describeFile(f);
+      const suffix = (name.split(".").pop() || "").toLowerCase();
+      const dotSuffix = "." + suffix;
+      // 明确拒绝加密固化格式与 Excel（招标文件入口只收 pdf/docx，§3.2.3/§3.5）
+      if (dotSuffix === ".gef" || dotSuffix === ".etb") {
+        resetFileSelection();
+        setFileError(`<b>不支持 ${dotSuffix} 加密固化格式</b>：招标文件入口仅接受 .pdf/.docx，且系统不会绕过加密保护（F005 §约束）。如为补录证据/企业台账，请到「人工补录」页走企业资料受控导入。`);
+        return;
+      }
+      if (TENDER_SUFFIXES.indexOf(dotSuffix) === -1) {
+        resetFileSelection();
+        setFileError(`<b>格式不支持：${name}</b>——完整招标文件仅接受 ${TENDER_SUFFIXES.join(" / ")}。Excel/CSV 台账请走企业资料受控导入入口。`);
+        return;
+      }
+      if (f.size === 0) {
+        resetFileSelection();
+        setFileError(`<b>空文件</b>：${name}（0 字节）未包含任何内容，请检查后重新选择。`);
+        return;
+      }
+      if (f.size > TENDER_MAX_MB * 1024 * 1024) {
+        resetFileSelection();
+        setFileError(`<b>超过大小上限</b>：${name} 为 ${sizeMB.toFixed(1)} MB，招标文件上限 ${TENDER_MAX_MB} MB。`);
+        return;
+      }
+      selectedFile = f;
+      pendingUploadKey = `tender-${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      btnParse.disabled = false;
+      dropzone.classList.add("has-file");
+      document.getElementById("dz-text").textContent = `已选择：${name}`;
+      document.getElementById("file-info").textContent =
+        `文件名 ${name} · ${sizeMB.toFixed(2)} MB · 修改时间 ${mtime} · 状态：待上传（尚未登记到服务端）`;
+    }
+
+    // 拖放
+    dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("drag-over"); });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag-over"));
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("drag-over");
+      if (e.dataTransfer && e.dataTransfer.files.length) acceptFile(e.dataTransfer.files[0]);
+    });
+
+    dropzone.addEventListener("click", () => btnPick.click());
+    btnPick.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files[0];
+      acceptFile(f); // null（取消选择）→ 复位
+      fileInput.value = ""; // 允许再次选择同一文件（重新触发 change）
+    });
+
+    function uploadErrorHtml(err) {
+      if (err.status === 401) {
+        document.dispatchEvent(new CustomEvent("api:unauthorized"));
+        return `<b>登录已失效或未登录</b>：请使用右上角账号登录后重试（投标专员 toubiao / 经营负责人 jingying，密码 123456）。`;
+      }
+      if (err.status === 403) return `<b>权限不足</b>：当前角色无权上传本项目招标文件。`;
+      if (err.status === 415) return `<b>格式不支持</b>：${err.message}`;
+      if (err.status === 413) return `<b>文件过大</b>：${err.message}`;
+      if (err.status === 400) return `<b>请求被拒绝</b>：${err.message}`;
+      if (!err.status) return `<b>网络/跨域错误</b>：无法连接 ${apiBase()}（请确认 runtime 已启动且 CORS 放行；若 worker 未运行，上传本身不受影响，但解析任务会排队等待）。`;
+      return `<b>上传失败（HTTP ${err.status}）</b>：${err.message}`;
+    }
+
+    /* ---------- 上传并开始解析（§3.2.4：每次新幂等键） ---------- */
     document.getElementById("btn-parse").addEventListener("click", async () => {
-      const btn = document.getElementById("btn-parse");
       const errBox = document.getElementById("api-error");
       errBox.style.display = "none";
       if (!selectedFile) {
-        progress.innerHTML = `<div class="notice warn"><b>尚未选择完整招标文件</b>：请先点击上传区域选择文件（pdf/docx），未上传不启动解析和企业资料匹配。</div>`;
+        progress.innerHTML = `<div class="notice warn"><b>尚未选择完整招标文件</b>：请先选择文件（pdf/docx），“待上传”状态确认后再点击上传。</div>`;
         return;
       }
-      btn.disabled = true;
-      progress.innerHTML = `<div class="notice info"><b>正在上传并登记原文</b>（sha256 指纹 + 不可变存储）…</div>`;
+      if (!pendingUploadKey) {
+        progress.innerHTML = `<div class="notice warn">文件状态已失效，请重新选择后再上传。</div>`;
+        resetFileSelection();
+        return;
+      }
+      btnParse.disabled = true;
+      const key = pendingUploadKey;
+      progress.innerHTML = `<div class="notice info"><b>正在上传并登记原文</b>（sha256 指纹 + 不可变存储 + 魔数校验）…<br><span class="hint">幂等键：<code>${key}</code>（每次点击上传新生成；服务端按 文件哈希+项目+用户 判重）</span></div>`;
       try {
         const form = new FormData();
         form.append("file", selectedFile);
-        form.append("project_id", demoProjectId());
-        form.append("material_id", "MAT-ND-TENDER");
+        form.append("project_id", projectId);
+        form.append("material_id", `MAT-${projectId.replace(/\W/g, "")}-TENDER`);
         form.append("data_owner", apiName() || apiRole() || "demo");
         form.append("source_type", "uploaded");
         const resp = await fetch(apiBase() + "/intake/tender-document", {
           method: "POST",
-          headers: apiToken() ? { Authorization: "Bearer " + apiToken(), "Idempotency-Key": "r012-nd-tender-v1" } : { "Idempotency-Key": "r012-nd-tender-v1" },
+          headers: Object.assign(
+            { "Idempotency-Key": key },
+            apiToken() ? { Authorization: "Bearer " + apiToken() } : {}
+          ),
           body: form,
         });
-        const data = await resp.json().catch(() => ({}));
+        const text = await resp.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
         if (!resp.ok) {
           const msg = (data.error && data.error.message) || `HTTP ${resp.status}`;
-          if (resp.status === 401) { document.dispatchEvent(new CustomEvent("api:unauthorized")); }
-          throw new Error(msg + (data.request_id ? `（request_id: ${data.request_id}）` : ""));
+          const err = new Error(msg);
+          err.status = resp.status;
+          err.requestId = data.request_id || "";
+          err.data = data;
+          throw err;
         }
-        progress.innerHTML = `<div class="notice info"><b>原文已登记</b>：${data.material_id} v${data.version} · sha256 <code>${(data.content_hash || "").slice(0, 16)}</code>… · 任务 job_id <code>${data.job_id}</code> · created=${data.created}</div>`;
+        pendingUploadKey = ""; // 本文件已登记：幂等键作废，下次上传重新生成
+        progress.innerHTML = `<div class="notice info"><b>原文已登记</b>：${data.material_id} v${data.version} · created=${data.created}
+          <br><span class="hint">审计信息：sha256 <code>${(data.content_hash || "").slice(0, 16)}…</code> · job_id <code>${data.job_id || "—"}</code> · request_id <code>${data.request_id || "—"}</code></span></div>`;
         if (!data.created && !data.job_id) {
-          progress.insertAdjacentHTML("beforeend", `<div class="notice warn">同 sha256 原文已存在（幂等返回既有材料）。如需重新解析请用下方「重新解析」。</div>`);
-          btn.disabled = false;
+          progress.insertAdjacentHTML("beforeend", `<div class="notice warn">同一原文（sha256）已在此项目登记（幂等返回既有材料）。如需重新解析请用下方「重新解析」。</div>`);
+          resetFileSelection();
           loadMaterials();
           return;
         }
-        // 轮询解析任务（parse.tender_document：completed=解析完成待复核 / failed=失败可重试）
+        // 轮询解析任务
         const tick = (d) => {
           const st = d.status === "completed" ? (d.parse_status === "parsed" ? "completed(已确认)" : "completed(待人工复核)") : d.status;
           progress.innerHTML = `<div class="notice info"><b>解析任务</b>：job_id <code>${data.job_id}</code> · ${apiStatusBadge(st)}` +
@@ -154,47 +513,51 @@
         };
         const done = await apiPollJob(`/intake/${data.job_id}`, { onTick: tick, label: "解析" });
         tick(done);
-        if (done.parse_status === "parsed") {
-          progress.insertAdjacentHTML("beforeend", `<div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d">
-            <b>解析已完成并经人工复核确认</b>：系统已自动触发一次匹配。<a class="btn sm" style="margin-top:8px" href="matrix.html">查看匹配结果 →</a></div>`);
-        } else if (done.parse_status === "manual_review") {
-          progress.insertAdjacentHTML("beforeend", `<div class="notice review"><b>解析完成，进入人工复核</b>：规则/主卡候选已生成，需投标专员逐条复核确认后才写入规则集并触发匹配。<br>
-            <a class="btn sm" style="margin-top:8px" href="queue.html">前往人工复核（${demoProjectId()}）→</a></div>`);
-        }
+        // 解析完成 → 先看“解析结果”（§3.3：以招标要求为中心，不直接跳人工补录）
+        progress.insertAdjacentHTML("beforeend", `
+          <div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d;margin-top:8px">
+            <b>解析任务已到人工确认阶段</b>：请先查看系统按业务语言分组的“解析结果”（确认系统读到的招标要求是否正确），
+            再到「人工复核」逐条确认候选。复核完成后系统自动写入规则集并触发企业资料匹配。
+            <div style="margin-top:8px;display:flex;gap:8px">
+              <a class="btn sm" href="requirements.html?project_id=${encodeURIComponent(projectId)}">查看解析结果 →</a>
+              <a class="btn sm ghost" href="queue.html?project_id=${encodeURIComponent(projectId)}">前往人工复核/补录</a>
+            </div>
+          </div>`);
+        resetFileSelection();
         loadMaterials();
       } catch (err) {
         apiShowError(err);
-        progress.innerHTML = `<div class="notice error">上传/解析失败：${err.message}</div>`;
-      } finally {
-        btn.disabled = false;
+        progress.innerHTML = `<div class="notice error">上传/解析失败：${uploadErrorHtml(err)}${err.requestId ? `<br><span class="hint">request_id：<code>${err.requestId}</code></span>` : ""}</div>`;
+        btnParse.disabled = !selectedFile; // 允许修正后重试（再次点击生成新幂等键）
       }
     });
 
-    /* ---- 原文与解析状态：真实材料表 ---- */
+    /* ---------- 原文与解析状态表（§3.3：哈希/编码属审计信息） ---------- */
     async function loadMaterials() {
       const tbody = document.getElementById("raw-rows");
       const badgeEl = document.getElementById("parse-badge");
       try {
-        const p = await apiGet(`/projects/${demoProjectId()}`);
-        document.getElementById("proj-id").textContent = p.project_id;
-        badgeEl.className = "badge ok";
-        badgeEl.textContent = p.parse_status || "pending";
-        const tender = p.materials.find((m) => m.material_type === "tender_document");
-        badgeEl.textContent = tender ? (tender.parse_status || "pending") : "pending";
-        const typeName = { tender_document: "招标文件", announcement: "公告", evidence_file: "证据文件" };
+        const p = await apiGet(`/projects/${projectId}`);
+        badgeEl.className = "badge";
+        badgeEl.textContent = "loading";
+        const typeName = { tender_document: "招标文件", announcement: "公告原文", evidence_file: "证据文件" };
         tbody.innerHTML = "";
         if (!p.materials || !p.materials.length) {
+          badgeEl.textContent = "pending";
           tbody.innerHTML = `<tr><td colspan="5" class="hint">项目 ${p.project_id} 暂无材料——上传招标文件后显示（空态）。</td></tr>`;
           return;
         }
+        const tender = p.materials.find((m) => m.material_type === "tender_document");
+        badgeEl.textContent = tender ? (tender.parse_status || "pending") : "pending";
+        badgeEl.className = "badge " + (tender && tender.parse_status === "parsed" ? "ok" : tender && tender.parse_status === "manual_review" ? "review" : "info");
         p.materials.forEach((m) => {
           const tr = document.createElement("tr");
           const isTender = m.material_type === "tender_document";
           tr.innerHTML = `
             <td>${typeName[m.material_type] || m.material_type} <code>${m.material_id}</code></td>
             <td>v${m.version}</td>
-            <td>${apiStatusBadge(m.parse_status || "pending")} ${isTender && m.parse_status === "parsed" ? '<span class="hint">正文可解析</span>' : ""}</td>
-            <td class="num">sha256:${(m.content_hash || "—")}</td>
+            <td>${apiStatusBadge(m.parse_status || "pending")}${isTender && m.parse_status === "parsed" ? ' <span class="hint">正文可解析</span>' : ""}</td>
+            <td class="num">sha256:${m.content_hash || "—"}</td>
             <td>${isTender && m.parse_status !== "parsed" ? `<a href="#" class="reparse-link">重新解析</a>` : ""}</td>`;
           tbody.appendChild(tr);
           if (isTender && m.parse_status !== "parsed") {
@@ -203,9 +566,9 @@
               progress.innerHTML = `<div class="notice info">提交重新解析…</div>`;
               try {
                 const rj = await apiPost(`/intake/${m.material_id}/reparse`, {});
-                progress.innerHTML = `<div class="notice info">重新解析任务 job_id <code>${rj.job_id}</code> 已提交，轮询中…</div>`;
+                progress.innerHTML = `<div class="notice info">重新解析任务 request_id <code>${rj.request_id || "—"}</code> · job_id <code>${rj.job_id}</code> 已提交，轮询中…</div>`;
                 await apiPollJob(`/intake/${rj.job_id}`, { label: "重新解析" });
-                progress.innerHTML = `<div class="notice info">重新解析完成，请前往「人工补录」页复核候选。</div>`;
+                progress.innerHTML = `<div class="notice info">重新解析完成：<a href="requirements.html?project_id=${encodeURIComponent(projectId)}">查看解析结果 →</a></div>`;
                 loadMaterials();
               } catch (err2) { apiShowError(err2); }
             });
@@ -215,7 +578,7 @@
         tbody.innerHTML = `<tr><td colspan="5" class="hint">材料加载失败：${err.message}</td></tr>`;
       }
     }
-    loadMaterials();
+    loadProjectContext();
   </script>
 </body>
 </html>

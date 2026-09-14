@@ -252,7 +252,15 @@ textarea { resize: vertical; min-height: 76px; }
   cursor: pointer;
 }
 .dropzone:hover { border-color: var(--navy-2); background: #dde9f7; }
+.dropzone.drag-over { border-color: var(--navy); background: #dde9f7; }
 .dropzone .big { font-size: 15px; font-weight: 600; color: var(--navy); margin-bottom: 4px; }
+.dropzone.has-file { border-style: solid; border-color: #3e9e5f; background: #eefaf1; }
+
+/* 可访问的原生文件选择控件（§3.2.2：不再隐藏原生 input） */
+.native-file {
+  font-size: 13px; max-width: 320px;
+  padding: 6px 4px; color: var(--ink-2);
+}
 
 /* ---------- 证据抽屉 ---------- */
 .drawer-mask {
@@ -334,6 +342,37 @@ textarea { resize: vertical; min-height: 76px; }
 .queue-card .q-title { font-weight: 700; font-size: 14.5px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .queue-card .q-desc { font-size: 13px; color: var(--ink-2); margin-top: 3px; }
 .queue-card .q-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+
+/* ---------- 解析复核/补录（09-优化方案 §3.4） ---------- */
+.review-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.review-actions .act { font-size: 12.5px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line);
+  background: #fff; color: var(--ink-2); cursor: pointer; }
+.review-actions .act:hover { border-color: var(--navy-2); color: var(--navy); }
+.review-actions .act.on { border-color: var(--navy); background: var(--navy); color: #fff; }
+.reason-chip { font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink-2); cursor: pointer; }
+.reason-chip.on { border-color: var(--warn); background: var(--warn-bg); color: #7c4a03; }
+.audit-fold { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 8px; }
+.audit-fold summary { cursor: pointer; font-size: 12.5px; color: var(--ink-3); }
+.audit-fold .audit-code { font-size: 12px; color: var(--ink-3); word-break: break-all; margin-top: 4px;
+  display: flex; gap: 4px 16px; flex-wrap: wrap; }
+.req-card { border: 1px solid var(--line); border-radius: var(--radius); background: #fff;
+  padding: 12px 14px; margin-bottom: 10px; }
+.req-card .req-title { font-weight: 700; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.req-card .req-value { font-size: 13.5px; color: var(--navy); font-weight: 600; margin-top: 3px; }
+.req-card .req-quote { border-left: 3px solid var(--line); padding: 4px 0 4px 10px; color: var(--ink-2);
+  font-size: 12.5px; margin-top: 5px; }
+.req-card .req-meta { font-size: 12.5px; color: var(--ink-3); margin-top: 4px; display: flex; gap: 4px 14px; flex-wrap: wrap; }
+.req-card .req-foot { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.group-head { display: flex; align-items: baseline; gap: 10px; margin: 16px 0 8px; }
+.group-head h3 { margin: 0; font-size: 15px; }
+.group-head .hint { font-size: 12px; }
+.seg-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg-tab { border: 1px solid var(--line); background: #fff; color: var(--ink-2); border-radius: 999px;
+  padding: 4px 13px; font-size: 13px; cursor: pointer; }
+.seg-tab.on { border-color: var(--navy); background: var(--navy); color: #fff; }
+.issue-line { font-size: 12.5px; color: #b45309; margin-top: 3px; }
+.page-ref { font-variant-numeric: tabular-nums; }
 
 /* ---------- 审批时间线 ---------- */
 .timeline { position: relative; padding-left: 22px; }
@@ -417,6 +456,30 @@ textarea { resize: vertical; min-height: 76px; }
 .notice.danger { border-color: #f3c1c1; background: var(--danger-bg); color: #7f1d1d; }
 .notice.info { border-color: #b7d7ea; background: var(--info-bg); color: #0c4a6e; }
 
+/* ---------- 复核/补录页（09-优化方案 §3.4） ---------- */
+/* 队列待办字段上下文（B 区） */
+.queue-card .q-fields {
+  display: grid; grid-template-columns: max-content 1fr;
+  gap: 2px 14px; font-size: 12.5px; color: var(--ink-3); margin-top: 5px;
+}
+.queue-card .q-fields span { color: var(--ink-3); }
+.queue-card .q-fields b { color: var(--ink-2); font-weight: 600; word-break: break-all; }
+.queue-card .q-desc .q-quote {
+  border-left: 2px solid var(--line); padding-left: 8px; color: var(--ink-2);
+  margin-top: 4px;
+}
+
+/* 补录定向上下文卡（C 区） */
+.sup-target {
+  border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  padding: 8px 12px; font-size: 13px; line-height: 1.7;
+}
+.sup-target .k { color: var(--ink-3); margin-right: 4px; }
+.sup-target code { word-break: break-all; }
+
+/* 空态 */
+.notice.ok { border-color: #b7e4c0; background: #f0fdf4; color: #14532d; }
+
 /* 响应式 */
 @media (max-width: 900px) {
   .layout { flex-direction: column; padding: 14px; }
@@ -425,3 +488,33 @@ textarea { resize: vertical; min-height: 76px; }
   .hero-entry { flex-direction: column; align-items: flex-start; }
   .topbar nav { display: none; }
 }
+
+/* 公告自动详情 · 原文摘录折叠（2026-09-10：条款级摘录核实用，不与字段值混排） */
+.src-detail { margin-top: 4px; }
+.src-detail summary { cursor: pointer; font-size: 12.5px; color: var(--ink-3); user-select: none; }
+.src-detail > div {
+  margin-top: 4px; padding: 6px 10px; border-left: 3px solid var(--line);
+  background: var(--bg-2, #f7f8fa); color: var(--ink-2); font-size: 12.5px;
+  line-height: 1.7; word-break: break-word; border-radius: 0 6px 6px 0;
+}
+
+/* 公告原文视图 · 溯源定位（2026-09-11 P1：按 quote/start/end 高亮，失败不硬定位） */
+.locate-btn { padding: 1px 8px; font-size: 12px; margin-top: 4px; }
+.source-modal {
+  position: fixed; inset: 0; z-index: 60; background: rgba(15, 23, 42, .45);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.source-modal-box {
+  background: #fff; border-radius: 10px; width: min(960px, 92vw); max-height: 84vh;
+  display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+}
+.source-modal-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.source-modal-head .hint { flex: 1; font-size: 12.5px; }
+.source-modal-text {
+  overflow: auto; padding: 16px; white-space: pre-wrap; word-break: break-word;
+  font-size: 13px; line-height: 1.85; color: var(--ink-2);
+}
+.source-modal-text mark { background: #fde68a; padding: 0 2px; border-radius: 3px; }

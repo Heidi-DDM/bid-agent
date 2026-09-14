@@ -1,0 +1,138 @@
+{
+  "case_id": "consortium_polarity_matrix",
+  "title": "x施工招标公告",
+  "source": {
+    "note": "各平台联合体写法枚举：表单（是/否/0/1）、（是/否）前缀、勾选、叙述、值式、表格折叠；两列表头分离判不出→不产出"
+  },
+  "variants": [
+    {
+      "body": "是否接受联合体投标：是",
+      "expect": {
+        "joint_venture": {
+          "value": "接受联合体投标",
+          "enum": true
+        }
+      },
+      "body_sha256": "50cf52ccc51a10edefb05e4c11703da920fa74c2fba1ea260e0b3f68d053e270"
+    },
+    {
+      "body": "是否接受联合体投标：否",
+      "expect": {
+        "joint_venture": {
+          "value": "不接受联合体投标",
+          "enum": false
+        }
+      },
+      "body_sha256": "8db2d61d249f7d4a74888c0b28583a212a6abe49744553527085e8097d470706"
+    },
+    {
+      "body": "本项目（是/否）接受联合体投标： 0",
+      "expect": {
+        "joint_venture": {
+          "value": "不接受联合体投标",
+          "enum": false
+        }
+      },
+      "body_sha256": "c4eab5e8caf7386202daf468990a9a444e92ae1a6d6c1e64decd47b8855d52d3"
+    },
+    {
+      "body": "本项目（是/否）接受联合体投标： 1",
+      "expect": {
+        "joint_venture": {
+          "value": "接受联合体投标",
+          "enum": true
+        }
+      },
+      "body_sha256": "be7cbe337bd91ea8c12bd730e291d9aadae23e271b0001bbf0ad1b550b48b307"
+    },
+    {
+      "body": "本次招标 ☑不接受联合体投标。",
+      "expect": {
+        "joint_venture": {
+          "value": "不接受联合体投标",
+          "enum": false
+        }
+      },
+      "body_sha256": "7482c1b3b29da99699472b4728315f98d7ac46964e9a242f4e9546346fa529ab"
+    },
+    {
+      "body": "3.3 本次招标（□接受/☑不接受）联合体投标。",
+      "expect": {
+        "joint_venture": {
+          "value": "不接受联合体投标",
+          "enum": false
+        }
+      },
+      "body_sha256": "18c0637b083fdf3904ffc1261286a41ff9d5a74c37793092fbc438e130e0e951"
+    },
+    {
+      "body": "3.3 本次招标（☑接受/□不接受）联合体投标。",
+      "expect": {
+        "joint_venture": {
+          "value": "接受联合体投标",
+          "enum": true
+        }
+      },
+      "body_sha256": "5a3d1f7a58d366bb0386df9c11eec63764c16db44bc74f4323899f1c1c28bcc7"
+    },
+    {
+      "body": "本项目接受联合体投标。",
+      "expect": {
+        "joint_venture": {
+          "value": "接受联合体投标",
+          "enum": true
+        }
+      },
+      "body_sha256": "2e8198198d56f51a5f920063badd2c0e341ce2472f18ec128e185ccffdc98658"
+    },
+    {
+      "body": "本次招标不接受联合体投标。",
+      "expect": {
+        "joint_venture": {
+          "value": "不接受联合体投标",
+          "enum": false
+        }
+      },
+      "body_sha256": "28f8090e32467889f610ecb187d781b1887ebdcb0a7220e9a41694bed4ca96b4"
+    },
+    {
+      "body": "本项目不允许联合体投标。",
+      "expect": {
+        "joint_venture": {
+          "value": "不接受联合体投标",
+          "enum": false
+        }
+      },
+      "body_sha256": "6e4ffb2a4b80c1005527cff63787f29f1bf92e2992e2aa7220d2903154d6ed97"
+    },
+    {
+      "body": "联合体投标：不接受",
+      "expect": {
+        "joint_venture": {
+          "value": "不接受联合体投标",
+          "enum": false
+        }
+      },
+      "body_sha256": "181ccd16588ea05a7a9d7d80450dd0bf1f4a82f8d57fce03e986053210dbc6f4"
+    },
+    {
+      "body": "是否接受联合体投标 否 是否专门面向中小企业 否",
+      "expect": {
+        "joint_venture": {
+          "value": "不接受联合体投标",
+          "enum": false
+        }
+      },
+      "body_sha256": "6e6db477ff068bb42f46cb2d99d25e7aad8aeca0ef3ec653d2d5f74f5f495cda"
+    },
+    {
+      "body": "是否接受联合体投标 是否专门面向中小企业 否 否",
+      "expect": {
+        "joint_venture": {
+          "absent": true
+        }
+      },
+      "body_sha256": "b34553a28c7dad33ea060efe1d4249bfa5ce0ccc2418d3949ec38da3492d1dbb"
+    }
+  ]
+}

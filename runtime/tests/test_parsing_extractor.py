@@ -156,3 +156,103 @@ def test_candidate_dict_shape():
     for key in ("requirement_id", "req_type", "category", "clause_ref", "assertion",
                 "page_no", "rule", "evidence_required", "confidence", "missing_marker", "note"):
         assert key in d, f"候选缺字段 {key}"
+
+
+# EPC 工程总承包公告措辞（取自 2026-09-09 唐山三友电子化学品污水处理装置项目，唐山市公共资源交易中心）：
+# 资质按「资质要求：…；」整句列设计+施工多项资质（无「施工总承包」）、建造师等级「贰级」、B 证「取得」、
+# 无在建「未在其他在施…担任项目经理」、社保「养老保险缴费证明」、信用「未被…列入」、报名「下载电子招标文件」。
+# 2026-09-10 前这些锚点只认农大房建措辞，全部误判 __待补__。
+_EPC_PAGES = [
+    _page(1, "2.1.1 项目名称：唐山三友电子化学品有限责任公司年产3000吨电子级盐酸项目污水处理装置工程总承包",
+          "2.1.3 建设地点：河北省唐山市曹妃甸区南堡经济开发区 2.1.5 计划工期：150日历天。"),
+    _page(2,
+          "3.1.1 资质要求：投标人须具有独立法人资格，持有工商行政管理部门登记的有效企业法人营业执照，具备住房城乡建设主管部门颁发的工程设计综合资质",
+          "或具有建设行政主管部门核发的环境工程（水污染防治）专项设计甲级及以上资质，同时具有建设行政主管部门颁发的环保工程专业承包壹级资质，",
+          "建筑机电安装工程专业承包二级及以上资质，有效的安全生产许可证；",
+          "3.1.2 项目经理资格要求：须具备有效期内机电工程专业贰级及以上注册建造师执业资格，同时取得安全生产考核合格证书（B类）。",
+          "且未在其他在施建设工程项目中担任项目经理。",
+          "注册建造师证书所记载的聘用单位必须为该投标单位并提供其在本单位连续缴纳近三个月的养老保险缴费证明；",
+          "3.1.5 信誉要求：（1）投标人未被工商行政管理机关列入严重违法失信企业名单；（2）投标人未被最高人民法院在“信用中国”网站",
+          "（www.creditchina.gov.cn）或各级信用信息共享平台列入失信被执行人名单；",
+          "3.2 本次招标不接受联合体投标。",
+          "4.1 凡有意参加投标者，请于2026年9月10日09:00至2026年9月16日17:00（北京时间，下同），登录河北省公共资源交易平台下载电子招标文件。",
+          "5.1 投标文件递交的截止时间（投标截止时间，下同）为2026年9月30日09时00分。"),
+]
+
+
+def test_extract_rule_candidates_epc_wording():
+    cands = extract_rule_candidates(_EPC_PAGES, project_id="PJ", material_id="MAT-EPC", content_hash="h")
+    by_anchor = {c.rule.get("anchor_key"): c for c in cands}
+
+    def hit(key: str) -> RuleCandidate:
+        c = by_anchor[key]
+        assert not c.missing_marker, f"{key} 不应缺失"
+        return c
+
+    q = hit("qualification_grade")
+    assert q.assertion.startswith("资质要求：") and "环境工程（水污染防治）专项设计甲级" in q.assertion
+    assert q.page_no == 2
+    assert hit("safety_license").assertion == "有效的安全生产许可证"
+    assert "机电工程专业贰级及以上注册建造师执业资格" in hit("pm_registered_builder").assertion
+    assert hit("pm_b_cert").assertion == "同时取得安全生产考核合格证书（B类）"
+    assert hit("pm_no_active").assertion == "未在其他在施建设工程项目中担任项目经理"
+    assert hit("pm_social_security").assertion == "连续缴纳近三个月的养老保险缴费证明"
+    credit = hit("credit_no_loser").assertion
+    assert credit.startswith("未被最高人民法院") and credit.endswith("列入失信被执行人名单")
+    assert hit("consortium").assertion == "不接受联合体投标"
+    assert hit("action_file_acquisition").assertion.endswith("下载电子招标文件")
+    assert "2026年9月30日09时00分" in hit("action_deadline_bid").assertion
+    # 公告未载明的项（安全员/技术团队/财务/有效期/保证金/限价/评分）保持 __待补__，不推断
+    for key in ("safety_officer", "tech_team", "financial_audit", "bid_validity",
+                "bid_bond", "ceiling_price", "scoring_tech", "scoring_similar_performance"):
+        assert by_anchor[key].missing_marker is True, key
+        assert by_anchor[key].assertion == MISSING
+
+
+def test_extract_main_card_epc_wording():
+    fields = {c.field_key: c for c in extract_main_card(_EPC_PAGES)}
+    assert fields["project_name"].value == "唐山三友电子化学品有限责任公司年产3000吨电子级盐酸项目污水处理装置工程总承包"
+    assert fields["region"].value == "河北省唐山市曹妃甸区"  # 省前缀地址
+    assert fields["deadline_bid"].value == "2026-09-30 09:00"
+    assert fields["deadline_signup"].value == "2026-09-10 09:00"
+    # 公告无「招标人为…」→ 必填字段缺失标记，不从项目名推断招标人
+    assert fields["tenderee"].missing_marker is True and fields["tenderee"].value == MISSING
+
+
+# ── 2026-09-11 P0（docs/10 附录 A extractor #1/#3）：联合体极性 = f(命中原文)；
+#    「资质要求：…；…」的"；"并列子项不截断、下一条款收尾 ──
+def _by_anchor(pages):
+    return {c.rule.get("anchor_key"): c for c in extract_rule_candidates(
+        pages, project_id="PJ", material_id="MAT-P0", content_hash="h")}
+
+
+def test_consortium_polarity_derived_not_keyword_presence():
+    # 农大勾选式「（□接受/☑不接受）联合体投标」→ 只认已勾选项
+    nd = _by_anchor(_PAGES)["consortium"]
+    assert nd.missing_marker is False and nd.rule["accepts_consortium"] is False
+    # EPC 叙述式
+    epc = _by_anchor(_EPC_PAGES)["consortium"]
+    assert epc.rule["accepts_consortium"] is False and epc.assertion == "不接受联合体投标"
+    # 河北工大表单式「是否接受联合体投标：否」：旧锚点会命中标签片段「接受联合体投标」
+    form = _by_anchor([_page(1, "是否接受联合体投标：否 是否专门面向中小企业：否")])["consortium"]
+    assert form.missing_marker is False
+    assert form.assertion == "是否接受联合体投标：否" and form.rule["accepts_consortium"] is False
+    # 公告写「接受联合体」：旧锚点只认「不接受」→ 误进 missing 复核队列
+    acc = _by_anchor([_page(1, "3.3 本项目接受联合体投标，联合体各方应签署共同投标协议。")])["consortium"]
+    assert acc.missing_marker is False and acc.rule["accepts_consortium"] is True
+    assert acc.assertion == "接受联合体投标"
+
+
+def test_qualification_label_style_keeps_semicolon_subitems_stops_at_next_clause():
+    pages = [_page(2,
+                   "3.1.1 资质要求：具备建筑工程施工总承包三级及以上资质或市政公用工程施工总承包三级及以上资质；",
+                   "具有建设行政主管部门颁发的有效期内的安全生产许可证；",
+                   "3.1.2 项目经理资格要求：须具备二级及以上注册建造师执业资格。")]
+    q = _by_anchor(pages)["qualification_grade"]
+    assert q.assertion.startswith("资质要求：具备建筑工程施工总承包三级及以上资质")
+    assert q.assertion.endswith("有效期内的安全生产许可证")  # "；"后子项保留
+    assert "项目经理" not in q.assertion                       # 下一条款不吞并
+    # "；（2）业绩要求：" 亦收尾（编号后紧跟 label）
+    pages2 = [_page(2, "资质要求：（1）具备市政资质壹级；（2）具有安全生产许可证；（2）业绩要求：近三年一项。")]
+    q2 = _by_anchor(pages2)["qualification_grade"]
+    assert q2.assertion == "资质要求：（1）具备市政资质壹级；（2）具有安全生产许可证"

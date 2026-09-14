@@ -1,0 +1,189 @@
+{
+  "case_id": "quickwin_anchor_variants",
+  "title": "x施工招标公告",
+  "source": {
+    "note": "docs/10 附录 A prescreen #6 #7 #8 #9 #11 #12 #14 反例转 golden（P3-2 快赢批次）"
+  },
+  "variants": [
+    {
+      "body": "总投资：5000万元。",
+      "title": "x施工招标公告",
+      "expect": {
+        "budget_amount": {
+          "contains": [
+            "5000万元"
+          ]
+        }
+      },
+      "body_sha256": "f6150d748b638a28576eb97572b08fa7862f2146f79080cd2b7865b954ecdfc2"
+    },
+    {
+      "body": "本项目总投资约1.2亿元。",
+      "title": "x施工招标公告",
+      "expect": {
+        "budget_amount": {
+          "contains": [
+            "1.2亿元"
+          ]
+        }
+      },
+      "body_sha256": "18402d9c9a78e722964061319a25da86cfbf7f03af0261550231dcc9af73bf46"
+    },
+    {
+      "body": "预算金额（元）：1,200,000",
+      "title": "x施工招标公告",
+      "expect": {
+        "budget_amount": {
+          "contains": [
+            "1,200,000"
+          ]
+        }
+      },
+      "body_sha256": "fa18649e9e1d8920a4f1b92b24691af841041e7fe02912487f679b22aad120be"
+    },
+    {
+      "body": "计划工期为90日历天。",
+      "title": "x施工招标公告",
+      "expect": {
+        "duration": {
+          "value": "90日历天"
+        }
+      },
+      "body_sha256": "cdc5aa31966fa07b645cb92446e8469d6284db83995f7131e7e506ff00f59c43"
+    },
+    {
+      "body": "工期：360日历天。",
+      "title": "x施工招标公告",
+      "expect": {
+        "duration": {
+          "value": "360日历天"
+        }
+      },
+      "body_sha256": "9330412ef016e0f025842d764a51b933fe03162188aafe3d9d9d50233098045d"
+    },
+    {
+      "body": "投标文件递交的截止时间为 2026 年 10 月 10 日 09 时 00 分。",
+      "title": "x施工招标公告",
+      "expect": {
+        "deadline_bid": {
+          "value": "2026年10月10日"
+        }
+      },
+      "body_sha256": "5bff22b8b6666b5756e298689cec12aa3d2bc9b549e81184d8529a6113971548"
+    },
+    {
+      "body": "建设地点：石家庄市。",
+      "title": "x施工招标公告",
+      "expect": {
+        "region": {
+          "value": "石家庄市"
+        }
+      },
+      "body_sha256": "7799b18e596e931aee37fdfcefc73f2fb1865815d3fe5ba174800d9a5375f4c3"
+    },
+    {
+      "body": "建设地点：河北省保定市莲池区灵雨寺街289号。",
+      "title": "x施工招标公告",
+      "expect": {
+        "region": {
+          "value": "河北省保定市莲池区"
+        }
+      },
+      "body_sha256": "10a951d1f7e02d6d8a5d27bc646a8f2bb5e48cb7c0ff6091e504a017886186b3"
+    },
+    {
+      "body": "拟派项目经理具备特级注册建造师执业资格。",
+      "title": "x施工招标公告",
+      "expect": {
+        "pm_registered": {
+          "contains": [
+            "特级注册建造师"
+          ]
+        }
+      },
+      "body_sha256": "125fc64624fbcc331f058f884ef7582fd8e071219eaa9cfee0d8f6c5d48ed0d9"
+    },
+    {
+      "body": "拟派项目经理须具备二级注册建造师执业资格。",
+      "title": "x施工招标公告",
+      "expect": {
+        "pm_registered": {
+          "contains": [
+            "二级注册建造师"
+          ]
+        }
+      },
+      "body_sha256": "f444be55214a4931cfd50facfcc203d4e75b665f5a993be2f60402de1655fa30"
+    },
+    {
+      "body": "本工程共计划划分为2个标段。",
+      "title": "x施工招标公告",
+      "expect": {
+        "section_count": {
+          "value": "2"
+        }
+      },
+      "body_sha256": "48b80d1229338ea4984b03e546ded44e44e5695dda7a99090bba043601f9d7e9"
+    },
+    {
+      "body": "采购人：河北某某大学 建设地点：石家庄市新华区 计划工期：180日历天 质量标准：合格。",
+      "title": "x施工招标公告",
+      "expect": {
+        "purchaser": {
+          "value": "河北某某大学"
+        }
+      },
+      "body_sha256": "3c5dcf83eed105499d81192e50e6f8f71451b000a8a864a0e3613ead4fd5f01d"
+    },
+    {
+      "body": "正文略。",
+      "title": "某工程施工图设计招标公告",
+      "expect": {
+        "project_type": {
+          "value": "工程（设计招标）"
+        }
+      },
+      "body_sha256": "5e57175eb5b392cdc4bf812572e7edb1038ced33dee906edf096a9346043cf40"
+    },
+    {
+      "body": "正文略。",
+      "title": "某项目设计施工总承包（EPC）招标公告",
+      "expect": {
+        "project_type": {
+          "value": "工程（总承包招标）"
+        }
+      },
+      "body_sha256": "5e57175eb5b392cdc4bf812572e7edb1038ced33dee906edf096a9346043cf40"
+    },
+    {
+      "body": "正文略。",
+      "title": "某单位物业保洁服务采购公告",
+      "expect": {
+        "project_type": {
+          "value": "服务（采购）"
+        }
+      },
+      "body_sha256": "5e57175eb5b392cdc4bf812572e7edb1038ced33dee906edf096a9346043cf40"
+    },
+    {
+      "body": "正文略。",
+      "title": "某医院医疗设备采购项目招标公告",
+      "expect": {
+        "project_type": {
+          "value": "货物（采购）"
+        }
+      },
+      "body_sha256": "5e57175eb5b392cdc4bf812572e7edb1038ced33dee906edf096a9346043cf40"
+    },
+    {
+      "body": "正文略。",
+      "title": "某道路工程监理招标公告",
+      "expect": {
+        "project_type": {
+          "value": "工程（监理招标）"
+        }
+      },
+      "body_sha256": "5e57175eb5b392cdc4bf812572e7edb1038ced33dee906edf096a9346043cf40"
+    }
+  ]
+}
