@@ -78,6 +78,57 @@ def sme_match(text: str) -> Tuple[Optional[bool], Optional[re.Match]]:
     return None, None
 
 
+# ── 是否允许分包（房建/市政招标公告与投标人须知前附表常见）────────────────
+# 表单式：是否允许分包：否 / 分包：不允许；叙述式：本工程不允许分包 / 允许将非主体
+# 非关键性工作分包。「不得」「禁止」归不允许；答案词前不得是问句尾/未勾选框。
+SUBCONTRACT_FORM = re.compile(
+    r"(?:是否|[(（]是[/／]?否[)）])\s*(?:允许|接受)\s*分包\s*[：:]?\s*(是(?!否)|否|[01](?![0-9]))"
+    r"|分包\s*[：:]\s*(不允许|不接受|允许|接受)")
+SUBCONTRACT_CHECK = re.compile(r"[☑√■●]\s*(不允许|允许|不接受|接受)\s*[)）]?\s*分包")
+SUBCONTRACT_NARR = re.compile(
+    r"(?<![)）□○/／否])(不允许|不接受|不得|禁止|允许|接受|可以)\s*(?:将[^。；，]{0,30}?)?(?:进行)?分包")
+
+SUBCONTRACT_TRUE_LABEL = "允许分包"
+SUBCONTRACT_FALSE_LABEL = "不允许分包"
+
+
+def subcontract_match(text: str) -> Tuple[Optional[bool], Optional[re.Match]]:
+    """是否允许分包：表单式 > 勾选式 > 叙述式；判不出 (None, None)。"""
+    m = SUBCONTRACT_FORM.search(text)
+    if m:
+        ans = m.group(1) or m.group(2) or ""
+        if ans in ("是", "1", "允许", "接受"):
+            return True, m
+        return False, m
+    m = SUBCONTRACT_CHECK.search(text)
+    if m:
+        return not m.group(1).startswith("不"), m
+    m = SUBCONTRACT_NARR.search(text)
+    if m:
+        return m.group(1) in ("允许", "接受", "可以"), m
+    return None, None
+
+
+# ── 是否接受进口产品（政采货物公告表单字段）────────────────────────────────
+IMPORT_FORM = re.compile(
+    r"(?:是否|[(（]是[/／]?否[)）])\s*(?:接受|允许)\s*进口产品\s*[：:]?\s*(是(?!否)|否|[01](?![0-9]))")
+IMPORT_NARR = re.compile(r"(?<![)）□○/／否])(不接受|不允许|接受|允许)\s*进口产品")
+
+IMPORT_TRUE_LABEL = "接受进口产品"
+IMPORT_FALSE_LABEL = "不接受进口产品"
+
+
+def import_product_match(text: str) -> Tuple[Optional[bool], Optional[re.Match]]:
+    """是否接受进口产品：表单式（是/否/0/1）优先，叙述式次之。"""
+    m = IMPORT_FORM.search(text)
+    if m:
+        return m.group(1) in ("是", "1"), m
+    m = IMPORT_NARR.search(text)
+    if m:
+        return not m.group(1).startswith("不"), m
+    return None, None
+
+
 @dataclass(frozen=True)
 class PolarityField:
     """极性字段登记项：值 = f(命中原文)，两极展示短语固定（P0 兼容口径，枚举入 enum）。"""
@@ -95,12 +146,18 @@ class PolarityField:
         return self.true_label if accepts else self.false_label
 
 
-# 注册表（P2：新增极性字段在此登记——是否允许分包/进口产品等版式稳定后补）
+# 注册表（P2：新增极性字段在此登记；2026-09-14 锚点扩充批次补 分包 / 进口产品）
 POLARITY_FIELDS: dict[str, PolarityField] = {
     "joint_venture": PolarityField(
         "joint_venture", "联合体", consortium_match, ACCEPT_LABEL, REJECT_LABEL),
     "sme_dedicated": PolarityField(
         "sme_dedicated", "面向中小企业", sme_match, SME_TRUE_LABEL, SME_FALSE_LABEL),
+    "subcontract_allowed": PolarityField(
+        "subcontract_allowed", "分包", subcontract_match,
+        SUBCONTRACT_TRUE_LABEL, SUBCONTRACT_FALSE_LABEL),
+    "import_allowed": PolarityField(
+        "import_allowed", "进口产品", import_product_match,
+        IMPORT_TRUE_LABEL, IMPORT_FALSE_LABEL),
 }
 
 # ── project_type 优先级分类器（标题/封面判类，修复首命中乱序与货物/服务被丢弃） ──

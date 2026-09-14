@@ -88,7 +88,8 @@ def test_golden_announcement(case_id, variant, title, body, body_sha256, expect)
     assert hashlib.sha256(body.encode("utf-8")).hexdigest() == body_sha256, \
         f"{label}: body_sha256 不匹配——语料被改动，请显式重算并复核期望值"
 
-    detail = build_detail_summary(title, body, content_hash=body_sha256)
+    # 离线回归：显式关闭 P4 LLM 兜底（golden 只考确定性规则层，CI 不触网）
+    detail = build_detail_summary(title, body, content_hash=body_sha256, llm_fallback=False)
 
     # 各字段期望（三层断言，见模块注释）
     for key, spec in expect.items():

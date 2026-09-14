@@ -283,6 +283,200 @@ ANCHORS: dict[str, dict] = {
         "evidence": [],
         "clause_hint": "投标人须知 §4.1.5",
     },
+    # ── 2026-09-14 锚点扩充批次（按招标行业经验覆盖硬性资格 / 评标评分 / 投标动作）──
+    # 硬性资格：营业执照与民事责任能力 / 类似业绩（资格审查口径：近 N 年 + 数量词）/ 无重大违法
+    # 记录 / 严重违法失信名单 / 纳税与社保证明 / 资格审查方式 / 技术负责人 / 项目经理业绩
+    "business_license": {
+        "req_type": "hard_requirement", "category": "资质",
+        "pattern": re.compile(
+            r"(?:具有|具备)?独立(?:承担民事责任|法人)(?:的)?能力|(?:有效|合法)的?(?:企业)?(?:法人)?营业执照", re.S),
+        "evidence": ["business_license"],
+        "clause_hint": "招标公告 §3.1",
+    },
+    "similar_performance_hard": {
+        "req_type": "hard_requirement", "category": "业绩",
+        "pattern": re.compile(
+            r"近[0-9一二三四五]年(?:内|以来)?.{0,60}?(?:至少|不少于|[0-9一二三]项(?:及)?以上|以上|[0-9一二三]项).{0,60}?类似.{0,40}?(?:[\u4e00-\u9fff]{0,8}?业绩|工程|项目)"
+            r"|近[0-9一二三四五]年(?:内|以来)?.{0,40}?(?:完成|承建|承担|竣工).{0,40}?类似.{0,40}?(?:[\u4e00-\u9fff]{0,8}?业绩|工程|项目)",
+            re.S),
+        "evidence": ["performance_record"],
+        "clause_hint": "招标公告 §3.5",
+    },
+    "no_major_violation": {
+        "req_type": "hard_requirement", "category": "信用",
+        "pattern": re.compile(
+            r"(?:近|前|参加.{0,12}?活动前)[0-9一二三]年(?:内)?.{0,30}?(?:无|没有)(?:重大)?(?:违法|违规)(?:记录|行为)?", re.S),
+        "evidence": ["credit_check"],
+        "clause_hint": "招标公告 §3.11",
+    },
+    "credit_blacklist": {
+        "req_type": "hard_requirement", "category": "信用",
+        "pattern": re.compile(
+            r"重大税收违法(?:失信)?(?:案件)?(?:当事人|主体)?名单|政府采购严重违法失信行为(?:记录)?名单"
+            r"|(?:建筑市场监管公共服务平台|信用中国).{0,24}?(?:黑名单|失信|不良行为)", re.S),
+        "evidence": ["credit_check"],
+        "clause_hint": "招标公告 §3.11",
+    },
+    "tax_social_proof": {
+        "req_type": "hard_requirement", "category": "财务",
+        "pattern": re.compile(
+            r"依法缴纳税收和社会保障资金的?(?:相关)?(?:材料|证明|凭证)|(?:缴纳|纳税)?税收.{0,10}?社会保障资金.{0,10}?(?:证明|凭证|材料)"
+            r"|(?:近|最近)[0-9一二三六十二]{1,2}个月.{0,20}?(?:纳税|缴税)(?:证明|凭证)", re.S),
+        "evidence": ["tax_social_proof"],
+        "clause_hint": "招标公告 §3.13③",
+    },
+    "prequalification_method": {
+        "req_type": "hard_requirement", "category": "资格审查",
+        "pattern": re.compile(r"资格审查(?:方式|方法)?[：:]?(?:采用|为)?(?:资格)?(后审|预审)|(?:采用|实行)资格(后审|预审)", re.S),
+        "evidence": [],
+        "clause_hint": "招标公告 §3.14",
+    },
+    "tech_lead": {
+        "req_type": "hard_requirement", "category": "人员",
+        "pattern": re.compile(r"技术负责人.{0,60}?(?:高级|中级|初级)?(?:工程师|职称|技术职务).{0,24}", re.S),
+        "evidence": ["personnel_roster"],
+        "clause_hint": "招标公告 §3.7",
+    },
+    "pm_similar_performance": {
+        "req_type": "hard_requirement", "category": "人员",
+        "pattern": re.compile(r"项目经理.{0,40}?(?:担任|主持|负责|完成).{0,40}?类似.{0,30}?(?:[\u4e00-\u9fff]{0,8}?业绩|工程|项目)", re.S),
+        "evidence": ["manager_profile", "performance_record"],
+        "clause_hint": "招标公告 §3.7",
+    },
+    # 评标评分项：评标办法 / 价格分（评标基准价）/ 项目经理评分 / 施工组织设计评分 /
+    # 企业荣誉与信用加分 / 拟投入设备评分
+    "evaluation_method": {
+        "req_type": "scored_requirement", "category": "评标办法",
+        "pattern": re.compile(
+            r"(?:评标|评审|评定)(?:办法|方法|方式)[：:]?(?:本项目)?(?:采用|为|拟采用)?"
+            r"((?:经评审的)?(?:最低投标价法|最低价法|综合评估法|综合评分法|合理低价法|综合评审法|性价比法|最低评标价法|综合评价法))"
+            r"|(?:采用|实行)((?:经评审的)?(?:最低投标价法|综合评估法|综合评分法|合理低价法|综合评审法|最低评标价法|综合评价法))",
+            re.S),
+        "evidence": [],
+        "clause_hint": "评标办法 前附表",
+    },
+    "scoring_price": {
+        "req_type": "scored_requirement", "category": "商务标/价格",
+        "pattern": re.compile(
+            r"(?:评标基准价|价格分|报价得分|投标报价得分|价格部分|报价分).{0,60}?[0-9]{1,3}分"
+            r"|(?:价格|报价)(?:分|部分|得分)[：:（(]?(?:满分|权重|占|为|共)?[：:]?[0-9]{1,3}(?:分|%)", re.S),
+        "evidence": [],
+        "clause_hint": "评标办法 第三章 四(1)",
+    },
+    "scoring_pm": {
+        "req_type": "scored_requirement", "category": "技术标/人员评分",
+        "pattern": re.compile(r"项目经理.{0,60}?(?:得|加|计|各得)[0-9]{1,2}(?:\.[0-9])?分", re.S),
+        "evidence": ["manager_profile"],
+        "clause_hint": "评标办法 第三章 四(6)",
+    },
+    "scoring_construction_plan": {
+        "req_type": "scored_requirement", "category": "技术标/施工组织设计",
+        "pattern": re.compile(r"施工组织设计.{0,80}?[0-9]{1,3}分|施工组织设计.{0,30}?(?:评审|评分)(?:标准|因素)", re.S),
+        "evidence": [],
+        "clause_hint": "评标办法 第三章 四(2)",
+    },
+    "scoring_enterprise_honor": {
+        "req_type": "scored_requirement", "category": "商务标/企业信誉",
+        "pattern": re.compile(
+            r"(?:鲁班奖|国家优质工程(?:奖)?|省(?:级)?优质工程|市(?:级)?优质工程|安全文明(?:标准化)?(?:示范)?工地|AAA(?:级)?(?:信用|资信)|质量奖|詹天佑奖)"
+            r".{0,40}?(?:得|加|计)?[0-9]{1,2}(?:\.[0-9])?分", re.S),
+        "evidence": ["honor_certificate"],
+        "clause_hint": "评标办法 第三章 四(4)",
+    },
+    "scoring_equipment": {
+        "req_type": "scored_requirement", "category": "技术标/设备",
+        "pattern": re.compile(r"(?:拟投入|主要)(?:本工程)?(?:的)?(?:施工)?(?:机械)?设备.{0,60}?[0-9]{1,2}(?:\.[0-9])?分", re.S),
+        "evidence": ["equipment_list"],
+        "clause_hint": "评标办法 第三章 四(7)",
+    },
+    # 投标动作：答疑/质疑截止、现场踏勘
+    "action_q_and_a": {
+        "req_type": "action_requirement", "category": "答疑/质疑",
+        "pattern": re.compile(
+            r"(?:答疑|质疑|澄清|异议)(?:截止)?(?:时间|期限|日期)[：:]?.{0,25}?\d{4}年\d{1,2}月\d{1,2}日", re.S),
+        "evidence": [],
+        "clause_hint": "投标人须知 §1.10",
+    },
+    "action_site_visit": {
+        "req_type": "action_requirement", "category": "踏勘",
+        "pattern": re.compile(
+            r"(?:现场踏勘|踏勘现场|踏勘)(?:时间)?[：:]?.{0,30}?(?:\d{4}年\d{1,2}月\d{1,2}日|不(?:统一)?组织|自行(?:踏勘|前往)|投标人自行)", re.S),
+        "evidence": [],
+        "clause_hint": "投标人须知 §1.9",
+    },
+}
+
+# ── 合同 / 商务 / 技术条款锚点（2026-09-14）──────────────────────────────
+# 这些是招标文件里投标决策必看的**事实条款**（工期、质量标准、合同类型、付款、预付款、履约担保、
+# 质保、暂列金、下浮率、安全文明施工费、技术标准、分包），不是三类"要求"（F008 §4.1 硬性/评分/
+# 动作），因此不进 ANCHORS/RuleCandidate，而以 MainCardCandidate 形态、kind=term_field 落库
+# （parse_service 分组到「投标动作与风险条款」）。value 取首个非空捕获组；无组取整体命中。
+_T_AMOUNT = r"(?:[0-9][0-9，,.]{0,12}[0-9]?(?:万元|亿元|万|元)(?:整)?|(?:人民币)?[零壹贰叁肆伍陆柒捌玖拾佰仟万亿]{2,14}元(?:整)?)"
+_T_PERCENT = r"[0-9]{1,2}(?:\.[0-9]{1,2})?[%％]"
+
+TERM_ANCHORS: dict[str, dict] = {
+    "duration": {
+        "label": "工期",
+        "pattern": re.compile(r"(?:计划工期|总工期|合同工期|工期)[：:]?(?:为|约|要求)?([0-9]{1,4}(?:日历天|天|个月))", re.S),
+    },
+    "quality_standard": {
+        "label": "质量标准",
+        "pattern": re.compile(
+            r"(?<!设计)(?:工程)?质量(?:标准|要求|目标)[：:]?(?:达到|符合|满足)?((?:国家|行业|现行)?(?:有关)?(?:验收)?(?:规范|标准)?(?:的)?(?:合格|优良)(?:标准|等级)?)", re.S),
+    },
+    "contract_type": {
+        "label": "合同类型/计价方式",
+        "pattern": re.compile(
+            r"(?:合同(?:类型|形式|计价(?:方式|模式)?)|计价(?:方式|模式|形式)|承包方式)[：:]?(?:采用|为|实行)?((?:固定|可调)?(?:总价|单价|成本加酬金)(?:合同|包干|承包)?)"
+            r"|(?:采用|实行)((?:固定|可调)(?:总价|单价)(?:合同|包干))", re.S),
+    },
+    "payment_terms": {
+        "label": "付款方式",
+        "pattern": re.compile(
+            r"(?:付款(?:方式|条件)|支付(?:方式|条件)|工程款支付(?:方式)?|进度款支付(?:方式)?|资金支付(?:方式)?)[：:]?([^。；;]{4,160})", re.S),
+    },
+    "advance_payment": {
+        "label": "预付款",
+        "pattern": re.compile(r"(?:工程|合同)?预付款[^。；]{0,30}?(" + _T_PERCENT + "|" + _T_AMOUNT + ")", re.S),
+    },
+    "performance_bond": {
+        "label": "履约保证金/担保",
+        "pattern": re.compile(
+            r"履约(?:保证金|担保|保函)(?:金额|数额|比例)?[^。；]{0,24}?(?:为|按|不(?:得)?超过|不(?:得)?高于)?(?:合同(?:总)?(?:价|金额|价款)的?)?(" + _T_PERCENT + "|" + _T_AMOUNT + ")", re.S),
+    },
+    "retention_money": {
+        "label": "质量保证金",
+        "pattern": re.compile(r"(?:质量保证金|质保金|保修金|工程质量保修金)[^。；]{0,30}?(" + _T_PERCENT + "|" + _T_AMOUNT + ")", re.S),
+    },
+    "warranty": {
+        "label": "保修期/缺陷责任期",
+        "pattern": re.compile(
+            r"(?:工程)?(?:保修期|质保期|质量保修期|缺陷责任期|保修期限)[：:]?(?:为|自[^。；]{0,30}?起)?([0-9]{1,3}(?:个月|年|日历天|天))", re.S),
+    },
+    "provisional_sum": {
+        "label": "暂列金额",
+        "pattern": re.compile(r"暂列金额[：:]?(?:为)?(" + _T_AMOUNT + ")", re.S),
+    },
+    "downward_rate": {
+        "label": "下浮率",
+        "pattern": re.compile(r"下浮率[：:]?(?:为|不(?:得)?低于|不(?:得)?高于|不(?:得)?超过|按)?(" + _T_PERCENT + ")", re.S),
+    },
+    "safety_fee": {
+        "label": "安全文明施工费",
+        "pattern": re.compile(
+            r"安全(?:文明)?施工(?:措施)?费[^。；]{0,30}?(不(?:得)?(?:参与|作为|列入)?竞争(?:性)?(?:费用|报价)?|" + _T_AMOUNT + "|" + _T_PERCENT + ")", re.S),
+    },
+    "tech_standard": {
+        "label": "技术标准和要求",
+        "pattern": re.compile(
+            r"(?:技术(?:标准|要求|规范)(?:和要求|及要求)?|执行(?:的)?(?:技术)?标准|主要技术(?:参数|指标))[：:]([^。；;]{4,160})", re.S),
+    },
+    "subcontract": {
+        "label": "分包",
+        "pattern": re.compile(
+            r"(?:是否|[(（]是[/／]?否[)）])?(?:允许|接受)分包[：:]?(?:是|否|[01])?|分包[：:](?:不允许|不接受|允许|接受)"
+            r"|(?<![)）□○/／否])(?:不允许|不接受|不得|禁止|允许|接受|可以)(?:将[^。；，]{0,30}?)?(?:进行)?分包", re.S),
+    },
 }
 
 # 类别 → evidence_required（F006/F007 证据类型，与 golden 一致）
@@ -291,10 +485,20 @@ CATEGORY_EVIDENCE: dict[str, list[str]] = {
     "人员": ["manager_profile"],
     "财务": ["financial_audit_report"],
     "信用": ["credit_check"],
+    "业绩": ["performance_record"],
     "响应性": ["bid_document"],
     "保证金": ["bid_bond_receipt"],
     "技术标明标/类似业绩": ["performance_record"],
 }
+
+# 2026-09-14 扩充批次的锚点：并非每份招标文件都有该条款，未命中**不**产出 missing 候选
+# （否则复核队列被"本文件本无此要求"的噪音淹没）；基线 21 项的 missing 语义不变。
+OPTIONAL_ANCHORS: frozenset[str] = frozenset({
+    "business_license", "similar_performance_hard", "no_major_violation", "credit_blacklist",
+    "tax_social_proof", "prequalification_method", "tech_lead", "pm_similar_performance",
+    "evaluation_method", "scoring_price", "scoring_pm", "scoring_construction_plan",
+    "scoring_enterprise_honor", "scoring_equipment", "action_q_and_a", "action_site_visit",
+})
 
 
 # ── 抽取主逻辑 ────────────────────────────────────────────────────────
@@ -334,8 +538,11 @@ def extract_rule_candidates(
         hits = _find_in_pages(pages, pattern)
         seq += 1
         if not hits:
-            # 必查 hard/客观项未命中 → 产出 missing_marker 候选（进人工复核，F005 §4.2.1）
-            if req_type == "hard_requirement" or key in ("scoring_similar_performance", "scoring_tech"):
+            # 必查 hard/客观项未命中 → 产出 missing_marker 候选（进人工复核，F005 §4.2.1）；
+            # 扩充批次的可选锚点未命中不产出（OPTIONAL_ANCHORS）
+            must_report = key not in OPTIONAL_ANCHORS and (
+                req_type == "hard_requirement" or key in ("scoring_similar_performance", "scoring_tech"))
+            if must_report:
                 candidates.append(RuleCandidate(
                     requirement_id=f"{id_prefix}-{req_type_to_code(req_type)}-{seq:03d}-draft",
                     req_type=req_type,
@@ -395,6 +602,15 @@ def _rule_type_for(anchor_key: str) -> str:
         "scoring_business_credit": "scoring", "action_file_acquisition": "action",
         "action_deadline_bid": "action", "action_bid_bond_due": "action",
         "action_open": "action",
+        # 2026-09-14 扩充
+        "business_license": "qualification", "similar_performance_hard": "similar_performance",
+        "no_major_violation": "credit", "credit_blacklist": "credit",
+        "tax_social_proof": "financial", "prequalification_method": "prequalification",
+        "tech_lead": "tech_lead", "pm_similar_performance": "project_manager",
+        "evaluation_method": "evaluation_method", "scoring_price": "scoring",
+        "scoring_pm": "scoring", "scoring_construction_plan": "scoring",
+        "scoring_enterprise_honor": "scoring", "scoring_equipment": "scoring",
+        "action_q_and_a": "action", "action_site_visit": "action",
     }
     return mapping.get(anchor_key, "generic")
 
@@ -513,5 +729,54 @@ def extract_main_card(pages: list, *, default_clause: str = "招标公告") -> l
         out.append(MainCardCandidate(
             field_key=req, value=MISSING, clause=default_clause, page_no=None,
             assertion="", confidence=CONFIDENCE_LOW, missing_marker=True,
+        ))
+    return out
+
+
+# ── 合同 / 商务 / 技术条款候选（2026-09-14，kind=term_field） ─────────────────
+
+
+def _first_group_or_whole(m: re.Match) -> str:
+    if not m.lastindex:
+        return m.group(0)
+    for g in m.groups():
+        if g:
+            return g
+    return m.group(0)
+
+
+def extract_term_candidates(pages: list, *, default_clause: str = "合同/商务条款") -> list[MainCardCandidate]:
+    """从招标文件全文抽取合同/商务/技术条款事实（TERM_ANCHORS），每项首命中一条。
+
+    与主卡/规则候选同为确定性锚点：value = f(命中原文)（首个非空捕获组），assertion 为命中
+    页原文片段（去空白匹配、保留页码）；分包极性由 polarity.subcontract_match 从命中原文派生
+    写入 value（允许分包/不允许分包），判不出则 value 取原文命中串、confidence=low 转人工。
+    未命中的条款**不产出**（本文件本无此条款属正常，不算缺失）。
+    """
+    from runtime.parsing.polarity import SUBCONTRACT_FALSE_LABEL, SUBCONTRACT_TRUE_LABEL, subcontract_match
+
+    out: list[MainCardCandidate] = []
+    for key, spec in TERM_ANCHORS.items():
+        hits = _find_in_pages(pages, spec["pattern"])
+        if not hits:
+            continue
+        page_no, snippet, norm_hit = hits[0]
+        conf = CONFIDENCE_HIGH
+        if key == "subcontract":
+            allowed, _ = subcontract_match(norm_hit)
+            if allowed is None:
+                value, conf = norm_hit, CONFIDENCE_LOW
+            else:
+                value = SUBCONTRACT_TRUE_LABEL if allowed else SUBCONTRACT_FALSE_LABEL
+        else:
+            m = spec["pattern"].search(norm_hit)
+            value = _first_group_or_whole(m) if m else norm_hit
+        value = (value or "").strip()
+        if len(value) > 200:
+            value = value[:200]
+            conf = CONFIDENCE_LOW
+        out.append(MainCardCandidate(
+            field_key=key, value=value, clause=default_clause, page_no=page_no,
+            assertion=snippet[:300], confidence=conf,
         ))
     return out

@@ -131,6 +131,24 @@ def deepseek_api_key() -> str | None:
     return _env("DEEPSEEK_API_KEY")  # type: ignore[return-value]
 
 
+# ---------- P4：规则预筛 + 云端大模型受约束兜底（docs/10 §5 P4） ----------
+
+
+def llm_fallback_enabled() -> bool:
+    """兜底总开关（默认关）。生效还需 DeepSeek 出域门禁通过（check_deepseek_allowed）；
+    任一不满足即 fail-closed：规则未命中字段保持 missing 转人工，不调模型。"""
+    return _env("LLM_FALLBACK_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def llm_fallback_max_chars() -> int:
+    """送模型的原文上限（公开公告正文，超长截断——只影响定位覆盖，不影响正确性）。"""
+    return int(_env("LLM_FALLBACK_MAX_CHARS", "12000"))  # type: ignore[arg-type]
+
+
+def llm_fallback_timeout_seconds() -> float:
+    return float(_env("LLM_FALLBACK_TIMEOUT_SECONDS", "60"))  # type: ignore[arg-type]
+
+
 def job_running_timeout_seconds() -> int:
     return int(_env("JOB_RUNNING_TIMEOUT_SECONDS", "600"))  # type: ignore[return-value]
 

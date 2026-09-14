@@ -276,9 +276,10 @@ def check_reranker_allowed() -> bool:
 
 
 def check_deepseek_allowed() -> bool:
-    """DeepSeek 出域门禁：必须启用、public-only 开关打开且配置了合法地址。
+    """DeepSeek 出域门禁：必须启用、public-only 开关打开、配置了合法地址**且有 API key**。
 
-    DEEPSEEK_PUBLIC_ONLY=false 时一律 fail-closed（/readyz 失败 + 调用拒绝）。
+    DEEPSEEK_PUBLIC_ONLY=false 时一律 fail-closed（/readyz 失败 + 调用拒绝）；
+    key 为空同样 fail-closed（2026-09-14：避免无凭据时反复发起必然 401 的出域请求）。
     """
     if not config.deepseek_enabled():
         return False
@@ -287,7 +288,60 @@ def check_deepseek_allowed() -> bool:
     base_url = config.deepseek_base_url()
     if not base_url:
         return False
+    if not (config.deepseek_api_key() or "").strip():
+        return False
     return True
+
+
+def deepseek_chat_json(
+    messages: list[dict],
+    *,
+    permission_scope: str,
+    timeout: float = 60.0,
+    temperature: float = 0.0,
+) -> ModelResult:
+    """通用结构化对话（OpenAI 兼容 /chat/completions，response_format=json_object）。
+
+    与 deepseek_extract 同一出域门禁：仅 public_read 数据、DEEPSEEK_ENABLED 且 public-only 开关
+    打开且配置了地址，否则抛 ModelNotAllowedError（fail-closed）。成功时 data 为解析后的 JSON
+    对象（模型 content 不是合法 JSON → ok=False，调用方按校验失败处理）；日志不保存原文。
+    P4 兜底路径（runtime/parsing/llm_fallback）唯一的云端调用入口。
+    """
+    if permission_scope != PUBLIC_ONLY_SCOPE:
+        raise ModelNotAllowedError(
+            f"数据范围 {permission_scope} 非 public_read，禁止发送外部模型（public-only）"
+        )
+    if not check_deepseek_allowed():
+        raise ModelNotAllowedError("DeepSeek 未启用或 public-only 开关关闭，禁止外部调用")
+    payload = {
+        "model": config.deepseek_model(),
+        "messages": messages,
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+    }
+    base_url = config.deepseek_base_url().rstrip("/")  # type: ignore[union-attr]
+    req = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {config.deepseek_api_key() or ''}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return ModelResult(ok=False, error=f"{type(exc).__name__}: {exc}")
+    try:
+        content = data["choices"][0]["message"]["content"]
+        parsed = json.loads(content) if isinstance(content, str) else content
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        return ModelResult(ok=False, error=f"模型响应不是合法 JSON：{type(exc).__name__}: {exc}")
+    if not isinstance(parsed, dict):
+        return ModelResult(ok=False, error="模型响应 JSON 顶层不是对象")
+    return ModelResult(ok=True, data=parsed)
 
 
 def deepseek_extract(

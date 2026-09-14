@@ -464,6 +464,23 @@ ANCHOR_GROUP: dict[str, str] = {
     "action_deadline_bid": GROUP_ACTION,
     "action_bid_bond_due": GROUP_ACTION,
     "action_open": GROUP_ACTION,
+    # 2026-09-14 锚点扩充批次
+    "business_license": GROUP_QUALIFICATION,
+    "prequalification_method": GROUP_QUALIFICATION,
+    "tech_lead": GROUP_PERSONNEL,
+    "pm_similar_performance": GROUP_PERSONNEL,
+    "scoring_pm": GROUP_PERSONNEL,
+    "similar_performance_hard": GROUP_EVIDENCE,
+    "no_major_violation": GROUP_EVIDENCE,
+    "credit_blacklist": GROUP_EVIDENCE,
+    "tax_social_proof": GROUP_EVIDENCE,
+    "scoring_enterprise_honor": GROUP_EVIDENCE,
+    "scoring_equipment": GROUP_RESOURCES,
+    "scoring_construction_plan": GROUP_RESOURCES,
+    "evaluation_method": GROUP_ACTION,
+    "scoring_price": GROUP_ACTION,
+    "action_q_and_a": GROUP_ACTION,
+    "action_site_visit": GROUP_ACTION,
 }
 
 # 规则锚点 → 可读标题（展示层确定性生成，审计可查；未登记锚点用“类别 + 待复核”）
@@ -489,6 +506,41 @@ ANCHOR_TITLE: dict[str, str] = {
     "action_deadline_bid": "投标文件递交截止",
     "action_bid_bond_due": "投标保证金递交截止",
     "action_open": "开标时间",
+    # 2026-09-14 锚点扩充批次
+    "business_license": "营业执照 / 独立法人资格",
+    "similar_performance_hard": "类似业绩硬性要求（资格审查）",
+    "no_major_violation": "无重大违法记录要求",
+    "credit_blacklist": "严重违法失信名单限制（税收 / 政采 / 信用中国）",
+    "tax_social_proof": "纳税与社会保障资金缴纳证明",
+    "prequalification_method": "资格审查方式（后审 / 预审）",
+    "tech_lead": "技术负责人职称要求",
+    "pm_similar_performance": "项目经理类似业绩要求",
+    "evaluation_method": "评标办法",
+    "scoring_price": "价格分 / 评标基准价",
+    "scoring_pm": "项目经理评分项",
+    "scoring_construction_plan": "施工组织设计评分项",
+    "scoring_enterprise_honor": "企业荣誉 / 信用加分项",
+    "scoring_equipment": "拟投入设备评分项",
+    "action_q_and_a": "答疑 / 质疑截止",
+    "action_site_visit": "现场踏勘安排",
+}
+
+# 合同/商务/技术条款字段（kind=term_field，extractor.TERM_ANCHORS）→ 可读标题
+CANDIDATE_KIND_TERM = "term_field"
+TERM_TITLE: dict[str, str] = {
+    "duration": "工期",
+    "quality_standard": "质量标准",
+    "contract_type": "合同类型 / 计价方式",
+    "payment_terms": "付款方式",
+    "advance_payment": "预付款",
+    "performance_bond": "履约保证金 / 担保",
+    "retention_money": "质量保证金",
+    "warranty": "保修期 / 缺陷责任期",
+    "provisional_sum": "暂列金额",
+    "downward_rate": "下浮率",
+    "safety_fee": "安全文明施工费",
+    "tech_standard": "技术标准和要求",
+    "subcontract": "分包约定",
 }
 
 # 主卡字段 → 可读标题（项目基本信息组）
@@ -517,10 +569,13 @@ def _anchor_key_of(payload: dict) -> str | None:
 
 
 def _review_title(payload: dict, *, kind: str) -> str:
-    """可读标题：锚点登记表 / 主卡字段表 → 兜底“类别 + 待复核”（不推断）。"""
+    """可读标题：锚点登记表 / 主卡字段表 / 条款字段表 → 兜底“类别 + 待复核”（不推断）。"""
     if kind == CANDIDATE_KIND_FIELD:
         fk = payload.get("field_key") or ""
         return MAIN_CARD_TITLE.get(fk) or f"{fk}（待复核）"
+    if kind == CANDIDATE_KIND_TERM:
+        fk = payload.get("field_key") or ""
+        return TERM_TITLE.get(fk) or f"{fk}（条款，待复核）"
     anchor = _anchor_key_of(payload)
     if anchor and anchor in ANCHOR_TITLE:
         return ANCHOR_TITLE[anchor]
@@ -529,9 +584,12 @@ def _review_title(payload: dict, *, kind: str) -> str:
 
 
 def _review_group(payload: dict, *, kind: str) -> str:
-    """确定性分组：main_card_field → 项目基本信息；action → 动作组；否则按锚点表；兜底“其他”。"""
+    """确定性分组：main_card_field → 项目基本信息；term_field → 投标动作与风险条款；
+    action → 动作组；否则按锚点表；兜底“其他”。"""
     if kind == CANDIDATE_KIND_FIELD:
         return GROUP_BASIC
+    if kind == CANDIDATE_KIND_TERM:
+        return GROUP_ACTION
     if payload.get("req_type") == "action_requirement":
         return GROUP_ACTION
     anchor = _anchor_key_of(payload)
@@ -665,7 +723,7 @@ def grouped_requirements(
                 "requirement_type": "hard" if req_type == "hard_requirement"
                 else ("scored" if req_type == "scored_requirement"
                       else ("action" if req_type == "action_requirement" else None)),
-                "value": (payload.get("value") if row.kind == CANDIDATE_KIND_FIELD else
+                "value": (payload.get("value") if row.kind in (CANDIDATE_KIND_FIELD, CANDIDATE_KIND_TERM) else
                           ((row.revised_payload or {}).get("value"))),
                 "assertion": payload.get("assertion") or "",
                 "clause_ref": payload.get("clause_ref") or payload.get("clause") or "",

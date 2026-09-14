@@ -1,0 +1,632 @@
+{
+  "case_id": "industry_anchor_variants_20260914",
+  "title": "x施工招标公告",
+  "source": {
+    "note": "2026-09-14 锚点扩充批次（保证金/担保/有效期/质保/暂列金/下浮率/评标/合同/资格/分包与进口极性/标签/时间）合成变体 + 三处摘录边界修正反例"
+  },
+  "variants": [
+    {
+      "body": "投标保证金：人民币30万元。",
+      "title": "x施工招标公告",
+      "expect": {
+        "bid_bond": {
+          "value": "30万元"
+        }
+      },
+      "body_sha256": "6e226b029ee9328c5ff8669a390cdb59be53ae8a74bf9c2bedcf8dc17250b635"
+    },
+    {
+      "body": "投标保证金金额为人民币贰拾万元整，以银行转账形式递交。",
+      "title": "x施工招标公告",
+      "expect": {
+        "bid_bond": {
+          "contains": [
+            "贰拾万元"
+          ]
+        }
+      },
+      "body_sha256": "e400f0db70db5ed4db03bdab7b06137cbf33d342847ec9fbc47dceb1940746a8"
+    },
+    {
+      "body": "投标保证金 350000元 投标有效期 90日历天",
+      "title": "x施工招标公告",
+      "expect": {
+        "bid_bond": {
+          "value": "350000元"
+        },
+        "bid_validity": {
+          "value": "90日历天"
+        }
+      },
+      "body_sha256": "e22912929ecde012626455b9786d9164c0d8f33ee31d4ab4ae28e2adc8913e24"
+    },
+    {
+      "body": "履约保证金：合同价的10%。",
+      "title": "x施工招标公告",
+      "expect": {
+        "performance_bond": {
+          "value": "10%"
+        }
+      },
+      "body_sha256": "663f25cca4e3826fde6b1ee305ea4cdf4d19596a9f817f3ef63b8da54f51b088"
+    },
+    {
+      "body": "履约担保金额为签约合同价的5％。",
+      "title": "x施工招标公告",
+      "expect": {
+        "performance_bond": {
+          "value": "5％"
+        }
+      },
+      "body_sha256": "ee464a25c0926401758d4408af29966e48274b010f715d6969622a975a46f7fc"
+    },
+    {
+      "body": "履约保证金：人民币100万元",
+      "title": "x施工招标公告",
+      "expect": {
+        "performance_bond": {
+          "value": "100万元"
+        }
+      },
+      "body_sha256": "60b82d9f76c170cd4d4d27a80ee8c4fa81064df9cc5a04561a80570ffed3cf7e"
+    },
+    {
+      "body": "工程预付款为合同价款的20%，在开工前支付。",
+      "title": "x施工招标公告",
+      "expect": {
+        "advance_payment": {
+          "value": "20%"
+        }
+      },
+      "body_sha256": "176b00a8b171bd4cc045a29ee39a3caa8425172bb15a3ba6fa16ddce61c7be64"
+    },
+    {
+      "body": "质量保证金按结算价的3%预留。",
+      "title": "x施工招标公告",
+      "expect": {
+        "retention_money": {
+          "value": "3%"
+        }
+      },
+      "body_sha256": "a2f996e261407c011359a3ee9df086484b1ac994d7e10ddb3040732371060e37"
+    },
+    {
+      "body": "投标有效期：自投标截止之日起90天。",
+      "title": "x施工招标公告",
+      "expect": {
+        "bid_validity": {
+          "value": "90天"
+        }
+      },
+      "body_sha256": "78507c06ffe52b338a1339d064838a30c34404addc08246357725e881d3dfcfa"
+    },
+    {
+      "body": "投标有效期为120日历天。",
+      "title": "x施工招标公告",
+      "expect": {
+        "bid_validity": {
+          "value": "120日历天"
+        }
+      },
+      "body_sha256": "a16d0527d305c2e3f118e9c96f803258403e15c4378a16c34ff89844bfad3b4b"
+    },
+    {
+      "body": "保修期：24个月 缺陷责任期：12个月",
+      "title": "x施工招标公告",
+      "expect": {
+        "warranty": {
+          "value": "24个月"
+        }
+      },
+      "body_sha256": "0ed8d369550f957b2e458ac02fb43c3fd3be157e88cc4d7feae2ff2b4dc26553"
+    },
+    {
+      "body": "工程质量保修期为2年。",
+      "title": "x施工招标公告",
+      "expect": {
+        "warranty": {
+          "value": "2年"
+        }
+      },
+      "body_sha256": "aa6dcea2cea8e802f37d8d0d2ccdc544153847480db51c1451ef1c9753e4ea9c"
+    },
+    {
+      "body": "暂列金额：150万元。",
+      "title": "x施工招标公告",
+      "expect": {
+        "provisional_sum": {
+          "value": "150万元"
+        }
+      },
+      "body_sha256": "307fd3cf525b734872b00529fbf33c462780f3f61306ec6f83a5193b81003781"
+    },
+    {
+      "body": "暂列金额为 1,200,000元",
+      "title": "x施工招标公告",
+      "expect": {
+        "provisional_sum": {
+          "contains": [
+            "1,200,000"
+          ]
+        }
+      },
+      "body_sha256": "d2019fb8375c8dbb654ddd0f310aef121fa6068408c491b47e22b157da9b736e"
+    },
+    {
+      "body": "下浮率不得低于5%。",
+      "title": "x施工招标公告",
+      "expect": {
+        "downward_rate": {
+          "value": "5%"
+        }
+      },
+      "body_sha256": "ff589c14e3fd3a0c54b26ea2013c448adc136b33e24d8083e9561c9dbc2190ef"
+    },
+    {
+      "body": "招标文件售价：每套500元，售后不退。",
+      "title": "x施工招标公告",
+      "expect": {
+        "file_price": {
+          "value": "500元"
+        }
+      },
+      "body_sha256": "bb2ab3d351eb9efe5ae79bbde003da219030463c5274d4b0f6b88e016a65bb6c"
+    },
+    {
+      "body": "安全文明施工费不参与竞争。",
+      "title": "x施工招标公告",
+      "expect": {
+        "safety_fee": {
+          "contains": [
+            "不参与竞争"
+          ]
+        }
+      },
+      "body_sha256": "f942d60b0bcb42da926435315c723cf623070fd45bb27ddbfd8b05b10f13a084"
+    },
+    {
+      "body": "安全文明施工措施费 86.5万元",
+      "title": "x施工招标公告",
+      "expect": {
+        "safety_fee": {
+          "value": "86.5万元"
+        }
+      },
+      "body_sha256": "ccafbba9be2c9a6f6f464262e333983ad20013840474e44286ad6b7dceeb66e7"
+    },
+    {
+      "body": "评标办法：综合评估法。",
+      "title": "x施工招标公告",
+      "expect": {
+        "evaluation_method": {
+          "value": "综合评估法"
+        }
+      },
+      "body_sha256": "3378ccbf7b94c412d3bd81118cd0e3774bf8aa74a1609e0fa8ad2bc5134393f8"
+    },
+    {
+      "body": "评标方法：经评审的最低投标价法",
+      "title": "x施工招标公告",
+      "expect": {
+        "evaluation_method": {
+          "value": "经评审的最低投标价法"
+        }
+      },
+      "body_sha256": "036b9605444ce1ab64bf22cddb1a93def65451f2244d7faa4b92762c2c27ccea"
+    },
+    {
+      "body": "本项目采用合理低价法评标。",
+      "title": "x施工招标公告",
+      "expect": {
+        "evaluation_method": {
+          "value": "合理低价法"
+        }
+      },
+      "body_sha256": "7690f759f70703e0d195582ddfd5406e40588fe5a01c86c4eb809b16f700ef90"
+    },
+    {
+      "body": "评审办法为综合评分法，价格分40分，技术分35分，商务分25分。",
+      "title": "x施工招标公告",
+      "expect": {
+        "evaluation_method": {
+          "value": "综合评分法"
+        },
+        "price_score": {
+          "value": "40分"
+        },
+        "tech_score": {
+          "value": "35分"
+        },
+        "business_score": {
+          "value": "25分"
+        }
+      },
+      "body_sha256": "5c5f6ec5934c3af55732bad1311959fbc5197e6e4ea25b5ecdf3c71fc582595c"
+    },
+    {
+      "body": "投标报价（30分）、技术标（50分）、商务标（20分）。",
+      "title": "x施工招标公告",
+      "expect": {
+        "price_score": {
+          "value": "30分"
+        },
+        "tech_score": {
+          "value": "50分"
+        },
+        "business_score": {
+          "value": "20分"
+        }
+      },
+      "body_sha256": "a930a345feeb7450fb1030cf787492904e0028a17d82eafc3b128cf2d06b6128"
+    },
+    {
+      "body": "合同类型：固定单价合同。",
+      "title": "x施工招标公告",
+      "expect": {
+        "contract_type": {
+          "value": "固定单价合同"
+        }
+      },
+      "body_sha256": "73b104bbfd0832502779e2f2bcb5df13ece7f5b4137cb6068c6aa91c5aa7fee2"
+    },
+    {
+      "body": "计价方式：固定总价",
+      "title": "x施工招标公告",
+      "expect": {
+        "contract_type": {
+          "value": "固定总价"
+        }
+      },
+      "body_sha256": "8ebd9862e6d502b33df0bc51efdafd5250944de4d75105d2057b32fe10b2423d"
+    },
+    {
+      "body": "本工程实行固定总价包干。",
+      "title": "x施工招标公告",
+      "expect": {
+        "contract_type": {
+          "value": "固定总价包干"
+        }
+      },
+      "body_sha256": "a8fed524b05bcda32f7dc7979f4aedeb36d720d1ff6d03beffb70b368486d76d"
+    },
+    {
+      "body": "付款方式：按月进度付款，支付至已完工程量的80%。",
+      "title": "x施工招标公告",
+      "expect": {
+        "payment_terms": {
+          "contains": [
+            "按月进度付款",
+            "80%"
+          ]
+        }
+      },
+      "body_sha256": "26b319f56a2fac7bd3f0cc2641f5452d0cbae3d4ed83fef89d05830fe189737a"
+    },
+    {
+      "body": "工程款支付方式：竣工验收合格后支付至合同价的95%，余款作为质保金。质量要求：合格。",
+      "title": "x施工招标公告",
+      "expect": {
+        "payment_terms": {
+          "contains": [
+            "95%"
+          ],
+          "not_contains": [
+            "质量要求"
+          ]
+        }
+      },
+      "body_sha256": "bd7743b3b0cb5a1330ff2e54a601c1700a75049b6f5e40d00c95285bde73c550"
+    },
+    {
+      "body": "资格审查方式：资格后审。",
+      "title": "x施工招标公告",
+      "expect": {
+        "prequalification": {
+          "value": "资格后审"
+        }
+      },
+      "body_sha256": "19c9704f0fc94f90a568f07c0b6526de62244277569dc02f47b147e492220d45"
+    },
+    {
+      "body": "本次招标采用资格预审。",
+      "title": "x施工招标公告",
+      "expect": {
+        "prequalification": {
+          "value": "资格预审"
+        }
+      },
+      "body_sha256": "269cb60b04b4ffc2da7954a413252f1baf58ff6449a94bc6a1306ace564cb934"
+    },
+    {
+      "body": "具有建设行政主管部门颁发的有效期内的安全生产许可证。",
+      "title": "x施工招标公告",
+      "expect": {
+        "safety_license": {
+          "contains": [
+            "安全生产许可证"
+          ]
+        }
+      },
+      "body_sha256": "c5b65f4c7bc0079fb2fbf26a2620dae94ca8306b44dd814d77bbf61a6c5de04b"
+    },
+    {
+      "body": "近三年内完成过至少一项类似市政道路工程业绩。",
+      "title": "x施工招标公告",
+      "expect": {
+        "similar_performance": {
+          "contains": [
+            "近三年内",
+            "类似市政道路工程"
+          ]
+        }
+      },
+      "body_sha256": "1bc95ab3a9c75cbec1fcd2a177d351cfddfbde35ffec525ea7aca8069c1417d5"
+    },
+    {
+      "body": "参加本次招标活动前三年内在经营活动中没有重大违法记录。",
+      "title": "x施工招标公告",
+      "expect": {
+        "no_violation": {
+          "contains": [
+            "没有重大违法记录"
+          ]
+        }
+      },
+      "body_sha256": "e145c7936fd13fe07f9f90877862d1fa6ec67d34741a043b98f54527c145de26"
+    },
+    {
+      "body": "未被列入重大税收违法失信主体名单、政府采购严重违法失信行为记录名单。",
+      "title": "x施工招标公告",
+      "expect": {
+        "credit_blacklist": {
+          "contains": [
+            "重大税收违法失信主体名单"
+          ]
+        }
+      },
+      "body_sha256": "21d7db87a1bd89ec88e5c0d3795f90cc30aabb711ae0c8a48e142d8c0583d1e5"
+    },
+    {
+      "body": "技术负责人：具有市政工程相关专业中级及以上职称。",
+      "title": "x施工招标公告",
+      "expect": {
+        "tech_lead": {
+          "contains": [
+            "中级及以上职称"
+          ]
+        }
+      },
+      "body_sha256": "a903e1315dd3c7b36eb395fab03a36aeb674847062c84bab2b37cf7484ed77f2"
+    },
+    {
+      "body": "为拟派项目经理连续缴纳近6个月社保。",
+      "title": "x施工招标公告",
+      "expect": {
+        "social_security": {
+          "contains": [
+            "6个月社保"
+          ]
+        }
+      },
+      "body_sha256": "6ba4a0744cdb89c682cad72c8bfabcf17e47939b8a86da0ce53ac3cec8d56e10"
+    },
+    {
+      "body": "财务要求：提供2023年度、2024年度经审计的财务报告。",
+      "title": "x施工招标公告",
+      "expect": {
+        "financial": {
+          "contains": [
+            "2023年度",
+            "财务报告"
+          ]
+        }
+      },
+      "body_sha256": "a152d88289733f30d96b6bbfe61c5652e321330413cf5eb321e8a508e015f5c6"
+    },
+    {
+      "body": "是否允许分包：否",
+      "title": "x施工招标公告",
+      "expect": {
+        "subcontract_allowed": {
+          "enum": false,
+          "value": "不允许分包"
+        }
+      },
+      "body_sha256": "2dbf57c0f9547daa8630e8bf7ff12bdec1b091081ba6130b7098baef188c7b77"
+    },
+    {
+      "body": "是否允许分包：是",
+      "title": "x施工招标公告",
+      "expect": {
+        "subcontract_allowed": {
+          "enum": true,
+          "value": "允许分包"
+        }
+      },
+      "body_sha256": "bf97a9fddac652b9dbc9bd7f6acacc6eb188468d88ea031b87c59e8c8794c4cf"
+    },
+    {
+      "body": "本工程不允许分包。",
+      "title": "x施工招标公告",
+      "expect": {
+        "subcontract_allowed": {
+          "enum": false
+        }
+      },
+      "body_sha256": "73f673b0e8201a9e5599bbe4e69ad66ca5689edece9ef3118fe793ad6562ac19"
+    },
+    {
+      "body": "允许将非主体、非关键性工作分包。",
+      "title": "x施工招标公告",
+      "expect": {
+        "subcontract_allowed": {
+          "enum": true
+        }
+      },
+      "body_sha256": "0231abe3fe9e6ba325df41c87cc044937916426643f649fb3b9151c8587de660"
+    },
+    {
+      "body": "是否接受进口产品：否",
+      "title": "x施工招标公告",
+      "expect": {
+        "import_allowed": {
+          "enum": false
+        }
+      },
+      "body_sha256": "b8c4f55b1b48986cb3ecfe6d3727408a9304a74edac3c6892186eee614c5d3cf"
+    },
+    {
+      "body": "本项目接受进口产品参与投标。",
+      "title": "x施工招标公告",
+      "expect": {
+        "import_allowed": {
+          "enum": true
+        }
+      },
+      "body_sha256": "80758afd00b1cb66de51076c7832967aba24590c4eada83f168fa9424e2eef34"
+    },
+    {
+      "body": "（是/否）允许分包： 0",
+      "title": "x施工招标公告",
+      "expect": {
+        "subcontract_allowed": {
+          "enum": false
+        }
+      },
+      "body_sha256": "7fc9be9e9ebfddc82e065dba2b752a86bcf4a3c93ef8c2e951b20e94d536cce7"
+    },
+    {
+      "body": "招标范围：施工图范围内的道路、排水、照明工程。",
+      "title": "x施工招标公告",
+      "expect": {
+        "scope_content": {
+          "contains": [
+            "道路、排水、照明"
+          ]
+        }
+      },
+      "body_sha256": "901752672bb602ae48c9fdd84b34a382bc07f2700c9cbd4036eba8094caefd28"
+    },
+    {
+      "body": "开标地点：石家庄市公共资源交易中心三楼第二开标室。",
+      "title": "x施工招标公告",
+      "expect": {
+        "open_location": {
+          "contains": [
+            "第二开标室"
+          ]
+        }
+      },
+      "body_sha256": "0aa9fa583f33a010729bb1fbc9ff2731e96894fca233f47df0b9d23adf5bb86a"
+    },
+    {
+      "body": "递交地点：保定市公共资源交易中心二楼。开标地点：同递交地点。",
+      "title": "x施工招标公告",
+      "expect": {
+        "bid_location": {
+          "contains": [
+            "二楼"
+          ],
+          "not_contains": [
+            "开标地点"
+          ]
+        }
+      },
+      "body_sha256": "b9d3074e16f566c15b4f33c57c98396a556b6d09ed6691cf6640653b3868fb75"
+    },
+    {
+      "body": "招标代理机构：河北某某招标代理有限公司 建设地点：保定市莲池区",
+      "title": "x施工招标公告",
+      "expect": {
+        "agency": {
+          "value": "河北某某招标代理有限公司"
+        }
+      },
+      "body_sha256": "47470800347c7ee65909b1f868e32830424d235b2272db5c6bfcbe22ddb47d46"
+    },
+    {
+      "body": "资金来源：财政资金。",
+      "title": "x施工招标公告",
+      "expect": {
+        "funding_source": {
+          "value": "财政资金"
+        }
+      },
+      "body_sha256": "d7a61f71b29e059c33b0467fa313f03a14fddcd7c66fdc4ddd8e983d710b744d"
+    },
+    {
+      "body": "批准文号：石发改投资〔2026〕123号。",
+      "title": "x施工招标公告",
+      "expect": {
+        "approval_doc": {
+          "contains": [
+            "〔2026〕123号"
+          ]
+        }
+      },
+      "body_sha256": "80a7e8ddba5c00eeeaaf5e49861758a6c6760529cb6392955e18c18bbd4f6824"
+    },
+    {
+      "body": "招标文件获取时间：2026年9月20日至2026年9月26日。",
+      "title": "x施工招标公告",
+      "expect": {
+        "doc_deadline": {
+          "value": "2026年9月26日"
+        }
+      },
+      "body_sha256": "fa5193667cc29831ef8984325b79eae587f74fafa7506d6c8a31a2ae60848e6d"
+    },
+    {
+      "body": "答疑截止时间：2026年9月28日。",
+      "title": "x施工招标公告",
+      "expect": {
+        "q_deadline": {
+          "value": "2026年9月28日"
+        }
+      },
+      "body_sha256": "91643cef905dbfec11a81b4695413e71daec9a9a0fb5154226eb16096f941374"
+    },
+    {
+      "body": "踏勘时间：2026年9月22日9:00。",
+      "title": "x施工招标公告",
+      "expect": {
+        "site_visit": {
+          "value": "2026年9月22日"
+        }
+      },
+      "body_sha256": "d496283c4ee62656b239117f0575db2fe8e218269a7c586e3fd03bc54a2caa0e"
+    },
+    {
+      "body": "招标文件售价：每套500元 3. 投标人资格要求 3.1 资质要求：具备市政公用工程施工总承包三级资质。",
+      "title": "x施工招标公告",
+      "expect": {
+        "file_price": {
+          "value": "500元",
+          "quote": "招标文件售价：每套500元"
+        }
+      },
+      "body_sha256": "37c592c24b6f0f4f394196625b6aa740fa524cfe525d51d587158f998631b688"
+    },
+    {
+      "body": "拟派项目经理连续缴纳近6个月社保。",
+      "title": "x施工招标公告",
+      "expect": {
+        "social_security": {
+          "quote_startswith": "拟派项目经理连续缴纳近6个月"
+        }
+      },
+      "body_sha256": "b10b626e9c4a558d85396ef7fdd722ba79d4422359dbeb8798c14995c2fd4993"
+    },
+    {
+      "body": "踏勘时间：2026年9月22日9:00，答疑截止时间：2026年9月28日。",
+      "title": "x施工招标公告",
+      "expect": {
+        "q_deadline": {
+          "value": "2026年9月28日",
+          "quote_endswith": "答疑截止时间：2026年9月28日。"
+        }
+      },
+      "body_sha256": "578789a309ec2528fb6f60276538e827b4bccfa5d339f7e9fe0a848e302cef67"
+    }
+  ]
+}

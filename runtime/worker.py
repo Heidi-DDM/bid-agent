@@ -117,7 +117,7 @@ def _execute_parse_tender_document(session, input_ref: str | None,
     from runtime.core.config import object_store_root
     from runtime.db import api_service, parse_service
     from runtime.db.models import Material, MaterialVersion
-    from runtime.parsing.extractor import extract_main_card, extract_rule_candidates
+    from runtime.parsing.extractor import extract_main_card, extract_rule_candidates, extract_term_candidates
     from runtime.parsing.router import route_document
 
     material = session.scalar(
@@ -145,6 +145,14 @@ def _execute_parse_tender_document(session, input_ref: str | None,
         content_hash=material.content_hash,
     )
     field_cands = extract_main_card(route.pages)
+    term_cands = extract_term_candidates(route.pages)
+    # P4（docs/10 §5）：规则未命中的必查 hard 候选 → 云端大模型仅定位 verbatim 摘录 → 规则复核
+    # 通过才替换 missing（confidence=low 待人工确认）；LLM 关闭/失败一律保持 missing，不推断
+    try:
+        from runtime.parsing.llm_fallback import fallback_rule_candidates
+        rule_cands = fallback_rule_candidates(route.pages, rule_cands, permission_scope="public_read")
+    except Exception as exc:  # 兜底层任何异常不得阻断确定性主链
+        logger.warning("LLM 兜底（规则候选）跳过：%s", exc)
     c_r, s_r = parse_service.store_candidates(
         session, project_id=project, material_id=material.material_id,
         version=material.version, kind="rule_candidate",
@@ -155,26 +163,32 @@ def _execute_parse_tender_document(session, input_ref: str | None,
         version=material.version, kind="main_card_field",
         candidates=[c.to_dict() for c in field_cands],
     )
-    if c_r == 0 and c_f == 0:
+    c_t, s_t = parse_service.store_candidates(
+        session, project_id=project, material_id=material.material_id,
+        version=material.version, kind=parse_service.CANDIDATE_KIND_TERM,
+        candidates=[c.to_dict() for c in term_cands],
+    )
+    if c_r == 0 and c_f == 0 and c_t == 0:
         raise RuntimeError(
             f"材料 {material.material_id}:v{material.version} 未产出任何候选"
             "（全部与既有候选重复且未落库？禁止静默通过）"
         )
     parse_service.mark_material_manual_review(
         session, material_id=material.material_id, version=material.version,
-        note=f"解析候选已生成 rule={c_r} main_card={c_f}，等待人工复核确认（F021 §2.7）",
+        note=f"解析候选已生成 rule={c_r} main_card={c_f} term={c_t}，等待人工复核确认（F021 §2.7）",
     )
     api_service.audit(
         session, actor="system", action="parse.candidates_stored",
         basis=f"material={material.material_id}:v{material.version} kind={route.kind}",
-        outcome=f"rule_created={c_r} rule_skipped={s_r} field_created={c_f} field_skipped={s_f}",
+        outcome=f"rule_created={c_r} rule_skipped={s_r} field_created={c_f} field_skipped={s_f} "
+                f"term_created={c_t} term_skipped={s_t}",
         object_ref=material.project_id or project_id,
     )
     session.commit()
     logger.info(
-        "招标文件解析完成 material=%s:%s kind=%s rules=%s(+%s) fields=%s(+%s) → manual_review",
+        "招标文件解析完成 material=%s:%s kind=%s rules=%s(+%s) fields=%s(+%s) terms=%s(+%s) → manual_review",
         material.material_id, material.version, route.kind,
-        c_r, s_r, c_f, s_f,
+        c_r, s_r, c_f, s_f, c_t, s_t,
     )
 
 

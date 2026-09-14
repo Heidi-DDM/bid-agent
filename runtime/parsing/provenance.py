@@ -15,10 +15,14 @@ from typing import Optional, Tuple
 from runtime.parsing.announcement_prescreen import extract_prescreen
 
 # 审计关键字段：报价与资格判断的输入，quote 不逐字即拒收转人工
+# 2026-09-14 锚点扩充：保证金/担保/预付款/下浮率（报价成本）、投标有效期、分包与进口产品极性、
+# 文件获取截止一并纳入零容忍集
 AUDIT_CRITICAL_FIELDS = frozenset({
-    "qualification", "joint_venture", "sme_dedicated",
+    "qualification", "joint_venture", "sme_dedicated", "subcontract_allowed", "import_allowed",
     "budget_amount", "ceiling_price", "equip_amount", "work_amount",
-    "deadline_bid", "deadline_signup", "open_date",
+    "bid_bond", "performance_bond", "advance_payment", "retention_money", "downward_rate",
+    "provisional_sum", "bid_validity",
+    "deadline_bid", "deadline_signup", "open_date", "doc_deadline",
 })
 
 _WS = re.compile(r"\s+")
@@ -38,10 +42,14 @@ def verify_field_roundtrip(text: str, field: dict) -> bool:
 
 
 def build_detail_summary(title: str, text: str, *, content_hash: Optional[str] = None,
-                         clause: str = "公告原文") -> dict:
+                         clause: str = "公告原文", llm_fallback: Optional[bool] = None,
+                         llm_client=None) -> dict:
     """抽取 + 逐字段 round-trip 门禁 → detail_summary dict（service 与存量回填共用口径）。
 
     content_hash 绑定固化版本：文本重抓/多版本后旧偏移按 hash 判定失效（前端定位兜底）。
+    P4（2026-09-14）：门禁之后对仍 missing 的字段跑「云端大模型定位摘录 → 同一套锚点复核」兜底
+    （runtime/parsing/llm_fallback）；llm_fallback=None 按配置开关，False 强制关闭（离线回填/
+    测试），兜底产物 confidence=low + review=llm_located，必须人工确认；兜底任何异常不阻断主链。
     """
     summary = extract_prescreen(title, text, clause=clause)
     out: dict = {}
@@ -55,6 +63,20 @@ def build_detail_summary(title: str, text: str, *, content_hash: Optional[str] =
             else:
                 d["quote"] = d["start"] = d["end"] = None
         out[key] = d
+    if llm_fallback is False:
+        return out
+    try:
+        from runtime.parsing.llm_fallback import apply_announcement_fallback
+        out = apply_announcement_fallback(out, title, text, content_hash=content_hash,
+                                          client=llm_client, enabled=llm_fallback)
+        # 兜底产物再过一次 round-trip（构造性必过；防兜底实现回归）
+        for key, d in out.items():
+            if d.get("source") == "llm" and not verify_field_roundtrip(text, d):
+                d["value"], d["missing"], d["enum"] = None, True, None
+                d["review"] = "quote_not_verbatim"
+    except Exception as exc:  # pragma: no cover - 兜底层异常不得影响确定性主链
+        import logging
+        logging.getLogger("runtime.parsing.provenance").warning("LLM 兜底跳过：%s", exc)
     return out
 
 

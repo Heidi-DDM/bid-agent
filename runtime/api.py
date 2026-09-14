@@ -212,7 +212,7 @@ def _knowledge_status() -> dict[str, Any]:
         status["deepseek_public_only"]["available"] = ok
         if not ok:
             status["deepseek_public_only"]["error"] = (
-                "DEEPSEEK_PUBLIC_ONLY=false 或 DEEPSEEK_BASE_URL 未配置/不合规"
+                "DEEPSEEK_PUBLIC_ONLY=false、DEEPSEEK_BASE_URL 未配置/不合规或 DEEPSEEK_API_KEY 为空"
             )
     else:
         status["deepseek_public_only"]["available"] = True
