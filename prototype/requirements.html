@@ -247,8 +247,23 @@
     /* ---------- 数据加载 / 渲染 ---------- */
     async function loadData(forceReload) {
       const badgeEl = document.getElementById("rr-badge");
+      const box = document.getElementById("groups-box");
       if (forceReload) { badgeEl.textContent = "加载中…"; badgeEl.className = "badge info"; }
-      const resp = await apiGet(`/parse/projects/${encodeURIComponent(projectId)}/requirements`);
+      let resp;
+      try {
+        resp = await apiGet(`/parse/projects/${encodeURIComponent(projectId)}/requirements`);
+      } catch (err) {
+        // 2026-09-14：请求失败不得静默卡在「加载中…」（实测：页面 origin 失效/代理拦截时
+        // fetch 连接层失败，无任何提示）。401 已由 api:unauthorized 统一处理，这里兜底展示。
+        if (err.status !== 401) apiShowError(err);
+        badgeEl.className = "badge error";
+        badgeEl.textContent = "加载失败";
+        box.innerHTML = `<div class="notice error"><b>加载解析结果失败</b>：${esc(err.message)}${err.requestId ? `（request_id：<code>${esc(err.requestId)}</code>）` : ""}<br>
+          <span class="hint">常见原因：① runtime 未启动——项目终端运行 <code>bash scripts/setup_local_env.sh start</code>；
+          ② 页面不是从 <code>http://127.0.0.1:8080</code> 打开（直接双击 HTML 或经已关闭的预览端口打开会跨域失败）；
+          ③ 系统代理拦截 127.0.0.1。登录失效请用右上角重新登录后刷新。</span></div>`;
+        return;
+      }
       curData = resp;
       document.getElementById("rr-proj").innerHTML = `· ${esc(resp.project_id || "")}`;
       const src = resp.source;
@@ -354,14 +369,15 @@
     document.getElementById("rr-batch-approve").addEventListener("click", batchApprove);
     document.getElementById("rr-back").href = "index.html" + (projectId ? "" : "");
 
-    // 无项目参数：提示回搜索
+    // 无项目参数：提示回搜索（注意：经典 script 顶层 return 是语法错误——
+    // 2026-09-14 实测整块脚本因此解析失败、页面永远停在「加载中…」，必须用 if/else）
     if (!projectId) {
       document.getElementById("groups-box").innerHTML =
         `<div class="notice warn"><b>尚未选择项目</b>：解析结果页需要来自搜索候选“选择深入”建立的 <code>project_id</code>。请先返回搜索结果选择项目并上传完整招标文件。</div>`;
       document.getElementById("rr-note").innerHTML = "";
-      return;
+    } else {
+      loadData();
     }
-    loadData();
   </script>
 </body>
 </html>

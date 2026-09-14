@@ -8,9 +8,13 @@
 #
 # 用法（在项目根目录）：
 #   bash scripts/setup_local_env.sh          # 安装 + 建库 + 迁移 + 启动 + 健康检查
-#   bash scripts/setup_local_env.sh start    # 启动 embedding(8001) + API + worker
-#   bash scripts/setup_local_env.sh stop     # 停止 embedding + API + worker
+#   bash scripts/setup_local_env.sh start    # 启动 embedding(8001) + API + worker + 原型静态服务(8080)
+#   bash scripts/setup_local_env.sh stop     # 停止 embedding + API + worker + 原型静态服务
 #   bash scripts/setup_local_env.sh status   # 查看进程与健康检查
+#
+# 2026-09-14：原型静态服务（http.server 8080，serve prototype/）纳入一键管辖——
+#   原型页必须从 http://127.0.0.1:8080 打开（file:// 或编辑器预览端口会跨域失败，
+#   09-10/09-14 两次"页面卡加载中/Failed to fetch"事故均因 8080 未起）。
 #
 # 幂等：重复执行安全（已装依赖/已建库会自动跳过）。
 # 2026-09-09：embedding 服务（BGE-M3，127.0.0.1:8001）已纳入一键管辖——否则 8001 未起时
@@ -268,6 +272,17 @@ start_services() {
     nohup .venv/bin/python -m runtime.worker > logs/worker.log 2>&1 &
     echo $! > logs/worker.pid
   fi
+  # 原型静态服务（8080）：同样以端口监听为准（此前手工 python -m http.server 拉起的也能接管）
+  local proto_pid
+  proto_pid="$(lsof -tiTCP:8080 -sTCP:LISTEN -P 2>/dev/null | head -1 || true)"
+  if [[ -n "$proto_pid" ]] && kill -0 "$proto_pid" 2>/dev/null; then
+    echo "$proto_pid" > logs/prototype.pid
+    ok "原型静态服务已在运行 (pid $proto_pid，http://127.0.0.1:8080)，跳过启动"
+  else
+    log "启动原型静态服务（http.server，127.0.0.1:8080）..."
+    nohup .venv/bin/python -m http.server 8080 --bind 127.0.0.1 --directory prototype > logs/prototype.log 2>&1 &
+    echo $! > logs/prototype.pid
+  fi
   sleep 3
   if [[ -f logs/api.pid ]] && kill -0 "$(cat logs/api.pid)" 2>/dev/null; then
     ok "API 进程运行中 (pid $(cat logs/api.pid))"
@@ -303,7 +318,17 @@ stop_services() {
       sleep 0.25
     done
   fi
-  rm -f logs/api.pid logs/worker.pid
+  # 原型静态服务（8080）：杀端口监听进程（pid 文件可能与实际进程脱节）
+  local proto_pid
+  proto_pid="$(lsof -tiTCP:8080 -sTCP:LISTEN -P 2>/dev/null | head -1 || true)"
+  if [[ -n "$proto_pid" ]]; then
+    kill "$proto_pid" 2>/dev/null || true
+    for _ in $(seq 1 10); do
+      lsof -tiTCP:8080 -sTCP:LISTEN -P >/dev/null 2>&1 || break
+      sleep 0.5
+    done
+  fi
+  rm -f logs/api.pid logs/worker.pid logs/prototype.pid
   embedding_stop
   ok "服务已停止"
 }
@@ -312,12 +337,17 @@ health_check() {
   log "健康检查..."
   printf 'GET /healthz  -> '; curl -s -m 5 http://127.0.0.1:8000/healthz || echo "失败"
   printf '\nGET /readyz   -> '; curl -s -m 5 http://127.0.0.1:8000/readyz || echo "失败"
+  printf '\nGET :8080/index.html -> HTTP '; curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/index.html || echo "失败"
   echo
-  ok "启动完成。日志: logs/api.log / logs/worker.log；数据: PostgreSQL(bid_agent) + runtime/objects"
+  ok "启动完成。日志: logs/api.log / logs/worker.log / logs/prototype.log；数据: PostgreSQL(bid_agent) + runtime/objects"
 }
 
 status_check() {
-  for f in logs/api.pid logs/worker.pid; do
+  # 原型服务可能由 start 之外的方式拉起：先按端口同步 pid 文件再报状态
+  local proto_pid
+  proto_pid="$(lsof -tiTCP:8080 -sTCP:LISTEN -P 2>/dev/null | head -1 || true)"
+  [[ -n "$proto_pid" ]] && echo "$proto_pid" > logs/prototype.pid
+  for f in logs/api.pid logs/worker.pid logs/prototype.pid; do
     local running=1
     if [[ "$f" == logs/worker.pid ]]; then
       worker_is_running && running=0
