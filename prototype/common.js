@@ -67,8 +67,13 @@ function renderTopbar(activePage) {
       <code class="hint">${apiRole()}</code>
       <button class="btn sm ghost" id="btn-logout" title="退出登录">退出</button>`;
   } else {
+    // 本机开发保留账号提示；同源部署（服务器）不暴露任何口令惯例（docs/11 §5）
+    const remote = typeof SAME_ORIGIN_DEPLOY !== "undefined" && SAME_ORIGIN_DEPLOY;
+    const loginHint = remote
+      ? "演示账号与口令由项目负责人线下提供"
+      : "演示账号：bid_specialist / data_admin / business_head / legal，密码同账号";
     authHtml = `
-      <span class="hint" title="演示账号：bid_specialist / data_admin / business_head / legal，密码同账号">未登录</span>
+      <span class="hint" title="${loginHint}">未登录</span>
       <input id="login-user" class="inp" placeholder="账号" autocomplete="username" style="width:96px">
       <input id="login-pass" class="inp" type="password" placeholder="密码" autocomplete="current-password" style="width:96px">
       <button class="btn sm" id="btn-login">登录</button>`;
@@ -87,7 +92,13 @@ function renderTopbar(activePage) {
     const user = document.getElementById("login-user");
     const pass = document.getElementById("login-pass");
     const doLogin = async () => {
-      if (!user.value.trim()) { alert("请输入账号（演示账号密码同账号：bid_specialist 等）"); return; }
+      if (!user.value.trim()) {
+        const remoteDeploy = typeof SAME_ORIGIN_DEPLOY !== "undefined" && SAME_ORIGIN_DEPLOY;
+        alert(remoteDeploy
+          ? "请输入账号（演示账号由项目负责人提供）"
+          : "请输入账号（演示账号密码同账号：bid_specialist 等）");
+        return;
+      }
       try {
         await apiLogin(user.value.trim(), pass.value || user.value.trim());
         window.location.reload();

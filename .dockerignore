@@ -1,0 +1,33 @@
+# Build-context excludes (ASCII only: BuildKit rejects non-ASCII patterns).
+# Chinese-named data folders never reach the server (deploy/rsync-exclude.txt)
+# and the Dockerfile only COPYs runtime/, scripts/matching/, alembic.ini, pytest.ini.
+.git
+.venv
+**/__pycache__
+**/*.pyc
+raw
+logs
+runtime/objects
+runtime/.env
+.env
+.env.*
+embedding_serve
+ppt_build
+prototype
+docs
+archive
+daily
+reports
+templates
+data
+schema
+config
+*.docx
+*.pptx
+*.pdf
+*.xlsx
+*.html
+*.png
+*.md
+deploy/seed/out
+deploy/.env

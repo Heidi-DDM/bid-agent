@@ -1,0 +1,15 @@
+# 服务器镜像依赖（docs/11 §4）：在 requirements-dev.txt 基础上去掉仅 embedding_serve 使用的
+# torch / sentence-transformers（运行时代码无引用，体积数 GB）；其余版本区间与开发环境一致。
+fastapi>=0.115,<1
+python-multipart>=0.0.9,<1
+uvicorn[standard]>=0.30,<1
+SQLAlchemy>=2.0,<3
+alembic>=1.13,<2
+psycopg[binary]>=3.2,<4
+pgvector>=0.3,<1
+pydantic>=2.7,<3
+pydantic-settings>=2.2,<3
+httpx>=0.27,<1
+PyYAML>=6.0,<7
+openpyxl>=3.1,<4
+pytest>=8,<9

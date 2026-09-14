@@ -1,0 +1,77 @@
+# 阿里云演示环境编排（docs/11-部署方案-阿里云演示环境.md §3）
+# 服务器目录：~/bid-agent/app/（本文件位于 app/deploy/）、~/bid-agent/deploy/.env、~/bid-agent/data/objects
+# 调用方式（服务器上，cwd=~/bid-agent/app）：
+#   sudo docker compose -f deploy/docker-compose.yml --env-file ../deploy/.env up -d
+name: bid-agent
+
+x-runtime-common: &runtime-common
+  image: bid-agent-runtime:latest
+  env_file:
+    - ../../deploy/.env
+  volumes:
+    - ../../data/objects:/data/objects
+  restart: unless-stopped
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: bid_agent
+      POSTGRES_USER: bid_agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?deploy/.env 缺少 POSTGRES_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db-init/01-extensions.sql:/docker-entrypoint-initdb.d/01-extensions.sql:ro
+    # 仅容器网络内可达：不发布 5432 到宿主/公网（F018 §6）
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bid_agent -d bid_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    <<: *runtime-common
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *runtime-common
+    command: ["python", "-m", "uvicorn", "runtime.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    <<: *runtime-common
+    command: ["python", "-m", "runtime.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "${PUBLIC_PORT:-2000}:80"
+    volumes:
+      - ../prototype:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -8,7 +8,12 @@
      demo_project_id   当前演示项目（农大 ND-2025）
    ============================================================ */
 
-const API_BASE_DEFAULT = "http://127.0.0.1:8000/api/v1";
+/* 部署自适应（docs/11 部署方案 §3）：页面经 http(s) 从非本机地址提供（nginx 同源部署，
+   如 http://<服务器IP>:2000/）时，默认 API 基址取同源 /api/v1（由 nginx 反代到 api 容器）；
+   本机开发（file:// / localhost / 127.0.0.1）保持 127.0.0.1:8000 直连不变。 */
+const SAME_ORIGIN_DEPLOY =
+  /^https?:$/.test(location.protocol) && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+const API_BASE_DEFAULT = SAME_ORIGIN_DEPLOY ? `${location.origin}/api/v1` : "http://127.0.0.1:8000/api/v1";
 const DEMO_PROJECT_ID = "ND-2025";          // 农大演示项目（已推送，R012 旅程固定样本）
 
 const apiBase = () => localStorage.getItem("api_base") || API_BASE_DEFAULT;
