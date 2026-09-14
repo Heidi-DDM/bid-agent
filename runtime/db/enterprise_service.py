@@ -439,7 +439,7 @@ def import_evidence_file(
     """登记证据文件元数据（F019 §3 evidence_files）。低置信度进入复核队列由
     ocr.review 端点处理；本函数只落元数据，不静默改业务记录状态。"""
     ev = EvidenceFile(
-        evidence_id=f"E-{_now_utc().strftime('%s')}",
+        evidence_id=f"E-{_now_utc().strftime('%s')}-{uuid.uuid4().hex[:6]}",
         material_id=material_id,
         file_type=file_type,
         object_uri=object_uri,

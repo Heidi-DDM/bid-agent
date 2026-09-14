@@ -160,8 +160,13 @@ def _normalize_cell(value) -> str:
     return str(value).strip()
 
 
-def _read_xlsx_rows(content: bytes) -> tuple[list[str], list[list[str]]]:
-    """openpyxl 只读解析首个工作表 → (表头, 数据行)。损坏/加密抛 LedgerError。"""
+def _read_xlsx_rows(content: bytes, *, sheet: str | int | None = None,
+                    max_rows: int = 2000) -> tuple[list[str], list[list[str]]]:
+    """openpyxl 只读解析工作表 → (表头, 数据行)。损坏/加密抛 LedgerError。
+
+    sheet：None=首个工作表（API 上传默认）；str=按名；int=按序号。max_rows 默认 2000
+    （API 上传上限，防畸形文件耗尽内存）；离线全量导入脚本可显式放大。
+    """
     _reject_risky_xlsx(content)
     try:
         from openpyxl import load_workbook
@@ -173,21 +178,30 @@ def _read_xlsx_rows(content: bytes) -> tuple[list[str], list[list[str]]]:
     except (InvalidFileException, zipfile.BadZipFile, KeyError) as exc:
         raise LedgerError(f"XLSX 打开失败（加密/损坏/格式不支持）：{exc}")
     try:
-        ws = wb.worksheets[0]
+        if sheet is None:
+            ws = wb.worksheets[0]
+        elif isinstance(sheet, int):
+            if sheet < 0 or sheet >= len(wb.worksheets):
+                raise LedgerError(f"工作表序号越界: {sheet}（共 {len(wb.worksheets)} 个）")
+            ws = wb.worksheets[sheet]
+        else:
+            if sheet not in wb.sheetnames:
+                raise LedgerError(f"工作表不存在: {sheet!r}（可选 {wb.sheetnames}）")
+            ws = wb[sheet]
         rows_iter = ws.iter_rows(values_only=True)
         headers_raw = next(rows_iter, None)
         headers = [_normalize_cell(h) for h in (headers_raw or [])]
         rows: list[list[str]] = []
         for values in rows_iter:
             rows.append([_normalize_cell(v) for v in values])
-            if len(rows) >= 2000:
+            if len(rows) >= max_rows:
                 break  # 预览与导入共用上限，防止畸形文件耗尽内存
         return headers, rows
     finally:
         wb.close()
 
 
-def _read_csv_rows(content: bytes) -> tuple[list[str], list[list[str]]]:
+def _read_csv_rows(content: bytes, *, max_rows: int = 2000) -> tuple[list[str], list[list[str]]]:
     text = content.decode("utf-8-sig", errors="replace")
     if not text.strip():
         raise LedgerError("CSV 为空文件")
@@ -196,11 +210,12 @@ def _read_csv_rows(content: bytes) -> tuple[list[str], list[list[str]]]:
     if not rows_all:
         raise LedgerError("CSV 无任何行")
     headers = [_normalize_cell(h) for h in rows_all[0]]
-    rows = [[_normalize_cell(v) for v in r] for r in rows_all[1:]][:2000]
+    rows = [[_normalize_cell(v) for v in r] for r in rows_all[1:]][:max_rows]
     return headers, rows
 
 
-def preview_ledger(content: bytes, suffix: str, *, kind: str | None = None) -> dict:
+def preview_ledger(content: bytes, suffix: str, *, kind: str | None = None,
+                   sheet: str | int | None = None, max_rows: int = 2000) -> dict:
     """安全嗅探 + 预览（表头/行数/前 5 行/未映射列/质量警告）。无持久化副作用。
 
     kind ∈ qualifications/performances/personnel/managers 时，unmapped_columns
@@ -228,7 +243,8 @@ def preview_ledger(content: bytes, suffix: str, *, kind: str | None = None) -> d
             "notes": ["xls-old-format"],
         }
     headers, rows = (
-        _read_xlsx_rows(content) if suffix == ".xlsx" else _read_csv_rows(content)
+        _read_xlsx_rows(content, sheet=sheet, max_rows=max_rows) if suffix == ".xlsx"
+        else _read_csv_rows(content, max_rows=max_rows)
     )
     alias = HEADER_ALIASES.get(kind or "", {})
     unmapped: list[str] = []
@@ -255,11 +271,13 @@ def preview_ledger(content: bytes, suffix: str, *, kind: str | None = None) -> d
     }
 
 
-def read_ledger_rows(content: bytes, suffix: str, mapping: dict[str, str]) -> list[dict]:
+def read_ledger_rows(content: bytes, suffix: str, mapping: dict[str, str], *,
+                     sheet: str | int | None = None, max_rows: int = 2000) -> list[dict]:
     """按 {列名: 字段键} 映射读取台账行 → enterprise_service 行字典。
 
     未映射列跳过且不静默丢弃：调用方需先在 preview 阶段展示 unmapped 列供人工确认；
     行来源（sheet 名 + 行号）以 evidence_refs 前缀 ledger: 写入，保留来源回链。
+    sheet/max_rows 见 _read_xlsx_rows（API 上传保持默认：首表、2000 行）。
     """
     suffix = sniff_ledger(content, suffix)
     if suffix == ".xls":
@@ -267,7 +285,8 @@ def read_ledger_rows(content: bytes, suffix: str, mapping: dict[str, str]) -> li
             "旧版 .xls 不支持自动映射导入：请转存 .xlsx/.csv 后重试，或作受控证据由数据管理员人工录入"
         )
     headers, rows = (
-        _read_xlsx_rows(content) if suffix == ".xlsx" else _read_csv_rows(content)
+        _read_xlsx_rows(content, sheet=sheet, max_rows=max_rows) if suffix == ".xlsx"
+        else _read_csv_rows(content, max_rows=max_rows)
     )
     col_to_key: dict[int, str] = {}
     for idx, header in enumerate(headers):
@@ -288,6 +307,7 @@ def read_ledger_rows(content: bytes, suffix: str, mapping: dict[str, str]) -> li
         refs = row.pop("evidence_refs", None) or []
         if isinstance(refs, str):
             refs = [r for r in re.split(r"[;；,，]", refs) if r.strip()]
-        row["evidence_refs"] = list(refs) + [f"ledger:{suffix.strip('.')}:row{row_idx}"]
+        sheet_tag = f":sheet{sheet}" if sheet is not None else ""
+        row["evidence_refs"] = list(refs) + [f"ledger:{suffix.strip('.')}{sheet_tag}:row{row_idx}"]
         out.append(row)
     return out

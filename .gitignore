@@ -70,3 +70,7 @@ deploy/seed/out/
 
 # AI CLI 本地配置目录，不入库
 .codex/
+
+# 导入临时文件（台账上传缓存 / xls 转换产物，含企业资料，禁止提交）
+runtime/.tmp-ledger-uploads/
+runtime/.tmp-import/
