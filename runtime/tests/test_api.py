@@ -32,17 +32,17 @@ def test_readyz_structure(client):
     assert resp.status_code in (200, 503)
     body = resp.json()
     assert "ready" in body
-    # knowledge 检查为 F025 RAG 就绪项（pgvector/embedding/public-only，docs/07 §3.1）
+    # knowledge 检查为 F025 RAG 就绪项（pgvector/embedding/reranker/public-only，docs/07 §3.1）
     assert set(body["checks"]) == {"database", "object_store", "ocr", "model", "knowledge"}
     for name, check in body["checks"].items():
         if name == "knowledge":
-            # knowledge 为嵌套检查项（pgvector/embedding/deepseek_public_only，R025 §3.1）
+            # knowledge 为嵌套检查项（pgvector/embedding/reranker/deepseek_public_only，R025 §3.1）
             for sub, sub_check in check.items():
                 assert "available" in sub_check, f"{name}.{sub}"
         else:
             assert "available" in check, name
     knowledge = body["checks"]["knowledge"]
-    assert set(knowledge) == {"pgvector", "embedding", "deepseek_public_only"}
+    assert set(knowledge) == {"pgvector", "embedding", "reranker", "deepseek_public_only"}
 
 
 def test_readyz_database_unavailable_when_no_db(client):

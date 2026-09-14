@@ -17,16 +17,23 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, File, Form, Header, Request, UploadFile
 from pydantic import BaseModel, Field
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from runtime.collecting import registry as source_registry
+from runtime.collecting.announcement_type import (
+    TYPE_LABELS as ATYPE_LABELS,
+    classify as atype_classify,
+    classify_type,
+    dedupe_by_project,
+)
 from runtime.core.compliance import get_collection_policy, normalize_url as _normalize_url, ComplianceError
 from runtime.routers.deps import get_actor, get_db, get_role, get_request_id, require_role
 from runtime.core.config import object_store_root
 from runtime.core.errors import ApiError
 from runtime.db import api_service, material_service, worker_service
-from runtime.db.models import AnalysisJob, AnnouncementCandidate
+from runtime.db.models import AnalysisJob, AnnouncementCandidate, MaterialVersion
 
 router = APIRouter(prefix="/api/v1/intake", tags=["intake"])
 
@@ -117,52 +124,87 @@ async def search_announcement(
 
 
 def _candidate_card(c: AnnouncementCandidate, *, region_recall: bool = False) -> dict:
-    """候选公告卡（v1.7 DTO，09-优化方案 §3.1.3）。
+    """候选公告卡（v1.7 DTO，09-优化方案 §3.1.3；announcement_type 由标题确定性分类）。
 
     列表页可确证事实：title/publish_date/source_name/source_url/source_category
     （来源分区，非逐条工程种类）；project_type/scale 列表页未标注 → null=待详情
     回源确认，禁止推断；fact_status=list_fact_only；missing_fields[] 如实列出。
-    region_recall=True：本候选来自「检索地区超源覆盖 → 放宽二次召回」，
-    地区未核实，交详情页回源（不因超范围整源丢弃，也不推断归属）。
+
+    C4/D1（2026-09-10）：region/project_type 标题确定性抽取——
+    - region 优先级：详情回填（announcement_fact）> detail_summary.region
+      （announcement_fact）> 标题命中市/县名（title_fact）> None（source_scope_only）；
+    - project_type：标题命中 施工/EPC总承包/监理/设计/勘察/货物/服务 → 填值
+      （provenance=标题）；未命中 → None 待详情；
+    - missing_fields 相应收缩（不再恒缺 project_type）。
 
     ``region`` 只表示公告正文/详情页已经确认的项目实际地区；
     ``source_region_scope`` 是注册表声明的平台覆盖范围，不能冒充项目地区。
     ``region_provenance`` 用于区分来源范围与公告事实，避免前端把二者混用。
     """
+    from runtime.collecting.hebei_regions import region_from_title
+    from runtime.collecting.registry import project_type_from_title
+
     source_spec = source_registry.get(c.source_id)
     source_region_scope = source_spec.region_scope if source_spec else None
+    detail_region = None
+    detail_scale = None
+    if c.detail_summary:
+        f = c.detail_summary.get("region")
+        if isinstance(f, dict) and not f.get("missing") and f.get("value"):
+            detail_region = str(f["value"])
+        # 2026-09-10：详情「建设规模」抽取 → 回填卡片「规模」（公告事实，此前恒待确认）
+        fs = c.detail_summary.get("scale")
+        if isinstance(fs, dict) and not fs.get("missing") and fs.get("value"):
+            detail_scale = str(fs["value"])
     if c.region:
-        region_provenance = "announcement_fact"
-    elif source_region_scope:
-        region_provenance = "source_scope_only"
+        region, region_provenance = c.region, "announcement_fact"
+    elif detail_region:
+        region, region_provenance = detail_region, "announcement_fact"
     else:
-        region_provenance = None
+        title_region = region_from_title(c.title)
+        if title_region:
+            region, region_provenance = title_region, "title_fact"
+        else:
+            region = None
+            region_provenance = "source_scope_only" if source_region_scope else None
+    project_type = project_type_from_title(c.title)
     missing: list[str] = []
-    if not c.region:
+    if not region or region_provenance == "source_scope_only":
         missing.append("region")
     if not c.publish_date:
         missing.append("publish_date")
-    missing.append("project_type")   # 列表页恒不标注：如实待详情
-    missing.append("scale")
+    if not project_type:
+        missing.append("project_type")  # 标题未点名种类 → 如实待详情
+    if not detail_scale:
+        missing.append("scale")
+    a_type = classify_type(c.title)   # 标题确定性分类（纯事实，不推断）
     return {
         "candidate_id": c.candidate_id,
+        "source_id": c.source_id,
         "project_id": c.project_id,
         "title": c.title,
+        "announcement_type": a_type,
+        "type_label": ATYPE_LABELS.get(a_type, a_type),
         "publish_date": c.publish_date.isoformat() if c.publish_date else None,
         "source_name": c.source_name,
         "source_url": c.url,
         "source_category": c.category,
-        "region": c.region,
+        "region": region,
         "source_region_scope": source_region_scope,
         "region_inferred": False,
         "region_provenance": region_provenance,
-        "project_type": None,
-        "scale": None,
+        "project_type": project_type,
+        "project_type_provenance": "标题" if project_type else None,
+        "scale": detail_scale,
+        "scale_provenance": "公告原文" if detail_scale else None,
         "fact_status": "list_fact_only",
         "missing_fields": missing,
         "region_recall": region_recall,
         "import_status": c.import_status,
         "error_message": c.error_message,
+        # 2026-09-09：详情初筛抽取结果（import 后由 announcement_prescreen 填充）。
+        #   候选卡/详情卡据此展示资质/人员/信用/金额等；空则前端继续用 missing 语义
+        "detail_summary": c.detail_summary if c.detail_summary else None,
     }
 
 
@@ -178,17 +220,52 @@ def _job_region(job: AnalysisJob | None) -> str | None:
 
 
 def _candidate_region_recall(c: AnnouncementCandidate, region: str | None) -> bool:
-    """候选是否来自「超范围放宽二次召回」。
+    """候选地区是否「待核实」（C1 三态口径：broader/none 均属待核实）。
 
     源未注册（人工线索 agent_manual）或检索地区为空 → False；
-    列表页不逐条标注地区 → 不推断归属，仅如实标记地区待核实。
+    - broader：来源为省/全国平台，公告可能来自检索地区也可能不是（列表页不标注）；
+    - none：检索地区超源覆盖（放宽二次召回所得）。
+    两种情况候选逐条地区都不推断，交详情页回源；前端文案由 region_note 区分。
     """
     if not region:
         return False
     spec = source_registry.get(c.source_id)
     if spec is None:
         return False
-    return not spec.covers_region(region)
+    return spec.region_coverage(region) != "direct"
+
+
+def _candidate_region_note(c: AnnouncementCandidate, region: str | None) -> str | None:
+    """候选地区待核实的区分文案（C1/C2）：省/全国来源 vs 超范围放宽召回。"""
+    if not region:
+        return None
+    spec = source_registry.get(c.source_id)
+    if spec is None:
+        return None
+    coverage = spec.region_coverage(region)
+    if coverage == "broader":
+        scope_label = "全国平台" if spec.region_scope == "全国" else "省级平台"
+        return (f"来源为{scope_label}（{spec.region_scope}），覆盖检索地区「{region}」→ "
+                f"逐条公告地区待核实（列表页不标注，不推断归属，详情页回源确认）")
+    if coverage == "none":
+        return (f"检索地区「{region}」超出本候选来源覆盖（{spec.region_scope}）→ "
+                f"放宽二次召回所得，地区待核实（列表页不标注，不推断归属，详情页回源确认）")
+    return None
+
+
+def _finalize_candidates(cards: list[dict], *, include_all: bool = False) -> list[dict]:
+    """候选卡最终展示整理：默认只保留招标/资格预审类型 + 跨源去重。
+
+    include_all=False（默认/用户验收期）：采购/中标/候选/变更/其他一律不展示
+    （仅招标公告），符合用户「采购/中标/候选公示类默认全不显示」；
+    include_all=True：展示全部类型，同样做跨项目归并（同项目多阶段只保留
+    类型优先级最高的一条，并带 source_group / stages）。
+    """
+    if not include_all:
+        kept, _ = atype_classify(cards)
+    else:
+        kept = [dict(c) for c in cards]
+    return dedupe_by_project(kept)
 
 
 def _policy_error() -> bool:
@@ -300,6 +377,7 @@ def list_search_candidates(
     session: Session = Depends(get_db),
     project_type: str | None = None,
     scale: str | None = None,
+    include_all: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
@@ -307,9 +385,12 @@ def list_search_candidates(
 
     只过滤本任务已落库候选（GET .../search/{job_id}/candidates 的既有事实），
     不触发任何外网请求、不改变原搜索任务与候选事实。
+    - announcement_type：按标题确定性分类；
     - project_type：按候选标题确定性关键词匹配（registry.category_matches 词表）；
     - scale：候选无规模事实（列表页不标注）→ 仅接受 unknown（=规模待确认组）；
       传入具体规模值返回空并在 note 如实说明，不推断。
+    - include_all=False（默认）：只展示招标/资格预审公告；采购/中标/候选公示/变更/其他
+      全部排除到后台（用户决策：默认仅显示招标公告）。
     """
     require_role(role, "announcement", "read", session=session, actor=role, object_ref=job_id)
     job = session.get(AnalysisJob, job_id)
@@ -320,6 +401,14 @@ def list_search_candidates(
     rows = session.scalars(q.order_by(AnnouncementCandidate.created_at)).all()
     region = _job_region(job)
     items = [_candidate_card(c, region_recall=_candidate_region_recall(c, region)) for c in rows]
+    for card, c in zip(items, rows):
+        card["region_note"] = _candidate_region_note(c, region)
+    if not include_all:
+        items = _finalize_candidates(items, include_all=False)
+        note.append("默认仅展示招标/资格预审公告；采购/中标/候选公示/变更/其他已按类型排除 "
+                    "（?include_all=true 可查看全部类型）")
+    else:
+        items = _finalize_candidates(items, include_all=True)
     if rows and region and all(_candidate_region_recall(c, region) for c in rows):
         note.append(f"检索地区 {region!r} 超出本任务全部候选来源的覆盖范围 → 候选为放宽二次召回，"
                     "地区待核实（列表页不标注，不推断归属，详情页回源确认）")
@@ -334,10 +423,26 @@ def list_search_candidates(
         else:
             items = []
             note.append(f"规模={scale}：候选无该规模事实（列表页不标注），无法按此筛选，详情页回源确认")
+    # —— 推送结果：两周内 + 发布日期降序（2026-09-09 用户需求；B2 2026-09-10 收紧）——
+    #   默认列表严格满足「仅两周内」：发布日在最近 14 天（含）内；
+    #   更早的不推送；发布日缺失(null)的候选不再默认展示——折叠为 date_pending_count
+    #   计数返回（前端「N 条日期待确认，可展开」），不推断、不丢数据；
+    #   有日期的按发布日期最新在上，无日期的排最后（展开组内）。
+    two_weeks_ago = datetime.now(timezone.utc).date() - timedelta(days=14)
+    for c in items:
+        pd = c.get("publish_date")
+        c["in_date_window"] = bool(pd) and pd >= two_weeks_ago.isoformat()
+    items = [c for c in items if c["in_date_window"] or not c.get("publish_date")]
+    items.sort(key=lambda c: c.get("publish_date") or "", reverse=True)
+    date_pending_count = sum(1 for c in items if not c.get("publish_date"))
+    if date_pending_count:
+        note.append(f"{date_pending_count} 条候选列表页未载明发布日期 → 默认折叠不展示"
+                    "（日期待详情页确认，不推断为两周内，也不丢弃）")
     total = len(items)
     items = items[offset:offset + limit]
     return {"request_id": request_id, "job_id": job_id, "items": items,
-            "total": total, "note": note, "limit": limit, "offset": offset}
+            "total": total, "note": note, "limit": limit, "offset": offset,
+            "date_window": {"days": 14, "pending": date_pending_count}}
 
 
 @router.get("/announcement/health")
@@ -393,6 +498,8 @@ def announcement_health(
             "enabled": s.collectable,
             "compliance_status": s.compliance_status,
             "region_scope": s.region_scope,
+            # C1：地市源所属省份（省级检索据此覆盖地市源，前端预检与服务端同口径）
+            "parent_region": s.parent_region,
             # 省级平台下辖行政区（石家庄市等市级检索同样视为覆盖，前端预检与服务端同口径）
             "admin_subregions": sorted(s.admin_subregions),
             "next_allowed_at": nxt.isoformat() if nxt else None,
@@ -403,6 +510,9 @@ def announcement_health(
         "db": {"available": db_ok, "error": db_error},
         "worker": worker,
         "sources": sources,
+        # C3（2026-09-10）：地区下拉由注册表生成——河北省 + 真有可采集源的地市；
+        # 无源城市不出现（选了只会得到放宽召回的空结果）。
+        "region_options": source_registry.region_options(),
     }
 
 
@@ -412,8 +522,13 @@ def search_announcement_status(
     request_id: str = Depends(get_request_id),
     role: str = Depends(get_role),
     session: Session = Depends(get_db),
+    include_all: bool = False,
 ) -> dict:
-    """轮询搜索结果（F020 §2.2.1）：候选公告卡片数组 + 逐源结果摘要。"""
+    """轮询搜索结果（F020 §2.2.1）：候选公告卡片数组 + 逐源结果摘要。
+
+    include_all=False（默认）：只返回招标/资格预审公告（用户决策：采购/中标/候选
+    公示默认不显示）；同项目跨源/跨阶段去重。include_all=true：返回全部类型。
+    """
     require_role(role, "announcement", "read", session=session, actor=role, object_ref=job_id)
     job = session.get(AnalysisJob, job_id)
     if job is None or job.deleted_at is not None:
@@ -426,8 +541,10 @@ def search_announcement_status(
             .order_by(AnnouncementCandidate.created_at)
         ).all()
         region = _job_region(job)
-        candidates = [_candidate_card(c, region_recall=_candidate_region_recall(c, region))
-                      for c in rows]
+        candidates = _finalize_candidates(
+            [_candidate_card(c, region_recall=_candidate_region_recall(c, region)) for c in rows],
+            include_all=include_all,
+        )
     return {
         "request_id": request_id,
         "status": job.status,
@@ -438,6 +555,32 @@ def search_announcement_status(
         "data_sources": [s.get("source_id") for s in (job.result_summary or [])
                          if isinstance(s, dict) and s.get("source_id")],
     }
+
+
+@router.get("/announcement/candidates/by-project/{project_id}")
+def candidate_by_project(
+    project_id: str,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+) -> dict:
+    """按 project_id 反查候选公告（E1，2026-09-10）。
+
+    「继续项目」入口从搜索历史/书签进入 import.html 时可能只带 project_id
+    （未携带 candidate_id）；本端点回查该项目最近的候选，供详情卡（公告自动
+    详情）与「来源候选」上下文展示。只读，不改变候选状态。
+    """
+    require_role(role, "announcement", "read", session=session, actor=role, object_ref=project_id)
+    cand = session.scalar(
+        select(AnnouncementCandidate)
+        .where(AnnouncementCandidate.project_id == project_id)
+        .order_by(AnnouncementCandidate.created_at.desc())
+        .limit(1)
+    )
+    if cand is None:
+        raise ApiError("not_found", f"项目没有关联的公告候选: {project_id}")
+    card = _candidate_card(cand)
+    return {"request_id": request_id, "candidate": card}
 
 
 @router.post("/announcement/candidates/manual")
@@ -573,6 +716,44 @@ def candidate_status(
     card["error_message"] = candidate.error_message
     card["requested_by"] = candidate.requested_by
     return {"request_id": request_id, "candidate": card}
+
+
+@router.get("/announcement/candidates/{candidate_id}/text")
+def candidate_text(
+    candidate_id: str,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+) -> dict:
+    """候选公告固化原文（P1 溯源定位用，docs/10 §5 P1-5）。
+
+    返回最新版本的净化正文全文 + content_hash——前端据此按 detail_summary 的
+    quote/start/end 高亮定位；hash 不一致时走 relocate 兜底或提示回原页核实。
+    原文事实以对象库为准，此处只读不缓存改写。
+    """
+    require_role(role, "announcement", "read", session=session, actor=role,
+                 object_ref=candidate_id)
+    candidate = session.get(AnnouncementCandidate, candidate_id)
+    if candidate is None:
+        raise ApiError("not_found", f"候选公告不存在: {candidate_id}")
+    ver = session.scalars(select(MaterialVersion).where(
+        MaterialVersion.material_id == f"MAT-{candidate_id}"
+    ).order_by(MaterialVersion.version.desc())).first()
+    if ver is None:
+        raise ApiError("not_found", "公告原文尚未固化（候选未导入或导入未完成）")
+    obj_path = Path(object_store_root()) / ver.object_uri
+    if not obj_path.exists():
+        raise ApiError("not_found", f"公告原文对象缺失: {ver.object_uri}")
+    text = obj_path.read_text(encoding="utf-8", errors="ignore")
+    return {
+        "request_id": request_id,
+        "candidate_id": candidate_id,
+        "material_id": ver.material_id,
+        "version": ver.version,
+        "content_hash": ver.content_hash,
+        "length": len(text),
+        "text": text,
+    }
 
 
 @router.post("/announcement")

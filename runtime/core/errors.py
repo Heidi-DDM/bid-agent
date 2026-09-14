@@ -15,9 +15,11 @@ ERROR_CODES: dict[str, int] = {
     "hash_mismatch": 409,
     "knowledge_not_ready": 409,
     "unsupported_format": 415,
+    "file_too_large": 413,        # v1.7（09-优化方案 §3.2）：上传文件超过大小上限
     "parse_failed": 422,
     "manual_review_required": 422,
     "invalid_state_transition": 409,
+    "rate_limited": 429,             # R004/schema §5.2：单源/全局限频（携带 retry_after_seconds）
     "dependency_unavailable": 503,
     "internal_error": 500,
 }

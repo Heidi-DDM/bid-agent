@@ -107,6 +107,8 @@ class SearchResponse(BaseModel):
     candidate_only: bool = True
     insufficient_evidence: bool = False
     index_version: str
+    ranking_strategy: str = "hybrid_rrf"
+    reranker_model: Optional[str] = None
     items: list[KnowledgeChunkDTO] = Field(default_factory=list)
     filters: dict[str, Any] = Field(default_factory=dict)
 

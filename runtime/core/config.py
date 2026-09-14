@@ -94,6 +94,11 @@ def rag_top_k() -> int:
     return int(_env("RAG_TOP_K", "20"))
 
 
+def rag_rerank_candidate_k() -> int:
+    """重排前 RRF 候选池上限；最终候选数始终至少为请求 top-k。"""
+    return int(_env("RAG_RERANK_CANDIDATE_K", "60"))
+
+
 def rag_chunk_size() -> int:
     return int(_env("RAG_CHUNK_SIZE", "600"))
 
@@ -135,7 +140,13 @@ def worker_poll_interval_seconds() -> float:
 
 
 def readyz_timeout_seconds() -> float:
+    """短时健康检查超时；不用于实际 embedding/rerank 推理。"""
     return float(_env("READYZ_TIMEOUT_SECONDS", "3"))  # type: ignore[return-value]
+
+
+def model_request_timeout_seconds() -> float:
+    """本地模型推理请求超时，覆盖冷启动与较长候选池的重排。"""
+    return float(_env("MODEL_REQUEST_TIMEOUT_SECONDS", "60"))  # type: ignore[return-value]
 
 
 def logging_config() -> dict:

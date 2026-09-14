@@ -70,7 +70,7 @@ def _embed(text: str) -> list[float]:
 
     if not model.check_embedding_allowed():
         raise VectorNotReadyError("embedding 服务不可用（本地/内网），任务应 retryable")
-    result = model.embed(text, timeout=config.readyz_timeout_seconds())
+    result = model.embed(text, timeout=config.model_request_timeout_seconds())
     if not result.ok:
         raise VectorNotReadyError(f"embedding 调用失败: {result.error}")
     vector = result.data

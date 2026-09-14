@@ -37,11 +37,62 @@
           <span class="hint">无证据记录核验通过会被后端拒绝（400）——F022：无证据不可 active。</span>
         </div>
       </section>
+
+      <!-- Excel/CSV 台账受控导入（09-优化方案 §3.5 / F022 §5.1 v1.3） -->
+      <section class="card" id="ledger-card">
+        <div class="card-title-row">
+          <h2>Excel / CSV 台账受控导入</h2>
+          <span class="badge info" id="ledger-badge">未开始</span>
+        </div>
+        <p class="sub" style="margin-top:6px">
+          台账/清单（资质、业绩、人员、项目经理等 Excel 资料）不直接入库：先
+          <b>① 选资料类型并上传 → ② 服务端安全预览（嗅探 / 表头 / 行数 / 无法识别列）→ ③ 字段映射 → ④ 确认导入</b>。
+          原文件作为企业私有证据不可变落库；结构化记录保留来源行号（ledger:行回链）。
+          风险文件（加密 / 损坏 / 外部链接 / 宏 / 超大）被服务端拒绝且无持久化残留（F022 §5.1）。
+        </p>
+
+        <div class="form-grid" style="margin-top:10px">
+          <div class="form-item">
+            <label>① 资料类型 kind<span class="req">*</span></label>
+            <select id="ledger-kind" class="inp">
+              <option value="">请选择…</option>
+              <option value="qualifications">资质证明（qualifications）</option>
+              <option value="performances">业绩证明（performances）</option>
+              <option value="personnel">人员资料（personnel，需子类）</option>
+              <option value="managers">项目经理资料（managers）</option>
+            </select>
+          </div>
+          <div class="form-item" id="ledger-cat-item" style="display:none">
+            <label>人员子类 category（personnel 必填）</label>
+            <select id="ledger-category" class="inp">
+              <option value="registered_builder">注册建造师</option>
+              <option value="technical_title">技术职称</option>
+              <option value="post_certificate">岗位证书</option>
+            </select>
+          </div>
+          <div class="form-item full">
+            <label>② 台账文件（.xlsx / .csv，.xls 仅可留存预览）</label>
+            <input type="file" id="ledger-file" class="inp" accept=".xlsx,.xls,.csv">
+            <span class="hint" id="ledger-file-hint">单份证明（pdf/docx）请走「人工补录」页；本入口不接受图片证据（待 OCR 方案确认）。</span>
+          </div>
+          <div class="form-item"><label>数据责任人 data_owner<span class="req">*</span></label>
+            <input type="text" id="ledger-owner" class="inp" placeholder="姓名/角色（匹配准入审计用）"></div>
+          <div class="form-item"><label>来源 source</label>
+            <input type="text" id="ledger-source" class="inp" placeholder="文件名/批次号（缺省用上传文件名）"></div>
+          <div class="form-item full" style="display:flex;gap:10px;align-items:center">
+            <button class="btn" id="btn-ledger-preview">② 上传并安全预览</button>
+            <button class="btn ghost" id="btn-ledger-reset">重置</button>
+            <span class="hint">预览无副作用，不落库。</span>
+          </div>
+        </div>
+
+        <div id="ledger-preview-box" style="margin-top:10px"></div>
+      </section>
     </div>
   </div>
 
   <footer class="footer">
-    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R012 真实 API 版）</span>
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R012 / F022 v1.3 真实 API 版）</span>
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
@@ -90,7 +141,7 @@
       try {
         const data = await apiGet("/enterprise/verification-queue?status=pending_verification");
         const items = data.items || [];
-        if (!items.length) { box.innerHTML = `<div class="hint">核验队列为空（无 pending_verification 记录）——13 条脱敏演示资料已核验 active。</div>`; return; }
+        if (!items.length) { box.innerHTML = `<div class="hint">核验队列为空（无 pending_verification 记录）——演示资料已核验 active。</div>`; return; }
         box.innerHTML = `<table class="tbl"><thead><tr><th></th><th>种类</th><th>记录</th><th>证据</th><th>状态</th></tr></thead><tbody>` +
           items.map((it, i) => `<tr>
             <td><input type="checkbox" class="q-chk" data-kind="${it.kind}" data-id="${it.id || it.record_id || ""}"></td>
@@ -114,7 +165,7 @@
       for (const [kind, ids] of Object.entries(byKind)) {
         try {
           const r = await apiPost("/enterprise/verify", { kind, ids, action, comment: action === "reject" ? "演示驳回" : null });
-          results.push(`${KIND_LABEL[kind] || kind} ${ids.length} 条 → ${JSON.stringify(r.verify || "")}`);
+          results.push(`${KIND_LABEL[kind] || kind} ${ids.length} 条 → ${JSON.stringify(r.verify || "")}（request_id ${r.request_id || "—"}）`);
         } catch (e) {
           results.push(`${KIND_LABEL[kind] || kind} 失败：${e.message}`);
         }
@@ -125,6 +176,187 @@
     }
     document.getElementById("btn-approve-q").addEventListener("click", () => batchVerify("approve"));
     document.getElementById("btn-reject-q").addEventListener("click", () => batchVerify("reject"));
+
+    /* ============================================================
+       Excel/CSV 台账受控导入向导（09-优化方案 §3.5 / F022 §5.1 v1.3）
+       ① kind → ② 上传 preview（嗅探+预览）→ ③ 字段映射 → ④ commit
+       ============================================================ */
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    const pvBox = document.getElementById("ledger-preview-box");
+    const pvFile = document.getElementById("ledger-file");
+    let lastPreview = null;    // {filename, size_bytes, preview:{...}}
+    let mapping = {};          // {列名: 字段键}（commit 时与 unmapped 追加合并）
+
+    document.getElementById("ledger-kind").addEventListener("change", (e) => {
+      document.getElementById("ledger-cat-item").style.display = e.target.value === "personnel" ? "" : "none";
+    });
+    document.getElementById("btn-ledger-reset").addEventListener("click", () => {
+      pvFile.value = ""; lastPreview = null; mapping = {};
+      pvBox.innerHTML = "";
+      document.getElementById("ledger-badge").textContent = "未开始";
+      document.getElementById("ledger-badge").className = "badge info";
+    });
+
+    const FIELD_LABEL = {
+      // qualifications
+      category: "资质类别", level: "资质等级", specialty: "专业", valid_from: "发证日期",
+      valid_until: "有效期至", issuer: "发证机关", evidence_refs: "证据", data_owner: "数据责任人",
+      // performances
+      project_name: "项目名称", project_type: "项目类型", contract_amount: "合同金额(元)",
+      contract_amount_wan: "合同额(万元)", completed_at: "竣工时间", awarded_at: "开工/中标时间",
+      owner_org: "业主单位", scale: "规模",
+      // personnel
+      name: "姓名", organization: "单位", cert_level: "等级", cert_no: "证书编号",
+      on_site: "在施状态", on_site_project: "在施项目名称", phone: "联系电话",
+      // managers
+      display_name: "姓名(脱敏)", reg_cert_type: "注册类型", reg_cert_no: "注册编号",
+      cert_valid_until: "证书有效期", b_cert_no: "B证编号", edu_safety_status: "继续教育/安全考核",
+      availability: "在施状态", active_projects: "在施项目名称", performance_refs: "业绩",
+    };
+    const KIND_FIELDS = {
+      qualifications: ["category", "level", "specialty", "valid_from", "valid_until", "issuer", "evidence_refs", "data_owner"],
+      performances: ["project_name", "project_type", "specialty", "contract_amount_wan", "contract_amount", "completed_at", "awarded_at", "owner_org", "scale", "evidence_refs", "data_owner"],
+      personnel: ["name", "organization", "specialty", "cert_level", "cert_no", "valid_from", "valid_until", "issuer", "on_site", "on_site_project", "phone", "evidence_refs", "data_owner"],
+      managers: ["display_name", "name", "organization", "specialty", "reg_cert_type", "reg_cert_no", "cert_level", "cert_valid_until", "b_cert_no", "edu_safety_status", "availability", "active_projects", "performance_refs", "evidence_refs", "data_owner"],
+    };
+
+    document.getElementById("btn-ledger-preview").addEventListener("click", async () => {
+      const kind = document.getElementById("ledger-kind").value;
+      const owner = document.getElementById("ledger-owner").value.trim();
+      if (!kind) { pvBox.innerHTML = `<div class="notice warn">请先选择资料类型 kind（资质/业绩/人员/项目经理）。</div>`; return; }
+      if (!owner) { pvBox.innerHTML = `<div class="notice warn">请填写数据责任人 data_owner（每条导入记录与证据的责任归属）。</div>`; return; }
+      if (!pvFile.files.length) { pvBox.innerHTML = `<div class="notice warn">请选择台账文件（.xlsx/.csv；.xls 仅可预览留存提示）。</div>`; return; }
+      const f = pvFile.files[0];
+      const suffix = (f.name || "").toLowerCase().split(".").pop();
+      if (!["xlsx", "xls", "csv"].includes(suffix)) {
+        pvBox.innerHTML = `<div class="notice warn"><b>${esc(f.name)}</b> 不是台账格式：本入口仅收 .xlsx/.xls/.csv；单份证明（pdf/docx）请走「人工补录」页（§3.5 入口分离）。</div>`;
+        return;
+      }
+      const btn = document.getElementById("btn-ledger-preview");
+      btn.disabled = true;
+      pvBox.innerHTML = `<div class="notice info">服务端安全预览中（嗅探扩展名/魔数/大小/加密/外链/宏风险，解析表头与前 5 行）…</div>`;
+      try {
+        const form = new FormData();
+        form.append("file", f);
+        form.append("kind", kind);
+        const data = await apiUpload("/enterprise/import/preview", form);
+        lastPreview = data;
+        mapping = {};
+        renderPreview(data);
+        apiShowError(null);
+      } catch (err) {
+        apiShowError(err);
+        pvBox.innerHTML = `<div class="notice error">预览失败：${esc(err.message)}${err.requestId ? `（${esc(err.requestId)}）` : ""}${err.status === 415 ? "<br><span class='hint'>服务端安全嗅探拒绝该文件（加密/损坏/外链公式/宏/超大等），未产生任何持久化数据。</span>" : ""}</div>`;
+      } finally { btn.disabled = false; }
+    });
+
+    function renderPreview(data) {
+      const pv = data.preview || {};
+      const kind = document.getElementById("ledger-kind").value;
+      const fields = KIND_FIELDS[kind] || [];
+      const headers = pv.headers || [];
+      const unmapped = pv.unmapped_columns || [];
+      const mappedKnown = headers.filter((h) => unmapped.indexOf(h) === -1);
+
+      const badge = document.getElementById("ledger-badge");
+      badge.textContent = pv.notes && pv.notes.includes("xls-old-format") ? "仅可留存（xls）" : `已预览 ${pv.row_count ?? "?"} 行`;
+      badge.className = "badge " + (pv.notes && pv.notes.includes("xls-old-format") ? "warn" : "ok");
+
+      const warnHtml = (pv.warnings || []).map((w) => `<div class="notice warn" style="margin:6px 0">⚠ ${esc(w)}</div>`).join("");
+      const noteHtml = (pv.notes || []).map((n) => `<div class="notice info" style="margin:6px 0">${esc(n)}</div>`).join("");
+
+      // 映射选择器：每个已知列一个下拉（自动按常见列名建议字段键）
+      const mapHtml = (pv.notes && pv.notes.includes("xls-old-format"))
+        ? `<div class="notice info">旧版 .xls 无法自动预览/映射：请转存 .xlsx/.csv 后重试，或作受控证据由数据管理员人工录入。</div>`
+        : headers.map((h) => {
+            const isUnmapped = unmapped.indexOf(h) !== -1;
+            const guess = defaultFieldFor(kind, h);
+            return `<div class="form-item" style="min-width:200px">
+              <label>${isUnmapped ? "⚠ " : ""}${esc(h)}（${isUnmapped ? "无法自动识别" : "已识别"}）</label>
+              <select class="inp map-sel" data-col="${esc(h)}" ${isUnmapped ? "" : "disabled"}>
+                <option value="">— 不导入该列 —</option>
+                ${fields.map((fk) => `<option value="${fk}" ${guess === fk ? "selected" : ""}>${esc(FIELD_LABEL[fk] || fk)}（${fk}）</option>`).join("")}
+              </select>
+            </div>`;
+          }).join("");
+
+      const rowsHtml = (pv.preview_rows || []).map((r, i) =>
+        `<tr><td>${i + 2}</td>${(pv.headers || []).map((h, ci) => `<td>${esc(r[ci] ?? "")}</td>`).join("")}</tr>`).join("") || "";
+      const thead = (pv.headers || []).map((h) => `<th>${esc(h)}</th>`).join("");
+
+      pvBox.innerHTML = `
+        <div class="notice info" style="margin-top:4px">文件 <code>${esc(data.filename || "")}</code>（${Math.round((data.size_bytes || 0) / 1024)} KB）· 表头 ${(pv.headers || []).length} 列 · 数据 ${pv.row_count ?? "?"} 行 · ${unmapped.length ? `<b>${unmapped.length} 列待人工确认</b>` : "全部列可映射"}</div>
+        ${warnHtml}${noteHtml}
+        ${rowsHtml ? `<div style="overflow-x:auto;margin-top:6px"><table class="tbl"><thead><tr><th>行</th>${thead}</tr></thead><tbody>${rowsHtml}</tbody></table><div class="hint" style="margin-top:4px">前 ${(pv.preview_rows || []).length} 行预览；导入后结构化记录保留来源行号回链。</div></div>` : ""}
+        ${mapHtml ? `<h3 style="margin:12px 0 6px">③ 字段映射</h3><div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">${mapHtml}</div>` : ""}
+        ${unmapped.length ? `<div class="notice warn" style="margin:8px 0 0">无法自动识别的列需人工确认（选择映射字段或不导入）；确认后「④ 确认导入」才可用——不静默丢弃（F022 §5.1）。</div>` : ""}
+        <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
+          <button class="btn" id="btn-ledger-commit" ${rowsHtml && !(pv.notes && pv.notes.includes("xls-old-format")) ? "" : "disabled"}>④ 确认导入（结构化记录 + 原文件落库）</button>
+          <span class="hint" id="ledger-commit-hint">导入行默认 <code>pending_verification</code>，数据管理员核验后 active 才参与匹配。</span>
+        </div>`;
+      // 已知列默认映射到建议字段键；change 同步 mapping
+      document.querySelectorAll(".map-sel").forEach((sel) => {
+        const col = sel.dataset.col;
+        if (!sel.disabled && sel.value) mapping[col] = sel.value;
+        sel.addEventListener("change", () => {
+          if (sel.value) mapping[col] = sel.value; else delete mapping[col];
+          const cnt = Object.keys(mapping).length;
+          document.getElementById("ledger-commit-hint").textContent = `已映射 ${cnt} 列 / 共 ${headers.length} 列（含 ${unmapped.length} 待人工确认）`;
+        });
+      });
+      document.getElementById("btn-ledger-commit").addEventListener("click", commitLedger);
+      document.getElementById("ledger-commit-hint").textContent = `已映射 ${mappedKnown.length} 列 / 共 ${headers.length} 列${unmapped.length ? `（含 ${unmapped.length} 待人工确认）` : ""}`;
+    }
+
+    function defaultFieldFor(kind, header) {
+      const fields = KIND_FIELDS[kind] || [];
+      if (fields.includes(header)) return header;   // 英文键列名 → 同名字段键
+      const ALIAS = {
+        qualifications: { "资质类别": "category", "资质": "category", "资质等级": "level", "等级": "level", "专业": "specialty", "发证日期": "valid_from", "有效期至": "valid_until", "有效期": "valid_until", "到期日": "valid_until", "发证机关": "issuer", "颁发机构": "issuer", "证据": "evidence_refs", "证据位置": "evidence_refs", "附件": "evidence_refs", "数据责任人": "data_owner", "责任人": "data_owner" },
+        performances: { "项目名称": "project_name", "工程名称": "project_name", "项目类型": "project_type", "工程类型": "project_type", "专业": "specialty", "合同金额": "contract_amount", "合同额(万元)": "contract_amount_wan", "合同额（万元）": "contract_amount_wan", "合同额": "contract_amount_wan", "竣工时间": "completed_at", "竣工日期": "completed_at", "开工时间": "awarded_at", "中标时间": "awarded_at", "业主单位": "owner_org", "建设单位": "owner_org", "规模": "scale", "证据": "evidence_refs", "合同扫描件": "evidence_refs", "数据责任人": "data_owner", "责任人": "data_owner" },
+        personnel: { "姓名": "name", "单位": "organization", "工作单位": "organization", "所在单位": "organization", "专业": "specialty", "注册专业": "specialty", "等级": "cert_level", "职称级别": "cert_level", "证书编号": "cert_no", "注册编号": "cert_no", "发证日期": "valid_from", "有效期至": "valid_until", "有效期": "valid_until", "发证机关": "issuer", "在施状态": "on_site", "是否在施": "on_site", "在施项目名称": "on_site_project", "联系电话": "phone", "电话": "phone", "证据": "evidence_refs", "数据责任人": "data_owner", "责任人": "data_owner" },
+        managers: { "姓名": "display_name", "项目经理": "display_name", "单位": "organization", "注册专业": "specialty", "专业": "specialty", "注册类型": "reg_cert_type", "注册编号": "reg_cert_no", "注册证书编号": "reg_cert_no", "等级": "cert_level", "证书有效期": "cert_valid_until", "有效期至": "cert_valid_until", "B证编号": "b_cert_no", "安全B证": "b_cert_no", "继续教育": "edu_safety_status", "安全考核": "edu_safety_status", "在施状态": "availability", "是否在施": "availability", "在施项目名称": "active_projects", "在建项目": "active_projects", "业绩": "performance_refs", "证据": "evidence_refs", "数据责任人": "data_owner", "责任人": "data_owner" },
+      };
+      return (ALIAS[kind] || {})[header] || "";
+    }
+
+    async function commitLedger() {
+      if (!lastPreview) return;
+      const kind = document.getElementById("ledger-kind").value;
+      const owner = document.getElementById("ledger-owner").value.trim();
+      const category = kind === "personnel" ? document.getElementById("ledger-category").value : null;
+      // 已知列已识别 disabled select 的 value 计入 mapping；合并未映射列的追加选择
+      const selMappings = {};
+      document.querySelectorAll(".map-sel").forEach((sel) => {
+        if (sel.value) selMappings[sel.dataset.col] = sel.value;
+      });
+      const mappingObj = Object.assign({}, mapping, selMappings);
+      if (!Object.keys(mappingObj).length) { pvBox.innerHTML += `<div class="notice warn">尚未选择任何字段映射，无法导入。</div>`; return; }
+      if (!confirm(`确认按当前映射导入？（kind=${kind}，映射 ${Object.keys(mappingObj).length} 列）\n原文件将作为企业私有证据不可变落库；结构化记录默认 pending_verification。`)) return;
+      const btn = document.getElementById("btn-ledger-commit");
+      btn.disabled = true;
+      try {
+        const form = new FormData();
+        form.append("file", pvFile.files[0]);
+        form.append("kind", kind);
+        form.append("mapping", JSON.stringify(mappingObj));
+        form.append("data_owner", owner);
+        form.append("source", document.getElementById("ledger-source").value.trim() || lastPreview.filename);
+        if (category) form.append("category", category);
+        const r = await apiUpload("/enterprise/import/commit", form);
+        const imp = r.import || {};
+        pvBox.insertAdjacentHTML("beforeend", `
+          <div class="notice ok" style="margin-top:8px"><b>导入完成</b>：${r.rows} 行 → 新建 ${imp.created} / 幂等跳过 ${imp.skipped}（kind=${esc(kind)}）<br>
+            <span class="hint">原文件 <code>${esc(r.material.material_id)}</code> v${r.material.version} 已作为企业私有证据落库（evidence_file / enterprise）；来源 <code>${esc(r.source || "")}</code>；request_id <code>${esc(r.request_id || "—")}</code>。</span>
+          </div>`);
+        apiShowError(null);
+        await loadQueue();
+      } catch (err) {
+        apiShowError(err);
+        pvBox.insertAdjacentHTML("beforeend", `<div class="notice error" style="margin-top:8px">导入失败：${esc(err.message)}${err.requestId ? `（${esc(err.requestId)}）` : ""}</div>`);
+      } finally { btn.disabled = false; }
+    }
 
     loadAll();
   </script>

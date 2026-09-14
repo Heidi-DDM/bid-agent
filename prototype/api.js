@@ -16,7 +16,101 @@ const SAME_ORIGIN_DEPLOY =
 const API_BASE_DEFAULT = SAME_ORIGIN_DEPLOY ? `${location.origin}/api/v1` : "http://127.0.0.1:8000/api/v1";
 const DEMO_PROJECT_ID = "ND-2025";          // 农大演示项目（已推送，R012 旅程固定样本）
 
-const apiBase = () => localStorage.getItem("api_base") || API_BASE_DEFAULT;
+const apiBase = () =>
+  // 归一化：去掉尾斜杠，避免拼路径产生 /api/v1//intake/... 双斜杠 404
+  (localStorage.getItem("api_base") || API_BASE_DEFAULT).replace(/\/+$/, "");
+
+/* 探测候选 api_base（登录态健康检查 404 自愈：api_base 丢了 /api/v1 或拼错时，
+   自动按 127.0.0.1:8000 → localhost:8000 顺序试 /api/v1 + /，命中即持久化并返回。
+   只负责找对地址，不携带鉴权头（/healthz 匿名可读），避免把健康检查误当“未登录”。
+   任一候选可达（2xx/非 404 响应均视为服务存在）即采纳；全部失败返回 null。 */
+const API_PROBE_CANDIDATES = () => {
+  const base = apiBase();
+  const host = (base.replace(/^https?:\/\//, "").split("/")[0] || "127.0.0.1:8000").replace(/\/+$/, "");
+  const hosts = [host];
+  // 本机回环地址在不同浏览器/代理环境下解析行为可能不同，两个地址都探测。
+  if (host === "127.0.0.1:8000") hosts.push("localhost:8000");
+  if (host === "localhost:8000") hosts.push("127.0.0.1:8000");
+  const roots = hosts.flatMap((h) => [`http://${h}/api/v1`, `http://${h}`]);
+  // 同源部署时优先探测同源地址（浏览器残留的本机 api_base 会在此被自愈修正）
+  if (SAME_ORIGIN_DEPLOY) roots.unshift(`${location.origin}/api/v1`, location.origin);
+  return [...new Set([base, ...roots])];
+};
+
+async function apiProbeHealth() {
+  const candidates = API_PROBE_CANDIDATES();
+  const tried = [];
+  for (const cand of candidates) {
+    tried.push(cand);
+    try {
+      const resp = await fetch(cand + "/healthz", { method: "GET" });
+      if (resp.ok || resp.status !== 404) {   // 服务存在即算可达（含 401/403 网关拦截）
+        // /healthz 位于 runtime 根路径，业务路由始终挂在 /api/v1；
+        // 探测根地址时仍将业务基址规范化为 host/api/v1，避免修正后再次 404。
+        const businessBase = /\/api\/v1\/?$/.test(cand)
+          ? cand.replace(/\/+$/, "")
+          : cand.replace(/\/+$/, "") + "/api/v1";
+        if (businessBase !== apiBase()) localStorage.setItem("api_base", businessBase);
+        return { base: businessBase, status: resp.status, tried };
+      }
+    } catch (_) { /* 网络错误：继续下一候选 */ }
+  }
+  return { base: null, status: 0, tried };
+}
+
+/* 健康检查（index 页搜索前调用；返回结构化结果供 UI 渲染）。
+   - 200：API/DB/worker/源 状态
+   - 401/403：后端对匿名请求仍拦截 → 返回 {auth_gate:true}，提示直连 8000
+   - 404：api_base 拼错 → 自动探测修正后重试一次；仍 404 返回 {notFound:true} */
+async function apiHealth() {
+  let h = null;
+  try {
+    const resp = await fetch(apiBase() + "/intake/announcement/health", { method: "GET" });
+    const text = await resp.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = { raw: text }; }
+    if (resp.ok) return { ok: true, data, base: apiBase() };
+    if (resp.status === 404) {
+      const probe = await apiProbeHealth();
+      if (probe.base) {   // 已修正基址 → 用修正后地址重试一次
+        const retryResp = await fetch(probe.base + "/intake/announcement/health", { method: "GET" });
+        const retryText = await retryResp.text();
+        let retryData = null;
+        try { retryData = retryText ? JSON.parse(retryText) : null; } catch (_) { retryData = { raw: retryText }; }
+        if (retryResp.ok) return { ok: true, data: retryData, base: probe.base, healed: true };
+        // /healthz 可达但业务健康端点仍 404 → 后端版本过旧（v1.8 前无此端点）
+        if (retryResp.status === 404) {
+          // 兼容旧 runtime：/readyz 与 /healthz 同属进程级端点，可作为
+          // 搜索前基础诊断，避免健康诊断缺失阻断联网搜索。逐源/worker
+          // 详情仅由 F020 v1.8+ 的业务健康端点提供。
+          try {
+            const runtimeRoot = probe.base.replace(/\/api\/v1\/?$/, "").replace(/\/+$/, "");
+            const readyResp = await fetch(runtimeRoot + "/readyz");
+            const readyText = await readyResp.text();
+            let readyData = null;
+            try { readyData = readyText ? JSON.parse(readyText) : null; } catch (_) { readyData = null; }
+            if (readyResp.ok || readyData) {
+              return { ok: true, data: {
+                api: "ok",
+                db: readyData && readyData.checks && readyData.checks.database
+                  ? readyData.checks.database : { available: null },
+                worker: { available: null, reason: "旧版 runtime 未提供 worker 逐源健康诊断" },
+                sources: [],
+              }, base: probe.base, healed: true, legacyHealth: true };
+            }
+          } catch (_) { /* 基础诊断不可用时保留旧版错误 */ }
+          return { ok: false, status: 404, data: retryData, base: probe.base,
+                   healed: true, staleBackend: true };
+        }
+        return { ok: false, status: retryResp.status, data: retryData, base: probe.base, healed: true };
+      }
+      return { ok: false, status: 404, data, base: apiBase(), notFound: true, tried: probe.tried };
+    }
+    return { ok: false, status: resp.status, data, base: apiBase() };
+  } catch (err) {
+    return { ok: false, status: 0, network: true, error: err, base: apiBase() };
+  }
+}
 const apiToken = () => localStorage.getItem("api_token") || "";
 const apiRole = () => localStorage.getItem("api_role") || "";
 const apiName = () => localStorage.getItem("api_name") || "";
@@ -82,6 +176,7 @@ async function apiReq(method, path, { json, form } = {}) {
 
 const apiGet = (path) => apiReq("GET", path);
 const apiPost = (path, json) => apiReq("POST", path, { json });
+const apiDelete = (path) => apiReq("DELETE", path);
 const apiUpload = (path, form) => apiReq("POST", path, { form });
 
 /* 通用错误展示（页面内嵌 #api-error 时自动写入） */

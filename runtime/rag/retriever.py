@@ -11,6 +11,8 @@ import logging
 import math
 import re
 import uuid
+from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -70,7 +72,20 @@ def _query_hash(query: str) -> str:
     return hashlib.sha256(_norm_text(query).encode("utf-8")).hexdigest()
 
 
-def _filters_hash(vis: Visibility, top_k: int, mode: str) -> str:
+def _filters_hash(
+    vis: Visibility,
+    top_k: int,
+    mode: str,
+    *,
+    ranking_strategy: str,
+    reranker_model: str | None,
+    candidate_pool_k: int,
+) -> str:
+    """为可回放的检索配置生成哈希。
+
+    `filters_hash` 历史字段同时承载检索配置；必须纳入重排开关/模型/候选池和实际
+    排名策略，避免复用未重排或降级运行的候选快照。
+    """
     payload = {
         "layers": sorted(vis.layers),
         "scopes": sorted(vis.scopes),
@@ -79,6 +94,10 @@ def _filters_hash(vis: Visibility, top_k: int, mode: str) -> str:
         "as_of": vis.as_of,
         "top_k": top_k,
         "mode": mode,
+        "ranking_strategy": ranking_strategy,
+        "reranker_enabled": config.reranker_enabled(),
+        "reranker_model": reranker_model if config.reranker_enabled() else None,
+        "candidate_pool_k": candidate_pool_k,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -117,7 +136,6 @@ def _bm25_score(query_tokens: list[str], text: str) -> float:
     if hits == 0:
         return 0.0
     # 命中率加权 + 位置前置加权（条款/标题往往在文本前部）
-    pos_bonus = 0.0
     first_pos = len(norm)
     for t in query_tokens:
         idx = norm.find(t)
@@ -142,8 +160,9 @@ def _vector_search(
         return []
     try:
         query_vector = embed_query_fn(query_text)
-    except Exception:
-        return []  # 查询 embedding 失败 → keyword-only 降级（方案 §5 可解释降级）
+    except Exception as exc:
+        logger.warning("查询 embedding 失败（降级关键词）: %s", type(exc).__name__)
+        return []
     base = KnowledgeChunk
     clauses = _visibility_clauses(vis, base)
     score_expr = (1 - KnowledgeEmbedding.vector.cosine_distance(query_vector)).label("score")
@@ -152,7 +171,7 @@ def _vector_search(
         .join(KnowledgeEmbedding, KnowledgeEmbedding.chunk_id == base.chunk_id)
         .where(*clauses)
         .order_by(score_expr.desc())
-        .limit(top_k * 3)
+        .limit(top_k)
     )
     try:
         rows = session.execute(stmt).all()
@@ -189,10 +208,66 @@ def _rrf_merge(keyword: list[dict], vector: list[dict], top_k: int) -> list[dict
     return [{"chunk_id": cid, "rrf": score} for cid, score in ordered[:top_k]]
 
 
+def _candidate_pool_k(top_k: int) -> int:
+    """重排前候选池：默认至少 3 倍，且绝不小于最终 top-k。"""
+    configured = config.rag_rerank_candidate_k()
+    return max(top_k, min(max(top_k * 3, top_k), configured))
+
+
 def _load_chunks(session: Session, chunk_ids: list[str]) -> list[KnowledgeChunk]:
     if not chunk_ids:
         return []
     return list(session.scalars(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(chunk_ids))).all())
+
+
+def _validate_rerank_scores(scores: Any, expected_count: int) -> list[float]:
+    if not isinstance(scores, list) or len(scores) != expected_count:
+        raise ValueError("reranker 返回数量与候选数量不一致")
+    parsed: list[float] = []
+    for value in scores:
+        if isinstance(value, bool):
+            raise ValueError("reranker 分数非法")
+        try:
+            score = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("reranker 分数非法") from exc
+        if not math.isfinite(score):
+            raise ValueError("reranker 分数不是有限数")
+        parsed.append(score)
+    return parsed
+
+
+def _rerank(
+    query: str,
+    ordered: list[dict],
+    chunks: dict[str, KnowledgeChunk],
+    rerank_fn: Callable[[str, list[str]], Any] | None = None,
+) -> tuple[list[dict], bool]:
+    """仅对已通过 SQL 可见性过滤的候选做本地 cross-encoder 重排。
+
+    返回 ``(ordered, applied)``。调用/响应异常由调用方记录可解释降级，保留原 RRF
+    顺序，绝不以虚构分数替代重排结果。
+    """
+    candidates = [item for item in ordered if item["chunk_id"] in chunks]
+    if len(candidates) < 2:
+        return candidates, False
+    documents = [chunks[item["chunk_id"]].text for item in candidates]
+    if rerank_fn is None:
+        from runtime.core import model
+
+        result = model.rerank(query, documents, timeout=config.model_request_timeout_seconds())
+        if not result.ok:
+            raise RetrievalError(f"reranker 调用失败: {result.error}")
+        scores = result.data
+    else:
+        scores = rerank_fn(query, documents)
+    scores = _validate_rerank_scores(scores, len(candidates))
+    ranked = []
+    for item, score in zip(candidates, scores):
+        ranked.append({**item, "rerank_score": score})
+    # 分数相同保持 RRF/基础排序，确保回放稳定。
+    ranked.sort(key=lambda item: item["rerank_score"], reverse=True)
+    return ranked, True
 
 
 def _to_dto(chunk: KnowledgeChunk, score: float) -> KnowledgeChunkDTO:
@@ -209,7 +284,8 @@ def _to_dto(chunk: KnowledgeChunk, score: float) -> KnowledgeChunkDTO:
         permission_scope=chunk.permission_scope,
         project_id=chunk.project_id,
         lot_id=chunk.lot_id,
-        retrieval_score=round(score, 6),
+        # 对外仅暴露用于排序的归一化分数，禁止把 cross-encoder raw logit 解释为证据置信度。
+        retrieval_score=round(max(0.0, min(float(score), 1.0)), 6),
         citation=citation,
     )
 
@@ -222,10 +298,21 @@ def _persist_run(
     top_k: int,
     chunk_ids: list[str],
     latency_ms: int,
+    *,
+    ranking_strategy: str,
+    reranker_model: str | None,
+    candidate_pool_k: int,
 ) -> RetrievalRun:
-    """写检索运行快照（幂等：同 query/filter/index/as_of 复用既有 run）。"""
+    """写检索运行快照（同 query/filter/index/排名配置复用既有 run）。"""
     q_hash = _query_hash(request.query)
-    f_hash = _filters_hash(vis, top_k, request.retrieval_mode)
+    f_hash = _filters_hash(
+        vis,
+        top_k,
+        request.retrieval_mode,
+        ranking_strategy=ranking_strategy,
+        reranker_model=reranker_model,
+        candidate_pool_k=candidate_pool_k,
+    )
     existing = session.scalar(
         select(RetrievalRun).where(
             RetrievalRun.query_hash == q_hash,
@@ -248,6 +335,8 @@ def _persist_run(
         as_of=vis.as_of or "",
         top_k=top_k,
         retrieval_mode=request.retrieval_mode,
+        ranking_strategy=ranking_strategy,
+        reranker_model=reranker_model,
         index_version=index_version,
         candidate_chunk_ids=chunk_ids,
         latency_ms=latency_ms,
@@ -265,17 +354,21 @@ def hybrid_search(
     *,
     role: str = "",
     embed_query_fn=None,
+    rerank_fn: Callable[[str, list[str]], Any] | None = None,
     request_id: str = "",
 ) -> SearchResponse:
     """方案 §8.1：混合检索入口（候选证据，candidate_only=true）。
 
-    embed_query_fn：查询向量函数（测试/本地模型注入）；未注入时向量分支降级为关键词。
+    权限/项目/标段/时点过滤始终先于关键词、向量和重排。`rerank_fn` 仅用于
+    本地模型适配器或测试注入；它无法看到任何未通过可见性谓词的材料。
     """
     import time
 
     start = time.monotonic()
     top_k = request.top_k
     mode = request.retrieval_mode
+    pool_k = _candidate_pool_k(top_k)
+    reranker_model = config.reranker_model() if config.reranker_enabled() else None
 
     # 索引就绪检查：无任何 current chunk → 409 knowledge_not_ready
     has_chunks = session.scalar(
@@ -290,32 +383,58 @@ def hybrid_search(
         raise KnowledgeNotReadyError("知识索引未就绪（无 current chunk），请先执行索引任务")
 
     tokens = _tokenize(request.query)
-    keyword = _keyword_search(session, tokens, vis, top_k * 2) if mode in ("hybrid", "keyword") else []
+    keyword = _keyword_search(session, tokens, vis, pool_k) if mode in ("hybrid", "keyword") else []
     vector = (
-        _vector_search(session, vis, top_k * 2, request.query, embed_query_fn)
+        _vector_search(session, vis, pool_k, request.query, embed_query_fn)
         if mode in ("hybrid", "vector")
         else []
     )
 
     if mode == "keyword":
-        ordered = keyword[:top_k]
+        ordered = [{"chunk_id": item["chunk_id"], "base_score": item["score"]} for item in keyword]
+        ranking_strategy = "keyword"
     elif mode == "vector":
-        ordered = [{"chunk_id": v["chunk_id"], "rrf": v["score"]} for v in vector[:top_k]]
+        ordered = [{"chunk_id": item["chunk_id"], "base_score": item["score"]} for item in vector]
+        ranking_strategy = "vector"
     else:
-        ordered = _rrf_merge(keyword, vector, top_k)
+        ordered = _rrf_merge(keyword, vector, pool_k)
+        ranking_strategy = "hybrid_rrf"
 
-    chunks = {c.chunk_id: c for c in _load_chunks(session, [o["chunk_id"] for o in ordered])}
+    chunks = {chunk.chunk_id: chunk for chunk in _load_chunks(session, [o["chunk_id"] for o in ordered])}
+    # Rerank only current visible candidates. A bad/unavailable local service does not break evidence
+    # discovery: response retains base ordering and records an auditable degraded strategy.
+    if config.reranker_enabled() and ordered:
+        try:
+            ordered, reranked = _rerank(request.query, ordered, chunks, rerank_fn)
+            if reranked:
+                ranking_strategy = f"{ranking_strategy}_reranked"
+        except Exception as exc:
+            # 本地服务缺失、模型未配置或响应非法均只能降级，不得伪造 rerank 成功。
+            logger.warning("reranker 失败，保留基础排序: %s", exc)
+            ranking_strategy = f"{ranking_strategy}_rerank_degraded"
+
+    ordered = ordered[:top_k]
     items = []
-    for o in ordered:
-        chunk = chunks.get(o["chunk_id"])
+    for rank, item in enumerate(ordered, start=1):
+        chunk = chunks.get(item["chunk_id"])
         if chunk is None:
             continue
-        items.append(_to_dto(chunk, o.get("rrf", o.get("score", 0.0))))
+        # 统一为 0..1 的名次分数；RAG 分数仅表达排序，不可作为匹配判定或置信度。
+        items.append(_to_dto(chunk, 1.0 / rank))
 
     index_version = _current_index_version(session)
     latency_ms = int((time.monotonic() - start) * 1000)
     run = _persist_run(
-        session, request, vis, index_version, top_k, [i.chunk_id for i in items], latency_ms
+        session,
+        request,
+        vis,
+        index_version,
+        top_k,
+        [item.chunk_id for item in items],
+        latency_ms,
+        ranking_strategy=ranking_strategy,
+        reranker_model=reranker_model,
+        candidate_pool_k=pool_k,
     )
     return SearchResponse(
         request_id=request_id,
@@ -323,6 +442,8 @@ def hybrid_search(
         candidate_only=True,
         insufficient_evidence=len(items) == 0,
         index_version=index_version,
+        ranking_strategy=ranking_strategy,
+        reranker_model=reranker_model,
         items=items,
         filters={
             "knowledge_layers": sorted(vis.layers),
@@ -330,6 +451,7 @@ def hybrid_search(
             "project_id": vis.project_id,
             "lot_id": vis.lot_id,
             "as_of": vis.as_of,
+            "candidate_pool_k": pool_k,
         },
     )
 

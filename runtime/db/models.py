@@ -61,6 +61,8 @@ class AnalysisJob(Base):
     # 执行结果摘要（announcement.search 的逐源结果 [{source_id,status,count,note}]，
     # 供 GET 轮询如实展示；其他 kind 暂不使用）
     result_summary: Mapped[list | None] = mapped_column(JSONB)
+    # 搜索历史软删除：保留任务/候选事实与审计链，仅从最近任务列表隐藏。
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
@@ -200,7 +202,8 @@ class AnnouncementCandidate(Base):
     """R004/F020：公告搜索候选（public_data schema，manual_trigger 搜索结果暂存）。
 
     搜索任务只抓列表页 → 候选落本表（标题/来源/链接等列表页可确证事实；
-    region/publish_date 等列表页不标注的字段一律 NULL=待补，不推断）；
+    region 等列表页不标注的字段一律 NULL=待补，不推断；publish_date 由解析器
+    提取列表页「发布日期」明文或 URL 日期段，2026-09-07 补）；
     投标专员逐条确认后由 announcement.import_detail 任务抓详情原文入库
     （material 固化 + Project 建档），import_status 流转 pending → imported/failed。
     """
@@ -226,6 +229,9 @@ class AnnouncementCandidate(Base):
     # pending / imported / failed
     import_job_id: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(Text)
+    # 2026-09-09：详情初筛抽取结果 JSON（import_detail 抓详情后由 announcement_prescreen 产出，
+    #   资质/人员/信用/金额/地区/工期/标段/质量，key 对齐 F005 主卡；缺失字段带 missing 标注）
+    detail_summary: Mapped[dict | None] = mapped_column(JSONB)
     requested_by: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -752,6 +758,8 @@ class RetrievalRun(Base):
     top_k: Mapped[int] = mapped_column(Integer, nullable=False)
     retrieval_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="hybrid")
     # hybrid / keyword / vector
+    ranking_strategy: Mapped[str] = mapped_column(String(64), nullable=False, default="hybrid_rrf")
+    reranker_model: Mapped[str | None] = mapped_column(String(128))
     index_version: Mapped[str] = mapped_column(String(64), nullable=False)
     candidate_chunk_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     latency_ms: Mapped[int | None] = mapped_column(Integer)

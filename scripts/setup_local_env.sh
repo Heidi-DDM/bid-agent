@@ -8,11 +8,14 @@
 #
 # 用法（在项目根目录）：
 #   bash scripts/setup_local_env.sh          # 安装 + 建库 + 迁移 + 启动 + 健康检查
-#   bash scripts/setup_local_env.sh start    # 仅启动 API + worker
-#   bash scripts/setup_local_env.sh stop     # 停止 API + worker
+#   bash scripts/setup_local_env.sh start    # 启动 embedding(8001) + API + worker
+#   bash scripts/setup_local_env.sh stop     # 停止 embedding + API + worker
 #   bash scripts/setup_local_env.sh status   # 查看进程与健康检查
 #
 # 幂等：重复执行安全（已装依赖/已建库会自动跳过）。
+# 2026-09-09：embedding 服务（BGE-M3，127.0.0.1:8001）已纳入一键管辖——否则 8001 未起时
+#   runtime /readyz 报 knowledge.embedding Connection refused → readyz=false → 前端误判
+#   "API 不可达"。可用 EMBED_SKIP=1 单独跳过 embedding（不影响 API/worker）。
 # =============================================================================
 set -euo pipefail
 
@@ -193,11 +196,61 @@ worker_is_running() {
   [[ "$command" == *"runtime.worker"* ]]
 }
 
+# ── 本地 embedding 服务（BGE-M3，127.0.0.1:8001）整合 ─────────────────────────
+# 背景（2026-09-09）：8001 embedding 由独立的 embedding_serve/start.sh 管理，不在
+# setup_local_env.sh 管辖。若 8001 未起，runtime /readyz 的 knowledge.embedding 检查
+# 报 Connection refused → readyz=false → 前端误判"API 不可达"。这里把 8001 纳入本脚本
+# start/stop/status 一键管辖，避免"只能显示 127.0.0.1:8000 无法连接"的运维坑。
+EMBED_DIR="$ROOT/embedding_serve"
+EMBED_SCRIPT="$EMBED_DIR/start.sh"
+EMBED_PORT=8001
+
+embedding_is_running() {
+  curl -s -m 2 "http://127.0.0.1:${EMBED_PORT}/health" >/dev/null 2>&1
+}
+
+embedding_start() {
+  [[ -x "$EMBED_SCRIPT" ]] || { ok "跳过 embedding（无 $EMBED_SCRIPT，不影响 API/worker）"; return 0; }
+  if [[ "${EMBED_SKIP:-0}" == "1" ]]; then
+    ok "跳过 embedding（EMBED_SKIP=1 显式跳过）"
+    return 0
+  fi
+  if embedding_is_running; then
+    ok "embedding 已在运行（127.0.0.1:${EMBED_PORT}），跳过启动"
+  else
+    log "启动 embedding（$EMBED_DIR/start.sh start，127.0.0.1:${EMBED_PORT}）..."
+    bash "$EMBED_SCRIPT" start >/dev/null 2>&1 \
+      || die "embedding 启动失败（见 $EMBED_DIR/server.log）；请先 bash $EMBED_SCRIPT download-models 下载模型"
+    ok "embedding 已启动（127.0.0.1:${EMBED_PORT}）"
+  fi
+}
+
+embedding_stop() {
+  [[ -x "$EMBED_SCRIPT" ]] || return 0
+  if embedding_is_running; then
+    bash "$EMBED_SCRIPT" stop >/dev/null 2>&1 || true
+    ok "embedding 已停止"
+  else
+    ok "embedding 未在运行"
+  fi
+}
+
+embedding_status() {
+  if embedding_is_running; then
+    echo "embedding: 运行中 (127.0.0.1:${EMBED_PORT})"
+  else
+    echo "embedding: 未运行"
+  fi
+}
+
 start_services() {
   # 进程须使用项目 .venv 依赖：清除外部 PYTHONPATH（如 Hermes/CI 会话注入），
   # 否则 python3.14 会 import 到其他解释器版本的包（ABI 崩溃，API 起不来）。
   unset PYTHONPATH
-  # API：以 8000 端口监听为准（pid 文件可能因启动失败残留而与实际进程脱节）
+  # 先拉起 embedding（8001）：供 runtime /readyz 的 knowledge.embedding 检查通过，
+  # 否则 readyz=false → 前端误判"API 不可达"。
+  embedding_start
+  # API：以 8000 端口监听为准（pid 文件可能因启动失败残留而与实际进程不符）
   local api_pid
   api_pid="$(lsof -tiTCP:8000 -sTCP:LISTEN -P 2>/dev/null | head -1 || true)"
   if [[ -n "$api_pid" ]] && kill -0 "$api_pid" 2>/dev/null; then
@@ -251,6 +304,7 @@ stop_services() {
     done
   fi
   rm -f logs/api.pid logs/worker.pid
+  embedding_stop
   ok "服务已停止"
 }
 
@@ -276,6 +330,7 @@ status_check() {
       echo "$f: 未运行"
     fi
   done
+  embedding_status
   health_check || true
 }
 

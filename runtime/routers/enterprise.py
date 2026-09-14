@@ -4,17 +4,26 @@
 # GET  /api/v1/enterprise/managers
 # POST /api/v1/qualifications、/performances、/personnel、/evidences（资料维护，缺证据默认 pending_verification）
 # R022 追加：批量导入（xlsx/结构化记录）、核验队列、批量核验/驳回/重导入、过期扫描
+# F022 §5.1 v1.3 追加：受控导入 preview/commit（Excel/CSV 台账：嗅探→预览→字段映射→原文不可变落库+行回链）
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import json
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from runtime.routers.deps import get_actor, get_db, get_role, get_request_id, require_role
+from runtime.core.config import object_store_root
 from runtime.core.errors import ApiError
 from runtime.db import api_service
 from runtime.db import enterprise_service
+from runtime.db import excel_service
+from runtime.db import material_service
+from runtime.db.material_service import ValidationError as MaterialValidationError
 
 router = APIRouter(prefix="/api/v1", tags=["enterprise"])
 
@@ -395,3 +404,168 @@ def expire_overdue(
     count = enterprise_service.expire_overdue(session)
     session.commit()
     return {"request_id": request_id, "expired": count}
+
+
+# ── F022 §5.1 v1.3 受控导入：preview / commit（09-优化方案 §3.5）─────────
+
+def _read_upload(file: UploadFile) -> tuple[bytes, str, str]:
+    """读取上传 → (content, filename, suffix)。拒绝空文件。"""
+    try:
+        content = file.file.read()
+    except Exception:
+        raise ApiError("invalid_request", "读取上传文件失败")
+    if not content:
+        raise ApiError("invalid_request", "空文件：未上传台账内容")
+    filename = (file.filename or "").lower()
+    suffix = Path(filename).suffix if filename else ""
+    return content, filename, suffix
+
+
+@router.post("/enterprise/import/preview")
+def enterprise_import_preview(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+    file: UploadFile = File(...),
+    kind: str = Form(...),
+) -> dict:
+    """台账受控导入-安全预览（F022 §5.1 v1.3）：嗅探 + 表头/行数/前 5 行/
+    未映射列/质量警告；无持久化副作用。权限 enterprise write（数据管理员）。
+    """
+    require_role(role, "enterprise", "write", session=session, actor=actor)
+    if kind not in excel_service.ALLOWED_FIELD_KEYS:
+        raise ApiError("invalid_request",
+                       f"未知资料类型: {kind}（允许 qualifications/performances/personnel/managers）")
+    content, filename, suffix = _read_upload(file)
+    try:
+        preview = excel_service.preview_ledger(content, suffix, kind=kind)
+    except excel_service.LedgerError as exc:
+        raise ApiError("unsupported_format", str(exc))
+    api_service.audit(session, actor=actor, action="enterprise.ledger.preview",
+                      basis=f"kind={kind} filename={filename} size={len(content)}",
+                      outcome=f"rows={preview['row_count']} unmapped={len(preview['unmapped_columns'])}",
+                      object_ref=filename)
+    session.commit()
+    return {
+        "request_id": request_id,
+        "filename": filename,
+        "size_bytes": len(content),
+        "preview": preview,
+    }
+
+
+@router.post("/enterprise/import/commit")
+def enterprise_import_commit(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+    file: UploadFile = File(...),
+    kind: str = Form(...),
+    mapping: str = Form(...),
+    data_owner: str = Form(...),
+    source: str | None = Form(default=None),
+    category: str | None = Form(default=None),
+    project_id: str | None = Form(default=None),
+) -> dict:
+    """台账受控导入-确认（F022 §5.1 v1.3）：按 {列名: 字段键} 映射读行 →
+    既有 enterprise 导入服务（幂等）；原文件同时作为企业私有证据
+    （evidence_file / owner_type=enterprise）落不可变版本并回链 material_id；
+    结构化行保留来源行号（evidence_refs 前缀 ledger:）。风险/损坏文件无残留。
+    """
+    require_role(role, "enterprise", "write", session=session, actor=actor)
+    allowed = excel_service.ALLOWED_FIELD_KEYS.get(kind)
+    if allowed is None:
+        raise ApiError("invalid_request",
+                       f"未知资料类型: {kind}（允许 qualifications/performances/personnel/managers）")
+    if kind == "personnel" and not category:
+        raise ApiError("invalid_request", "personnel 导入必须提供 category（registered_builder/technical_title/post_certificate）")
+    try:
+        mapping_obj = json.loads(mapping)
+        if not isinstance(mapping_obj, dict):
+            raise ValueError
+    except (json.JSONDecodeError, ValueError):
+        raise ApiError("invalid_request", "mapping 必须是 JSON 对象（{列名: 字段键}）")
+    invalid_keys = sorted(set(mapping_obj.values()) - set(allowed))
+    if invalid_keys:
+        raise ApiError("invalid_request",
+                       f"mapping 含该资料类型不允许的字段键: {invalid_keys}（允许: {sorted(allowed)}）")
+
+    content, filename, suffix = _read_upload(file)
+    src_name = source or filename
+    tmp_path: Path | None = None
+    try:
+        # 1) 安全嗅探 + 按映射读结构化行（含 ledger:sheet:row 行回链）
+        rows = excel_service.read_ledger_rows(content, suffix, mapping_obj)
+        if not rows:
+            raise excel_service.LedgerError("台账无有效数据行（全部为空或未映射列）")
+        # 2) 原文件 → 企业私有证据材料（evidence_file），内容重复幂等复用既有版本
+        material_id = f"MAT-LEDGER-{kind[:8].upper()}-{uuid.uuid4().hex[:10]}"
+        tmp_path = _write_tmp(content, suffix)
+        imported = material_service.import_material(
+            session,
+            src_path=str(tmp_path),
+            material_id=material_id,
+            material_type="evidence_file",
+            source_type="uploaded",
+            owner_type="enterprise",
+            classification="internal",
+            permission_scope="enterprise_read",
+            data_owner=data_owner,
+            store_root=object_store_root(),
+            project_id=project_id,
+            actor=actor,
+        )
+        # 3) 结构化行 → 既有导入服务（幂等；行级默认 pending_verification）
+        if kind == "qualifications":
+            result = enterprise_service.import_qualifications(
+                session, rows, data_owner=data_owner, actor=actor,
+                source=src_name, material_id=imported.material.material_id)
+        elif kind == "performances":
+            result = enterprise_service.import_performances(
+                session, rows, data_owner=data_owner, actor=actor,
+                source=src_name, material_id=imported.material.material_id)
+        elif kind == "personnel":
+            result = enterprise_service.import_personnel(
+                session, rows, category=category,
+                data_owner=data_owner, actor=actor, source=src_name)
+        else:  # managers
+            result = enterprise_service.import_managers(
+                session, rows, data_owner=data_owner, actor=actor, source=src_name)
+        api_service.audit(session, actor=actor, action="enterprise.ledger.commit",
+                          basis=f"kind={kind} source={src_name} material={imported.material.material_id}",
+                          outcome=f"rows={len(rows)} created={result['created']} skipped={result['skipped']}",
+                          object_ref=material_id)
+        session.commit()
+    except excel_service.LedgerError as exc:
+        session.rollback()
+        raise ApiError("unsupported_format", str(exc))
+    except MaterialValidationError as exc:
+        session.rollback()
+        raise ApiError("invalid_request", str(exc))
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    return {
+        "request_id": request_id,
+        "kind": kind,
+        "source": src_name,
+        "rows": len(rows),
+        "material": {
+            "material_id": imported.material.material_id,
+            "version": imported.material.version,
+            "created": imported.created,
+        },
+        "import": result,
+    }
+
+
+def _write_tmp(content: bytes, suffix: str) -> Path:
+    """写入临时文件（commit 流程结束后清理；异常路径无业务残留）。"""
+    tmp = Path(__file__).resolve().parent.parent / ".tmp-ledger-uploads"
+    tmp.mkdir(parents=True, exist_ok=True)
+    path = tmp / f"{uuid.uuid4().hex}{suffix or '.bin'}"
+    path.write_bytes(content)
+    return path

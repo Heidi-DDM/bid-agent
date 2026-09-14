@@ -1,18 +1,20 @@
 # R021/F021：解析候选复核 API
 # GET  /api/v1/parse/projects/{project_id}/materials/{material_id}/candidates  # 候选列表（含进度）
+# GET  /api/v1/parse/projects/{project_id}/requirements                        # F021 §2.1 v1.3：六组聚合视图
 # POST /api/v1/parse/candidates/{candidate_id}/review                          # 人工复核决策
 # POST /api/v1/parse/projects/{project_id}/materials/{material_id}/confirm     # 全部确认 → 写规则集/字段溯源 → parsed
 # 权限：投标专员（bid_specialist）复核；经营负责人只读。F021 §2.7：确认前不产生 RuleSet。
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from runtime.core.errors import ApiError
 from runtime.db import api_service, parse_service
 from runtime.db.models import Material
+from runtime.db.parse_service import REJECT_REASONS
 from runtime.routers.deps import get_actor, get_db, get_request_id, get_role, require_role
 
 router = APIRouter(prefix="/api/v1/parse", tags=["parse"])
@@ -24,10 +26,49 @@ class ReviewBody(BaseModel):
     review_note: str | None = None
     revised_payload: dict | None = None
 
+    @model_validator(mode="after")
+    def _review_semantics(self) -> "ReviewBody":
+        """F021 §2.1 v1.3 复核语义：rejected 必带结构化原因；revised 必带修正值；approved 不带 payload。"""
+        if self.decision == "rejected":
+            note = (self.review_note or "").strip()
+            if not note or not any(
+                note == r or note.startswith(f"{r}：") or note.startswith(f"{r}:")
+                for r in REJECT_REASONS
+            ):
+                raise ValueError(
+                    f"rejected 必须携带结构化原因（{' / '.join(REJECT_REASONS)}）并写入 review_note"
+                )
+            if self.revised_payload:
+                raise ValueError("rejected 不得携带 revised_payload（原因不是修正值）")
+        if self.decision == "revised" and not self.revised_payload:
+            raise ValueError("revised 必须携带 revised_payload（修正后的 assertion/value 与依据）")
+        if self.decision == "approved" and self.revised_payload:
+            raise ValueError("approved 不得携带 revised_payload（确认无误无需修正值）")
+        return self
+
 
 class ConfirmBody(BaseModel):
     actor: str = Field(..., min_length=1)
     as_of: str | None = Field(None, description="判定时点 ISO 日期；缺省用规则集锚点日期")
+
+
+@router.get("/projects/{project_id}/requirements")
+def project_requirements(
+    project_id: str,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+) -> dict:
+    """解析结果聚合（F021 §2.1 v1.3 / 09-优化方案 §3.3）：六组业务语言分组，按视图切换。
+
+    写规则集前（material.parse_status != parsed）返回 parse_candidates 视图（review_status 实时）；
+    规则集已写入后返回 Requirement + FieldTrace 的 confirmed 视图。
+    """
+    require_role(role, "tender_document", "read", session=session, actor=role,
+                 object_ref=project_id)
+    data = parse_service.grouped_requirements(session, project_id=project_id)
+    data["request_id"] = request_id
+    return data
 
 
 @router.get("/projects/{project_id}/materials/{material_id}/candidates")

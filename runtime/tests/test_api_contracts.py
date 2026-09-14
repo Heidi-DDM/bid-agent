@@ -30,6 +30,29 @@ def _headers(role: str | None = "bid_specialist", actor: str = "tester") -> dict
     return h
 
 
+def test_candidate_card_keeps_source_scope_separate_from_project_region():
+    from runtime.db.models import AnnouncementCandidate
+    from runtime.routers.intake import _candidate_card
+
+    candidate = AnnouncementCandidate(
+        candidate_id="C-REGION-001",
+        source_id="hebtig",
+        source_name="惠招标（河北交投）工程类",
+        title="某地施工招标公告",
+        url="https://ebidding.hebtig.com/jyxx/example.html",
+        category="招标专区-工程类",
+        region=None,
+        publish_date=None,
+        import_status="pending",
+    )
+    card = _candidate_card(candidate)
+    assert card["region"] is None
+    assert card["source_region_scope"] == "河北省"
+    assert card["region_inferred"] is False
+    assert card["region_provenance"] == "source_scope_only"
+    assert "region" in card["missing_fields"]
+
+
 # ---------- 统一错误结构 ----------
 
 def test_error_body_structure(client):
@@ -140,19 +163,69 @@ def test_search_requires_keyword_or_region(client):
     assert resp.json()["error"]["code"] == "invalid_request"
 
 
-# ---------- R004：候选公告确认入库 RBAC（announcement write 仅投标专员） ----------
+def test_search_idempotency_key_is_windowed(client, monkeypatch):
+    """搜索在同一 5 分钟窗口内幂等，窗口切换后允许合规重试。"""
+    import runtime.routers.intake as intake
+    seen = []
+
+    def fake_create_job(session, **kwargs):
+        seen.append(kwargs["idempotency_key"])
+        class Job:
+            job_id = "JOB-WINDOW"
+        return Job(), len(seen) == 1
+
+    monkeypatch.setattr(intake.worker_service, "create_job", fake_create_job)
+    monkeypatch.setattr(intake.time, "time", lambda: 1500.0)
+    for _ in range(2):
+        resp = client.post("/api/v1/intake/announcement/search",
+                           headers=_headers("bid_specialist"),
+                           json={"keyword": "施工", "region": "河北省"})
+        assert resp.status_code == 200
+    monkeypatch.setattr(intake.time, "time", lambda: 1800.0)
+    resp = client.post("/api/v1/intake/announcement/search",
+                       headers=_headers("bid_specialist"),
+                       json={"keyword": "施工", "region": "河北省"})
+    assert resp.status_code == 200
+    assert seen[0] == seen[1]
+    assert seen[2] != seen[1]
+
+
+def test_search_ignores_legacy_category_scale(client):
+    # v1.7（09-优化方案 §3.1）：种类/规模不再是搜索请求的采集过滤条件——服务端
+    # 忽略且不校验其取值（含未登记种类、超长规模），照常创建任务（沙盒无库 → 500
+    # 统一结构，说明已通过参数校验、未被拦截）。
+    for payload in (
+        {"keyword": "施工", "region": "河北省", "category": "航天工程",
+         "collect_mode": "manual_trigger"},
+        {"keyword": "施工", "region": "河北省", "scale": "超" * 30,
+         "collect_mode": "manual_trigger"},
+        {"keyword": "施工", "region": "石家庄市", "category": "市政公用",
+         "scale": "中型（400万–1亿）", "collect_mode": "manual_trigger"},
+    ):
+        resp = client.post(
+            "/api/v1/intake/announcement/search",
+            headers=_headers("bid_specialist"),
+            data=payload,
+        )
+        assert resp.status_code == 500, (payload, resp.text)  # 仅沙盒无库
+        assert resp.json()["error"]["code"] == "internal_error", payload
+
+
+# ---------- R004：候选公告确认入库 RBAC（announcement write：投标专员 + 经营负责人） ----------
 
 def test_candidate_import_requires_announcement_write(client):
-    # import = 写公开事实（抓详情原文入库）：bid_specialist 允许（沙盒无库 → 500）；
+    # import = 写公开事实（抓详情原文入库）；2026-09-11 用户决策：business_head 增
+    # announcement:write（与 bid_specialist 同过 RBAC 门，沙盒无库 → 500）；
     # 其余角色 403 不触库
     url = "/api/v1/intake/announcement/candidates/C-1/import"
-    for role in ("data_admin", "business_head", "legal"):
+    for role in ("data_admin", "legal"):
         resp = client.post(url, headers=_headers(role))
         assert resp.status_code == 403, role
         assert resp.json()["error"]["code"] == "forbidden", role
-    resp = client.post(url, headers=_headers("bid_specialist"))
-    assert resp.status_code == 500  # 已过 RBAC，沙盒无库 → 统一 500 结构
-    assert resp.json()["error"]["code"] == "internal_error"
+    for role in ("bid_specialist", "business_head"):
+        resp = client.post(url, headers=_headers(role))
+        assert resp.status_code == 500, role  # 已过 RBAC，沙盒无库 → 统一 500 结构
+        assert resp.json()["error"]["code"] == "internal_error", role
 
 
 def test_candidate_status_read_gate(client):
@@ -200,6 +273,7 @@ def test_openapi_registers_f020_routes(client):
         "/api/v1/intake/announcement/search/{job_id}",
         "/api/v1/intake/announcement/candidates/{candidate_id}/import",
         "/api/v1/intake/announcement/candidates/{candidate_id}",
+        "/api/v1/intake/announcement/candidates/{candidate_id}/text",
         "/api/v1/intake/tender-document",
         "/api/v1/projects",
         "/api/v1/projects/{project_id}/requirements",
@@ -227,6 +301,7 @@ def test_openapi_registers_parse_routes(client):
     paths = resp.json()["paths"]
     for path in [
         "/api/v1/parse/projects/{project_id}/materials/{material_id}/candidates",
+        "/api/v1/parse/projects/{project_id}/requirements",  # F021 §2.1 v1.3 聚合
         "/api/v1/parse/candidates/{candidate_id}/review",
         "/api/v1/parse/projects/{project_id}/materials/{material_id}/confirm",
     ]:
@@ -247,11 +322,14 @@ def test_openapi_registers_rag_routes(client):
 
 def test_openapi_registers_r022_enterprise_routes(client):
     # R022：批量导入 / 核验队列 / 批量核验 / 重导入 / 过期扫描
+    # F022 §5.1 v1.3：受控导入 preview/commit（Excel/CSV 台账）
     resp = client.get("/openapi.json")
     assert resp.status_code == 200
     paths = resp.json()["paths"]
     for path in [
         "/api/v1/enterprise/import",
+        "/api/v1/enterprise/import/preview",
+        "/api/v1/enterprise/import/commit",
         "/api/v1/enterprise/verification-queue",
         "/api/v1/enterprise/verify",
         "/api/v1/enterprise/reimport",
@@ -270,6 +348,50 @@ def test_r022_import_requires_enterprise_write(client):
     resp2 = client.post("/api/v1/enterprise/import", json=body,
                         headers=_headers("legal"))
     assert resp2.status_code == 403, resp2.text
+
+
+def test_r022_ledger_preview_commit_role_gate(client):
+    # 受控导入 preview/commit = enterprise write：仅 data_admin；其余 403（不触库）
+    files = {"file": ("q.csv", "资质类别,资质等级\n建筑工程施工总承包,特级".encode(), "text/csv")}
+    data = {"kind": "qualifications", "mapping": "{}", "data_owner": "项目负责人"}
+    for path in ("/api/v1/enterprise/import/preview", "/api/v1/enterprise/import/commit"):
+        for role in ("bid_specialist", "legal", "business_head"):
+            resp = client.post(path, headers=_headers(role), files=files, data=data)
+            assert resp.status_code == 403, f"{path} {role}: {resp.text}"
+
+
+def test_r022_ledger_validation_before_db(client):
+    # 触库前校验（data_admin 过 RBAC 后、不依赖数据库）：
+    # preview 未知 kind / commit 未知 kind、mapping 非法字段键、personnel 缺 category → 400
+    csv_bytes = "资质类别,资质等级\n建筑工程施工总承包,特级".encode()
+    files = {"file": ("q.csv", csv_bytes, "text/csv")}
+    resp = client.post("/api/v1/enterprise/import/preview",
+                       headers=_headers("data_admin"), files=files,
+                       data={"kind": "unknown"})
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["error"]["code"] == "invalid_request"
+
+    resp = client.post("/api/v1/enterprise/import/commit",
+                       headers=_headers("data_admin"), files=files,
+                       data={"kind": "qualifications", "mapping": "not-json",
+                             "data_owner": "项目负责人"})
+    assert resp.status_code == 400, resp.text
+    assert "JSON 对象" in resp.json()["error"]["message"]
+
+    resp = client.post("/api/v1/enterprise/import/commit",
+                       headers=_headers("data_admin"), files=files,
+                       data={"kind": "qualifications",
+                             "mapping": '{"资质类别": "not_a_field"}',
+                             "data_owner": "项目负责人"})
+    assert resp.status_code == 400, resp.text
+    assert "不允许的字段键" in resp.json()["error"]["message"]
+
+    resp = client.post("/api/v1/enterprise/import/commit",
+                       headers=_headers("data_admin"), files=files,
+                       data={"kind": "personnel", "mapping": "{}",
+                             "data_owner": "项目负责人"})
+    assert resp.status_code == 400, resp.text
+    assert "category" in resp.json()["error"]["message"]
 
 
 def test_r022_verify_requires_enterprise_verify(client):
@@ -306,6 +428,69 @@ def test_parse_review_requires_tender_doc_write(client):
         )
         assert resp.status_code == 403, role
         assert resp.json()["error"]["code"] == "forbidden", role
+
+
+def test_parse_review_semantics_validation(client):
+    """F021 §2.1 v1.3 复核语义：rejected 必须带结构化原因；revised 必须带修正值；
+    approved 不得带 revised_payload（请求体校验 422，先于触库）。"""
+    base = {"reviewer": "投标专员"}
+    # rejected 无原因 → 422（不触库，沙盒同样成立）
+    resp = client.post(
+        "/api/v1/parse/candidates/C-1/review",
+        headers=_headers("bid_specialist"),
+        json={**base, "decision": "rejected", "review_note": "字迹不清"},
+    )
+    assert resp.status_code == 422, resp.text
+    # rejected 带枚举原因 → 通过请求体校验（沙盒无库 → 触库 500，证明语义校验已放行）
+    resp = client.post(
+        "/api/v1/parse/candidates/C-1/review",
+        headers=_headers("bid_specialist"),
+        json={**base, "decision": "rejected", "review_note": "扫描不清"},
+    )
+    assert resp.status_code == 500, resp.text
+    assert resp.json()["error"]["code"] == "internal_error"
+    # rejected 不得携带修正值
+    resp = client.post(
+        "/api/v1/parse/candidates/C-1/review",
+        headers=_headers("bid_specialist"),
+        json={**base, "decision": "rejected", "review_note": "条款冲突",
+              "revised_payload": {"assertion": "x"}},
+    )
+    assert resp.status_code == 422, resp.text
+    # revised 无修正值 → 422；带修正值 → 过校验（沙盒触库 500）
+    resp = client.post(
+        "/api/v1/parse/candidates/C-1/review",
+        headers=_headers("bid_specialist"),
+        json={**base, "decision": "revised"},
+    )
+    assert resp.status_code == 422, resp.text
+    resp = client.post(
+        "/api/v1/parse/candidates/C-1/review",
+        headers=_headers("bid_specialist"),
+        json={**base, "decision": "revised",
+              "revised_payload": {"assertion": "修正原文", "value": "一级"}},
+    )
+    assert resp.status_code == 500, resp.text
+    # approved 不得带修正值
+    resp = client.post(
+        "/api/v1/parse/candidates/C-1/review",
+        headers=_headers("bid_specialist"),
+        json={**base, "decision": "approved", "revised_payload": {"assertion": "x"}},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+def test_parse_requirements_aggregate_role_gate(client):
+    # 聚合读门禁与 candidates 一致：tender_document read（bid_specialist/business_head/legal 可读，
+    # 沙盒无库 → 500）；data_admin 403 不触库
+    resp = client.get("/api/v1/parse/projects/ND-2025/requirements",
+                      headers=_headers("data_admin"))
+    assert resp.status_code == 403, resp.text
+    for role in ("bid_specialist", "business_head", "legal"):
+        resp = client.get("/api/v1/parse/projects/ND-2025/requirements",
+                          headers=_headers(role))
+        assert resp.status_code == 500, role
+        assert resp.json()["error"]["code"] == "internal_error", role
 
 
 def test_parse_confirm_requires_tender_doc_write(client):
@@ -380,3 +565,16 @@ def test_approvals_pending_empty_state(client):
     assert resp.status_code in (200, 500)
     if resp.status_code == 200:
         assert resp.json()["items"] == []
+
+
+def test_candidate_text_read_gate(client):
+    # P1（2026-09-11）：公告固化原文读取（溯源定位）= announcement read；
+    # data_admin 403 不触库，bid_specialist/business_head/legal 过门后沙盒无库 → 500
+    url = "/api/v1/intake/announcement/candidates/C-1/text"
+    resp = client.get(url, headers=_headers("data_admin"))
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+    for role in ("bid_specialist", "business_head", "legal"):
+        resp = client.get(url, headers=_headers(role))
+        assert resp.status_code == 500, role
+        assert resp.json()["error"]["code"] == "internal_error", role

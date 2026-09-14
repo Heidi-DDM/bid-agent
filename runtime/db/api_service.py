@@ -720,28 +720,40 @@ def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
 
 
 def queues_summary(session: Session, project_id: str) -> dict[str, Any]:
-    """三类处置队列（F020 §2.2.4 / GET /projects/{id}/queues）。"""
+    """三类处置队列（F020 §2.2.4 / GET /projects/{id}/queues）。
+
+    v1.7：队列 DTO 扩展透传（09-优化方案 §3.4.3）：每项除 {project_id,
+    requirement_id, clause, text} 外携带 clause_ref/missing_field/reason/purpose/
+    recommended_material_types/owner_role/due_at（admission_service._queue_item
+    已按证据如实填充，无来源为 null）。
+    """
     result = latest_admission(session, project_id)
     empty = {"blocked_hard_requirement": [], "blocked_missing_data": [], "manual_review": []}
     if result is None:
         return {"queues": empty}
+
+    def _item(it: dict) -> dict[str, Any]:
+        return {
+            "project_id": project_id,
+            "requirement_id": it.get("req") or it.get("requirement_id"),
+            "clause": it.get("clause"),
+            "clause_ref": it.get("clause_ref") or it.get("clause"),
+            "text": it.get("text"),
+            "match_result": it.get("match_result"),
+            "req_type": it.get("req_type"),
+            "missing_field": it.get("missing_field"),
+            "reason": it.get("reason"),
+            "purpose": it.get("purpose"),
+            "recommended_material_types": it.get("recommended_material_types"),
+            "owner_role": it.get("owner_role"),
+            "due_at": it.get("due_at"),
+        }
+
     return {
         "queues": {
-            "blocked_hard_requirement": [
-                {"project_id": project_id, "requirement_id": it.get("req"),
-                 "clause": it.get("clause"), "text": it.get("text")}
-                for it in (result.blocked_items or [])
-            ],
-            "blocked_missing_data": [
-                {"project_id": project_id, "requirement_id": it.get("req"),
-                 "clause": it.get("clause"), "text": it.get("text")}
-                for it in (result.pending_items or [])
-            ],
-            "manual_review": [
-                {"project_id": project_id, "requirement_id": it.get("req"),
-                 "clause": it.get("clause"), "text": it.get("text")}
-                for it in (result.review_items or [])
-            ],
+            "blocked_hard_requirement": [_item(it) for it in (result.blocked_items or [])],
+            "blocked_missing_data": [_item(it) for it in (result.pending_items or [])],
+            "manual_review": [_item(it) for it in (result.review_items or [])],
         }
     }
 

@@ -83,6 +83,8 @@ def replay_run(session: Session, retrieval_run_id: str) -> dict:
         "as_of": run.as_of,
         "top_k": run.top_k,
         "retrieval_mode": run.retrieval_mode,
+        "ranking_strategy": run.ranking_strategy,
+        "reranker_model": run.reranker_model,
         "index_version": run.index_version,
         "candidate_chunk_ids": run.candidate_chunk_ids,
         "latency_ms": run.latency_ms,

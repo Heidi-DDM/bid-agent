@@ -47,7 +47,7 @@ _ROLE_PERMISSIONS: dict[str, set[tuple[str, str]]] = {
         (RES_MATERIAL, READ), (RES_MATERIAL, WRITE),
     },
     BUSINESS_HEAD: {
-        (RES_ANNOUNCEMENT, READ),
+        (RES_ANNOUNCEMENT, READ), (RES_ANNOUNCEMENT, WRITE),   # 2026-09-11 用户决策：经营负责人可搜索/登记公告（原只读）
         (RES_TENDER_DOC, READ),
         (RES_MATERIAL, READ),
         (RES_MATCH, READ), (RES_MATCH, WRITE),                 # 查看完整匹配结果/准入

@@ -71,7 +71,7 @@ function renderTopbar(activePage) {
     const remote = typeof SAME_ORIGIN_DEPLOY !== "undefined" && SAME_ORIGIN_DEPLOY;
     const loginHint = remote
       ? "演示账号与口令由项目负责人线下提供"
-      : "演示账号：bid_specialist / data_admin / business_head / legal，密码同账号";
+      : "演示账号：toubiao / jingying（密码 123456）；data_admin / legal（密码同账号）";
     authHtml = `
       <span class="hint" title="${loginHint}">未登录</span>
       <input id="login-user" class="inp" placeholder="账号" autocomplete="username" style="width:96px">
@@ -96,13 +96,22 @@ function renderTopbar(activePage) {
         const remoteDeploy = typeof SAME_ORIGIN_DEPLOY !== "undefined" && SAME_ORIGIN_DEPLOY;
         alert(remoteDeploy
           ? "请输入账号（演示账号由项目负责人提供）"
-          : "请输入账号（演示账号密码同账号：bid_specialist 等）");
+          : "请输入账号（投标专员 toubiao、经营负责人 jingying，密码均为 123456；数据管理员 data_admin、法务 legal 密码同账号）");
         return;
       }
       try {
         await apiLogin(user.value.trim(), pass.value || user.value.trim());
         window.location.reload();
       } catch (err) {
+        // Failed to fetch = 浏览器层请求被拦（服务未起 / CORS / 代理），给出可操作指引
+        if (!err.status && /Failed to fetch|NetworkError|fetch/i.test(err.message || "")) {
+          alert("登录失败：无法连接 API（" + apiBase() + "）\n\n" +
+            "常见原因：\n" +
+            "① runtime 未启动——在项目终端运行：bash scripts/setup_local_env.sh start\n" +
+            "② 页面打开方式不对——请从 http://127.0.0.1:8080 打开（直接双击 HTML（file://）或经编辑器预览端口打开会被浏览器跨域拦截，所有请求报 Failed to fetch）\n" +
+            "③ 系统代理拦截 127.0.0.1——代理例外需包含 localhost/127.0.0.1");
+          return;
+        }
         alert("登录失败：" + err.message);
       }
     };
@@ -192,7 +201,7 @@ function initPage(activePage, activeStepId) {
     if (had) {
       const box = document.getElementById("api-error");
       if (box) {
-        box.innerHTML = `<div class="notice error"><b>登录已失效或未登录</b>——请使用右上角账号登录后重试（演示账号：bid_specialist 等，密码同账号）。</div>`;
+        box.innerHTML = `<div class="notice error"><b>登录已失效或未登录</b>——请使用右上角账号登录后重试（投标专员 toubiao / 经营负责人 jingying，密码 123456）。</div>`;
         box.style.display = "block";
       } else {
         alert("登录已失效，请重新登录");

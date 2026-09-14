@@ -1,105 +1,170 @@
-"""本地 embedding HTTP 服务（OpenAI 兼容 /v1/embeddings，bge-m3）。
+"""完全本地的 BGE embedding + cross-encoder reranker 服务。
 
-F025 §5 / docs/07 方案：企业向量化不出内网 —— 本服务仅监听 127.0.0.1，
-由 runtime/core/model.py 适配器（MODEL_BASE_URL=http://127.0.0.1:8001）调用。
+接口：
+- ``POST /v1/embeddings``：BAAI/bge-m3，OpenAI 兼容；
+- ``POST /v1/rerank``：BAAI/bge-reranker-v2-m3，输入 query + 已过滤候选文本；
+- ``GET /health``：不暴露本机路径，只报告模型资产和加载状态。
 
-环境变量:
-  BGE_M3_PATH  模型目录（默认 HF 标准缓存中的 BAAI/bge-m3 snapshot）
-  EMBED_PORT   监听端口（默认 8001）
-
-用法:
-  python server.py            # 前台运行
-  bash start.sh start         # 常驻运行（nohup），stop/status 见 start.sh
+服务只监听 127.0.0.1。企业 L3 内容仅被同机/内网运行时调用，不会被发送到外部模型。
+模型下载必须由 ``bash start.sh download-models`` 显式执行，服务请求不会联网下载。
 """
 from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Union
 
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
-MODEL_PATH = os.environ.get(
-    "BGE_M3_PATH"
-) or os.path.expanduser(
-    "~/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/"
-    "5617a9f61b028005a4858fdac845db406aefb181"
-)
+
 PORT = int(os.environ.get("EMBED_PORT", "8001"))
-DEFAULT_MODEL_NAME = "bge-m3-local"
+DEFAULT_EMBEDDING_NAME = "bge-m3-local"
+DEFAULT_RERANKER_NAME = "bge-reranker-v2-m3-local"
 _DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-
-_model: SentenceTransformer | None = None
-_loaded_at: float | None = None
+_CACHE_ROOT = Path.home() / ".cache" / "huggingface" / "hub"
 
 
-def get_model() -> SentenceTransformer:
-    global _model, _loaded_at
-    if _model is None:
-        print(f"[embedding] loading {MODEL_PATH} (device={_DEVICE}) ...", flush=True)
-        t0 = time.time()
-        _model = SentenceTransformer(MODEL_PATH, device=_DEVICE)
-        _loaded_at = time.time()
-        print(f"[embedding] loaded in {time.time() - t0:.1f}s", flush=True)
-    return _model
+def _first_snapshot(repo_cache_name: str) -> str | None:
+    snapshots = _CACHE_ROOT / repo_cache_name / "snapshots"
+    if not snapshots.is_dir():
+        return None
+    candidates = sorted(path for path in snapshots.iterdir() if path.is_dir())
+    return str(candidates[-1]) if candidates else None
 
 
-app = FastAPI(title="local-embedding", version="0.1.0")
+# 环境变量可覆盖，以支持内网共享模型盘；未配置时只查标准 HF 缓存，不触发下载。
+EMBEDDING_PATH = os.environ.get("BGE_M3_PATH") or _first_snapshot("models--BAAI--bge-m3")
+RERANKER_PATH = os.environ.get("BGE_RERANKER_PATH") or _first_snapshot(
+    "models--BAAI--bge-reranker-v2-m3"
+)
+
+_embedding_model: SentenceTransformer | None = None
+_reranker_model: CrossEncoder | None = None
+_embedding_loaded_at: float | None = None
+_reranker_loaded_at: float | None = None
+
+
+def _asset_available(path: str | None) -> bool:
+    return bool(path and Path(path).is_dir())
+
+
+def get_embedding_model() -> SentenceTransformer:
+    global _embedding_model, _embedding_loaded_at
+    if _embedding_model is None:
+        if not _asset_available(EMBEDDING_PATH):
+            raise RuntimeError("BGE-M3 模型资产不存在；请先显式执行 start.sh download-models")
+        print(f"[local-model] loading embedding model (device={_DEVICE}) ...", flush=True)
+        started = time.time()
+        _embedding_model = SentenceTransformer(EMBEDDING_PATH, device=_DEVICE)
+        _embedding_loaded_at = time.time()
+        print(f"[local-model] embedding loaded in {time.time() - started:.1f}s", flush=True)
+    return _embedding_model
+
+
+def get_reranker_model() -> CrossEncoder:
+    global _reranker_model, _reranker_loaded_at
+    if _reranker_model is None:
+        if not _asset_available(RERANKER_PATH):
+            raise RuntimeError("BGE reranker 模型资产不存在；请先显式执行 start.sh download-models")
+        print(f"[local-model] loading reranker model (device={_DEVICE}) ...", flush=True)
+        started = time.time()
+        _reranker_model = CrossEncoder(RERANKER_PATH, device=_DEVICE)
+        _reranker_loaded_at = time.time()
+        print(f"[local-model] reranker loaded in {time.time() - started:.1f}s", flush=True)
+    return _reranker_model
+
+
+app = FastAPI(title="local-rag-models", version="0.2.0")
 
 
 class EmbedRequest(BaseModel):
     model: str | None = None
-    input: Union[str, list[str]] = Field(
-        ..., description="OpenAI 兼容：单个字符串或字符串数组"
-    )
+    input: Union[str, list[str]] = Field(..., description="OpenAI 兼容：单个字符串或字符串数组")
+
+
+class RerankRequest(BaseModel):
+    model: str | None = None
+    query: str = Field(..., min_length=1, max_length=10000)
+    documents: list[str] = Field(..., min_length=1, max_length=200)
 
 
 @app.get("/health")
 def health() -> dict:
-    # 注意：不返回模型绝对路径（MODEL_PATH 含本机用户名，内网共享部署时会被 /health 探测到）；
-    # 排查路径问题看启动日志（server.log 打印了加载路径）。
+    # 禁止回传模型绝对路径，避免把本机用户名/挂载结构暴露给调用方。
     return {
         "status": "ok",
-        "model": DEFAULT_MODEL_NAME,
-        "dim": 1024,
+        "embedding": {
+            "model": DEFAULT_EMBEDDING_NAME,
+            "dim": 1024,
+            "available": _asset_available(EMBEDDING_PATH),
+            "loaded": _embedding_model is not None,
+        },
+        "reranker": {
+            "model": DEFAULT_RERANKER_NAME,
+            "available": _asset_available(RERANKER_PATH),
+            "loaded": _reranker_model is not None,
+        },
         "device": _DEVICE,
-        "loaded": _model is not None,
     }
 
 
 @app.post("/v1/embeddings")
 def embeddings(req: EmbedRequest) -> dict:
-    if _model is None:
-        # 首次请求触发加载（uvicorn 单 worker 常驻后通常已预热）
-        get_model()
     texts = req.input if isinstance(req.input, list) else [req.input]
-    for t in texts:
-        if not isinstance(t, str) or not t.strip():
-            raise HTTPException(status_code=400, detail="input 必须为非空字符串或字符串数组")
-    model = get_model()
-    vectors = model.encode(
-        texts,
-        normalize_embeddings=False,
-        batch_size=32,
-        show_progress_bar=False,
-        convert_to_numpy=True,
-    ).tolist()
+    if any(not isinstance(text, str) or not text.strip() for text in texts):
+        raise HTTPException(status_code=400, detail="input 必须为非空字符串或字符串数组")
+    try:
+        model = get_embedding_model()
+        vectors = model.encode(
+            texts,
+            normalize_embeddings=False,
+            batch_size=32,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+        ).tolist()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "object": "list",
         "data": [
-            {"object": "embedding", "embedding": vec, "index": i}
-            for i, vec in enumerate(vectors)
+            {"object": "embedding", "embedding": vector, "index": index}
+            for index, vector in enumerate(vectors)
         ],
-        "model": req.model or DEFAULT_MODEL_NAME,
-        "usage": {"prompt_tokens": sum(len(t) for t in texts), "total_tokens": sum(len(t) for t in texts)},
+        "model": req.model or DEFAULT_EMBEDDING_NAME,
+        "usage": {"prompt_tokens": sum(len(text) for text in texts), "total_tokens": sum(len(text) for text in texts)},
+    }
+
+
+@app.post("/v1/rerank")
+def rerank(req: RerankRequest) -> dict:
+    if not req.query.strip() or any(not document.strip() for document in req.documents):
+        raise HTTPException(status_code=400, detail="query 和 documents 必须为非空字符串")
+    try:
+        model = get_reranker_model()
+        # 统一输出 sigmoid 后的 0..1 相关性；该数值仅用于候选排序，绝非资格置信度。
+        scores = model.predict(
+            [[req.query, document] for document in req.documents],
+            activation_fn=torch.nn.Sigmoid(),
+            show_progress_bar=False,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "object": "list",
+        "data": [
+            {"object": "rerank_result", "index": index, "relevance_score": float(score)}
+            for index, score in enumerate(scores)
+        ],
+        "model": req.model or DEFAULT_RERANKER_NAME,
     }
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    print(f"[embedding] bge-m3 serve on 127.0.0.1:{PORT} (device={_DEVICE})", flush=True)
+    print(f"[local-model] serving on 127.0.0.1:{PORT} (device={_DEVICE})", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="info")

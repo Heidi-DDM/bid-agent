@@ -568,10 +568,23 @@ def test_generate_admission_whitelist_full_score(session):
 
 
 def _queue_item_like(entry, req):
+    # F020 §2.2.5 v1.7（09-优化方案 §3.4.3）：队列 DTO 扩展字段同步断言
+    required = list(req.get("evidence_required") or [])
     return {
-        "req": entry["requirement_id"], "clause": entry["clause_ref"],
-        "text": req["assertion"], "match_result": entry["match_result"],
-        "req_type": entry["req_type"], "failure_effect": req["failure_effect"],
+        "req": entry["requirement_id"],
+        "requirement_id": entry["requirement_id"],
+        "clause": entry["clause_ref"],
+        "clause_ref": entry["clause_ref"],
+        "text": req["assertion"],
+        "match_result": entry["match_result"],
+        "req_type": entry["req_type"],
+        "failure_effect": req["failure_effect"],
+        "missing_field": None,
+        "reason": entry.get("match_reason"),
+        "purpose": None,
+        "recommended_material_types": list(required) if required else None,
+        "owner_role": "bid_specialist:upload → data_admin:verify",
+        "due_at": None,
     }
 
 
@@ -726,3 +739,25 @@ def test_match_runs_compare_no_runs_404(session):
     with pytest.raises(ApiError):
         api_service.match_runs_compare(session, "ND-2025", base_run_id=None,
                                        target_run_id=None)
+
+def test_default_match_retrieval_injects_query_embedding(session, monkeypatch):
+    """修复：自动匹配不得因遗漏 embed_query_fn 而退化为 keyword-only。"""
+    _project(session)
+    _rule_set(session)
+    _requirement(session)
+    _qualification(session)
+    _chunk(session)
+    captured = {}
+
+    def fake_hybrid(_session, _request, _vis, *, role="", embed_query_fn=None, **_kwargs):
+        captured["embed_query_fn"] = embed_query_fn
+        return _fake_retrieve(_session, _request, _vis, role=role)
+
+    def fake_embed(text):
+        return [float(len(text))]
+
+    monkeypatch.setattr("runtime.rag.retriever.hybrid_search", fake_hybrid)
+    monkeypatch.setattr("runtime.rag.indexer._embed", fake_embed)
+    _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate)
+
+    assert captured["embed_query_fn"] is fake_embed

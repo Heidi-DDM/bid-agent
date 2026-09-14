@@ -135,3 +135,69 @@ def test_retrieval_run_reuse_and_project_isolation(session):
     assert r1.candidate_only is True
     assert {i.material_id for i in r1.items} == {"MAT-A"}  # 项目隔离：MAT-B 不泄漏
     assert r1.items[0].citation.startswith("MAT-A:")
+
+@needs_db
+def test_reranker_reorders_rrf_pool_and_records_strategy(session, monkeypatch):
+    """Cross-encoder 只能看到 SQL 可见的候选；成功后才以其结果截取 top-k。"""
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+    monkeypatch.setenv("RERANKER_MODEL", "test-reranker-local")
+    monkeypatch.setenv("RAG_RERANK_CANDIDATE_K", "6")
+    _material(session)
+    index_material(
+        session,
+        "MAT-RAG-1",
+        1,
+        parsed_pages=_pages("建筑工程施工总承包资质说明", "目标条款：建筑工程施工总承包二级及以上"),
+        embed_fn=_embed,
+    )
+    request = SearchRequest(
+        query="建筑工程施工总承包二级", knowledge_layers=["L3_enterprise"],
+        project_id="ND-2025", as_of=_AS_OF, top_k=1,
+    )
+    vis = build_visibility_predicate(Actor(role="data_admin", actor="测试"), request)
+    seen_documents: list[str] = []
+
+    def fake_rerank(_query: str, documents: list[str]) -> list[float]:
+        seen_documents.extend(documents)
+        return [0.1 if "资质说明" in doc else 0.9 for doc in documents]
+
+    result = hybrid_search(
+        session, request, vis, role="data_admin", embed_query_fn=_embed, rerank_fn=fake_rerank
+    )
+
+    assert len(seen_documents) == 2
+    assert result.items[0].text.startswith("目标条款")
+    assert result.ranking_strategy == "hybrid_rrf_reranked"
+    assert result.reranker_model == "test-reranker-local"
+    run = session.get(RetrievalRun, result.retrieval_run_id)
+    assert run.ranking_strategy == "hybrid_rrf_reranked"
+    assert run.reranker_model == "test-reranker-local"
+
+
+@needs_db
+def test_reranker_failure_keeps_rrf_result_and_is_auditable(session, monkeypatch):
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+    monkeypatch.setenv("RERANKER_MODEL", "test-reranker-local")
+    _material(session)
+    index_material(
+        session, "MAT-RAG-1", 1,
+        parsed_pages=_pages("建筑工程施工总承包资质说明", "建筑工程施工总承包二级及以上"),
+        embed_fn=_embed,
+    )
+    request = SearchRequest(
+        query="建筑工程施工总承包二级", knowledge_layers=["L3_enterprise"],
+        project_id="ND-2025", as_of=_AS_OF, top_k=2,
+    )
+    vis = build_visibility_predicate(Actor(role="data_admin", actor="测试"), request)
+
+    def unavailable(_query: str, _documents: list[str]) -> list[float]:
+        raise RuntimeError("local reranker unavailable")
+
+    result = hybrid_search(
+        session, request, vis, role="data_admin", embed_query_fn=_embed, rerank_fn=unavailable
+    )
+
+    assert len(result.items) == 2
+    assert result.ranking_strategy == "hybrid_rrf_rerank_degraded"
+    run = session.get(RetrievalRun, result.retrieval_run_id)
+    assert run.ranking_strategy == "hybrid_rrf_rerank_degraded"

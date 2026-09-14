@@ -39,15 +39,29 @@ def _iso(value: Any) -> str | None:
 def _queue_item(entry: dict[str, Any], req: dict[str, Any] | None) -> dict[str, Any]:
     """matrix 条目 → 阻断/待补/复核队列项（queues_summary 兼容 {req,clause,text}）。
 
-    仅携带既有事实字段；责任人/截止时间无来源（R022）不推断（AGENTS 禁止编造）。
+    v1.3（09-优化方案 §3.4.3）：队列 DTO 扩展——requirement_id/clause_ref/
+    missing_field/reason/purpose/recommended_material_types/owner_role/due_at。
+    仅携带既有事实字段；无来源字段一律 null，禁止推断（AGENTS 规则 1）：
+    missing_field（引擎未逐字段输出缺失明细）、purpose（用途由补录人结合材料确认）、
+    due_at（要求无截止字段，动作类不在此队列）。recommended_material_types 仅当规则
+    evidence_required 可如实映射时给出。owner_role 为流程事实（RBAC 固定）而非推断。
     """
+    required = (req or {}).get("evidence_required") or []
     return {
         "req": entry.get("requirement_id"),
+        "requirement_id": entry.get("requirement_id"),
         "clause": entry.get("clause_ref"),
+        "clause_ref": entry.get("clause_ref"),
         "text": (req or {}).get("assertion") or entry.get("match_reason"),
         "match_result": entry.get("match_result"),
         "req_type": entry.get("req_type"),
         "failure_effect": (req or {}).get("failure_effect"),
+        "missing_field": None,
+        "reason": entry.get("match_reason"),
+        "purpose": None,
+        "recommended_material_types": list(required) if required else None,
+        "owner_role": "bid_specialist:upload → data_admin:verify",
+        "due_at": None,
     }
 
 

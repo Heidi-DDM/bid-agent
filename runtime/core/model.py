@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 import json
 import socket
 import urllib.request
@@ -46,7 +47,7 @@ class ModelUnavailableError(ModelAdapterError):
 @dataclass
 class ModelResult:
     ok: bool
-    data: Optional[dict] = None
+    data: Any = None
     error: Optional[str] = None
 
 
@@ -167,6 +168,86 @@ def embed(
         return ModelResult(ok=True, data=items[0]["embedding"])
     except Exception as exc:
         return ModelResult(ok=False, error=f"{type(exc).__name__}: {exc}")
+
+
+def rerank(
+    query: str,
+    documents: list[str],
+    *,
+    base_url: str | None = None,
+    timeout: float = 30.0,
+    model: str | None = None,
+) -> ModelResult:
+    """本地 cross-encoder 重排：POST ``/v1/rerank``。
+
+    输入仅能是已经由 RAG SQL visibility 谓词过滤的候选文本。该适配器仍执行本地/
+    内网地址校验；不允许把 L2/L3 文本发送到外部服务。成功时 ``data`` 为与输入
+    documents 等长、按原输入索引排列的 ``list[float]``。
+    """
+    base_url = base_url or model_base_url()
+    if not documents:
+        return ModelResult(ok=True, data=[])
+    if not check_reranker_allowed() or not base_url or not check_model_allowed(base_url):
+        raise ModelNotAllowedError("reranker 未启用/未配置或非内网地址，禁止外发")
+    if not isinstance(query, str) or not query.strip() or any(
+        not isinstance(document, str) or not document.strip() for document in documents
+    ):
+        return ModelResult(ok=False, error="query 和 documents 必须为非空字符串")
+    payload = {
+        "model": model or config.reranker_model() or "bge-reranker-v2-m3-local",
+        "query": query,
+        "documents": documents,
+    }
+    req = urllib.request.Request(
+        f"{base_url.rstrip('/')}/v1/rerank",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        items = payload.get("data") or []
+        if not isinstance(items, list) or len(items) != len(documents):
+            return ModelResult(ok=False, error="reranker 响应数量与候选数量不一致")
+        scores: list[float | None] = [None] * len(documents)
+        for item in items:
+            if not isinstance(item, dict):
+                return ModelResult(ok=False, error="reranker 响应 data 项非法")
+            index = item.get("index")
+            score = item.get("relevance_score")
+            if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(documents):
+                return ModelResult(ok=False, error="reranker 响应 index 非法")
+            if scores[index] is not None or isinstance(score, bool):
+                return ModelResult(ok=False, error="reranker 响应存在重复 index 或非法分数")
+            try:
+                numeric_score = float(score)
+            except (TypeError, ValueError):
+                return ModelResult(ok=False, error="reranker 响应分数非法")
+            if not math.isfinite(numeric_score):
+                return ModelResult(ok=False, error="reranker 响应分数不是有限数")
+            scores[index] = numeric_score
+        if any(score is None for score in scores):
+            return ModelResult(ok=False, error="reranker 响应缺少候选分数")
+        return ModelResult(ok=True, data=[float(score) for score in scores])
+    except Exception as exc:
+        return ModelResult(ok=False, error=f"{type(exc).__name__}: {exc}")
+
+
+def reranker_health(base_url: str | None = None, timeout: float = 3.0) -> ModelResult:
+    """验证本地模型服务明确具备 reranker 资产；服务可达但模型缺失不算 RAG 就绪。"""
+    if not config.reranker_enabled():
+        return ModelResult(ok=True, data={"enabled": False})
+    if not check_reranker_allowed():
+        return ModelResult(ok=False, error="reranker 未配置为本地/内网地址")
+    result = health(base_url=base_url, timeout=timeout)
+    if not result.ok:
+        return result
+    payload = result.data if isinstance(result.data, dict) else {}
+    reranker = payload.get("reranker")
+    if not isinstance(reranker, dict) or not reranker.get("available"):
+        return ModelResult(ok=False, error="本地模型服务未提供可用 reranker 模型")
+    return ModelResult(ok=True, data=reranker)
 
 
 def extract_text_with_model(raw_text: str, task: str = "extract") -> ModelResult:

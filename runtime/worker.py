@@ -19,6 +19,7 @@ import threading
 import time
 
 from runtime.core import jobs as job_logic
+from runtime.core.compliance import ComplianceError
 from runtime.core.config import job_running_timeout_seconds, logging_config, worker_poll_interval_seconds
 from runtime.db.models import AnalysisJob
 from runtime.db.worker_service import claim_job, finish_job, heartbeat_job
@@ -46,8 +47,31 @@ def process_one(session, runner_id: str, stale_seconds: int) -> bool:
         # F020 §2.1：解析成功只触发一次首次匹配（parse.completed 幂等编排）
         if kind == "parse.tender_document":
             _on_parse_completed(session, job.project_id)
+    except ComplianceError as exc:
+        # 限频/合规拒绝：终态失败不自动重试（窗口内重试必再被拒，徒耗 attempt），
+        # 错误信息携带可重试时刻；用户按倒计时后重新提交导入任务（attempts 归零）。
+        logger.warning("任务合规拒绝 job_id=%s kind=%s error=%s", job_id, kind, exc)
+        session.rollback()
+        from runtime.db.worker_service import finish_job as _finish_job
+
+        suffix = ""
+        if exc.retry_after_seconds is not None:
+            suffix = f"（可重试时刻：约 {exc.retry_after_seconds} 秒后）"
+        try:
+            _finish_job(session, job_id, outcome="failed",
+                        error_code="rate_limited" if exc.retry_after_seconds is not None else type(exc).__name__,
+                        error_message=f"{exc}{suffix}")
+        except Exception:
+            session.rollback()
+            from runtime.db.worker_service import fail_then_retryable as _retryable
+
+            _retryable(session, job_id, error_code="rate_limited", error_message=str(exc)[:500])
     except Exception as exc:
+        # session 可能已处于 PendingRollback（如 store_candidates flush 撞主键），
+        # 必须先 rollback 才能继续读写；否则 fail_then_retryable 二次抛错、
+        # job 停留 running 直至 heartbeat_timeout（2026-09-03 MAT-TEST-001 实测 3 次）。
         logger.exception("任务执行异常 job_id=%s kind=%s error=%s", job_id, kind, type(exc).__name__)
+        session.rollback()
         from runtime.db.worker_service import fail_then_retryable
 
         fail_then_retryable(session, job_id, error_code=type(exc).__name__, error_message=str(exc)[:500])
@@ -290,7 +314,8 @@ def _execute_knowledge_index(session, input_ref: str | None) -> None:
 def _execute_announcement_search(session, input_ref: str | None, job_id: str | None) -> None:
     """announcement.search 执行器（R004/F020 §2.2.1）：真实公告搜索。
 
-    input_ref = JSON {keyword, region, sources}（POST 时生成）；逐源执行
+    input_ref = JSON {keyword, region, sources}（POST 时生成，v1.7 不再携带
+    category/scale——种类/规模由候选列表内筛选接口承担）；逐源执行
     robots 预检 → 限频 → 抓列表页 → 解析 → 关键词过滤 → 候选落库；
     逐源结果摘要（含限频/robots 拒绝的如实说明）写入 job.result_summary，
     供 GET 轮询展示（红线拒绝不静默、不伪造成功）。
@@ -567,8 +592,21 @@ def _collect_rag_candidates(session, project_id: str, requirements, evidence: di
             from runtime.rag.filters import Actor
 
             vis = build_visibility_predicate(Actor(role=rbac.BUSINESS_HEAD, actor="system"), request)
-            fn = retrieve_fn or hybrid_search
-            response = fn(session, request, vis, role=rbac.BUSINESS_HEAD)
+            if retrieve_fn is not None:
+                # 测试/特定编排器显式注入时保持既有调用契约。
+                response = retrieve_fn(session, request, vis, role=rbac.BUSINESS_HEAD)
+            else:
+                # 自动匹配必须注入真实查询 embedding；否则 hybrid_search 会按设计退化为
+                # keyword-only，无法利用已建的 pgvector 索引。
+                from runtime.rag.indexer import _embed as query_embed
+
+                response = hybrid_search(
+                    session,
+                    request,
+                    vis,
+                    role=rbac.BUSINESS_HEAD,
+                    embed_query_fn=query_embed,
+                )
         except (KnowledgeNotReadyError, RetrievalError, VisibilityError, ValueError) as exc:
             if degraded is None:
                 degraded = f"{type(exc).__name__}: {exc}"

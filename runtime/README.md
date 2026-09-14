@@ -102,18 +102,23 @@ bash scripts/setup_local_env.sh status # 状态与健康检查
 本地 embedding 服务（可选但推荐，RAG 向量索引/检索依赖）：
 
 ```bash
-# 首次安装（独立 venv；torch + sentence-transformers + bge-m3，模型自动下载）
-cd embedding_serve && bash start.sh setup && bash start.sh start
+# 首次安装：依赖与模型下载均为显式步骤（请求和 start 不会隐式联网下载）
+cd embedding_serve
+bash start.sh setup
+bash start.sh download-models  # BAAI/bge-m3 + BAAI/bge-reranker-v2-m3，需联网、数 GB
+bash start.sh start
 # 常用管理：
-bash start.sh status   # 健康检查（GET http://127.0.0.1:8001/health，模型加载 30-90s）
+bash start.sh status   # GET http://127.0.0.1:8001/health；embedding/reranker 资产状态均可见
 bash start.sh stop     # 停止
 cd ..
 ```
 
-> embedding_serve 提供 OpenAI 兼容 `POST /v1/embeddings`（本地 bge-m3，MPS/cpu 自动），
-> `runtime/.env` 的 `MODEL_BASE_URL` 指向 `http://127.0.0.1:8001`、`EMBEDDING_MODEL` 填
-> `BAAI/bge-m3`；服务未启动时索引任务 retryable、检索降级关键词（不伪造成功，F025 §8.1）。
-> 注意：开发/CI 会话若注入了 `PYTHONPATH`（如 Hermes），启动脚本已自动 `unset`。
+> embedding_serve 提供 OpenAI 兼容 `POST /v1/embeddings`（本地 `bge-m3-local`）和
+> `POST /v1/rerank`（本地 `bge-reranker-v2-m3-local`，仅排序）。`runtime/.env` 的
+> `MODEL_BASE_URL` 指向 `http://127.0.0.1:8001`，`EMBEDDING_MODEL=bge-m3-local`；仅在 reranker
+> 模型资产可用后设置 `RERANKER_ENABLED=true`。embedding 服务未启动时索引任务 retryable；
+> 重排运行失败时保留可审计的基础排序，均不伪造成功（F025 §8.1）。注意：开发/CI 会话若
+> 注入了 `PYTHONPATH`（如 Hermes），启动脚本已自动 `unset`。
 
 脚本等价于手工执行以下步骤（F018 §7）：
 

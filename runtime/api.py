@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -48,15 +49,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# R012：prototype 静态前端（本地 8080）跨域访问 API（仅非 prod；prod fail-closed 不加 CORS）
+# R012：prototype 静态前端跨域访问 API（仅非 prod；prod fail-closed 不加 CORS）。
+# 2026-09-10：origin 白名单放宽为「任意本机回环地址 + 任意端口」——实测暴露：
+# 直接以 file:// 打开 HTML（Origin: null）、或经编辑器端口预览（Cursor 18080、
+# Live Server 5500 等）访问时，浏览器对全部请求报 Failed to fetch（CORS 拦截在
+# 浏览器侧表现为网络错误），登录/健康检查全部不可用。本机回环 + 非 prod 场景
+# 放开端口限制无安全面扩大（不监听公网）；"null" 显式放行 file://（本地原型用法）。
 if app_env() != "prod":
     app.add_middleware(
         CORSMiddleware,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
         allow_origins=[
             "http://127.0.0.1:8080",
             "http://localhost:8080",
             "http://127.0.0.1:8000",
             "http://localhost:8000",
+            "null",  # file:// 打开的本地原型页（Origin: null）
         ],
         allow_credentials=True,
         allow_methods=["*"],
@@ -94,10 +102,12 @@ async def permission_error_handler(request: Request, exc: PermissionError) -> JS
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     rid = request_id(request)
+    # errors() 的 ctx.error 等可能含不可 JSON 序列化对象（model_validator ValueError），
+    # 统一 str 化后返回（保证 422 结构可序列化，不落 500）
     body = {
         "code": "invalid_request",
         "message": "请求参数校验失败",
-        "detail": exc.errors(),
+        "detail": jsonable_encoder(exc.errors()),
     }
     return JSONResponse(status_code=422, content={"request_id": rid, "error": body})
 
@@ -146,10 +156,10 @@ def _model_status() -> dict[str, Any]:
 
 
 def _knowledge_status() -> dict[str, Any]:
-    """RAG 就绪检查（docs/07 方案 §3.1）：pgvector、本地 embedding、DeepSeek public-only。
+    """RAG 就绪检查：pgvector、本地 embedding/reranker、DeepSeek public-only。
 
     - PGVECTOR_ENABLED=true 时探测数据库 pgvector 扩展，缺失/不可达视为未就绪；
-    - 未配置 EMBEDDING_MODEL 视为未启用（跳过）；已启用但本地模型不可达视为未就绪；
+    - 已启用的 embedding/reranker 必须可由本地模型服务提供；
     - DEEPSEEK_PUBLIC_ONLY=false 或 DEEPSEEK_BASE_URL 缺失时 /readyz 失败（fail-closed）。
     """
     from runtime.core import config
@@ -157,6 +167,7 @@ def _knowledge_status() -> dict[str, Any]:
     status: dict[str, Any] = {
         "pgvector": {"enabled": config.pgvector_enabled()},
         "embedding": {"enabled": bool(config.embedding_model())},
+        "reranker": {"enabled": config.reranker_enabled()},
         "deepseek_public_only": {"enabled": config.deepseek_enabled()},
     }
     if config.pgvector_enabled():
@@ -186,6 +197,16 @@ def _knowledge_status() -> dict[str, Any]:
     else:
         status["embedding"]["available"] = True
         status["embedding"]["reason"] = "未配置 EMBEDDING_MODEL，跳过检查"
+    if config.reranker_enabled():
+        result = model.reranker_health(timeout=readyz_timeout_seconds())
+        status["reranker"]["available"] = result.ok
+        if result.error:
+            status["reranker"]["error"] = result.error
+        if isinstance(result.data, dict) and result.data.get("model"):
+            status["reranker"]["model"] = result.data["model"]
+    else:
+        status["reranker"]["available"] = True
+        status["reranker"]["reason"] = "RERANKER_ENABLED=false，跳过检查"
     if config.deepseek_enabled():
         ok = model.check_deepseek_allowed()
         status["deepseek_public_only"]["available"] = ok

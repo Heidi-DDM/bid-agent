@@ -103,7 +103,7 @@
         renderMatrix("hard_requirement");
       } catch (err) {
         if (err.status === 403) { apiError(`权限不足：当前角色 ${apiRole() || "未登录"} 无权查看结果（需 result read）。`); return; }
-        if (err.status === 401) { apiError("未登录：请用右上角账号登录（演示账号 bid_specialist，密码同账号）。"); return; }
+        if (err.status === 401) { apiError("未登录：请用右上角账号登录（投标专员 toubiao / 经营负责人 jingying，密码 123456）。"); return; }
         apiError("加载矩阵失败：" + err.message);
       }
     }
