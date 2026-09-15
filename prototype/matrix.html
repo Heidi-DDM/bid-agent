@@ -63,7 +63,9 @@
   <script src="common.js"></script>
   <script>
     initPage("matrix.html", "matrix");
-    const PJ = () => demoProjectId();
+    const PJ0 = apiProjectId();
+    const PJ = () => PJ0.id;
+    document.getElementById("proj-name").insertAdjacentHTML("afterend", apiProjectChip(PJ0));
 
     function matchBadge(m) {
       const map = {
@@ -96,10 +98,12 @@
           const label = { hard_requirement: "硬性要求", scored_requirement: "评分项", action_requirement: "动作项" }[t.dataset.t];
           t.textContent = `${label}（${n}）`;
         });
-        document.getElementById("run-summary").innerHTML = RUN && RUN.run_id
-          ? `最近匹配运行：<code>${RUN.run_id}</code> · 规则集 ${RUN.rule_set_id || "—"} · as_of ${RUN.as_of || "—"} · 模式 ${RUN.mode || "—"} · coverage ${JSON.stringify(RUN.coverage || "")}`
-          : `<span class="badge warn">尚无匹配运行</span>——解析确认后系统自动触发（只读页不触发匹配）。`;
-        if (!REQUIREMENTS.length) { apiError("暂无要求（规则集未建立或项目无解析确认）——请到「选择与解析/人工补录」完成解析确认。"); return; }
+        document.getElementById("run-summary").innerHTML =
+          (RUN && RUN.run_id
+            ? `最近匹配运行：<code>${RUN.run_id}</code> · 规则集 ${RUN.rule_set_id || "—"} · as_of ${RUN.as_of || "—"} · 模式 ${RUN.mode || "—"} · coverage ${JSON.stringify(RUN.coverage || "")}`
+            : `<span class="badge warn">尚无匹配运行</span>——解析候选经人工复核确认写入规则集后，系统才会自动触发匹配；当前看到的是要求本身，不是匹配结论。`)
+          + (REQUIREMENTS.length && !RUN?.run_id ? ` <span class="hint">本项目规则集已确认但匹配尚未运行/排队中，稍后刷新。</span>` : "");
+        if (!REQUIREMENTS.length) { apiError("暂无要求（规则集未建立或项目无解析确认）——请到「选择与解析 / 复核与补录」完成解析确认。"); return; }
         renderMatrix("hard_requirement");
       } catch (err) {
         if (err.status === 403) { apiError(`权限不足：当前角色 ${apiRole() || "未登录"} 无权查看结果（需 result read）。`); return; }

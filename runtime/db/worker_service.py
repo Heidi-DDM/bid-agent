@@ -32,13 +32,27 @@ def create_job(
     project_id: Optional[str] = None,
     max_attempts: int = 3,
     idempotency_key: Optional[str] = None,
+    retry_failed: bool = False,
 ) -> tuple[AnalysisJob, bool]:
-    """创建任务；幂等键重复时返回既有任务（created=False）。"""
+    """创建任务；幂等键重复时返回既有任务（created=False）。
+
+    retry_failed=True：既有任务处于终态 failed/cancelled 时将其复位 pending
+    （attempts 归零、错误清空）并返回 created=True——供“确认后编排”等必须真正执行的
+    调度使用。2026-09-15 背景：提前调度产生的失败 match.run 占住幂等键，confirm 之后
+    永远拿回失败任务，匹配不再执行。"""
     key = idempotency_key or job_logic.build_idempotency_key(kind, input_ref, project_id)
     existing = session.scalar(
         select(AnalysisJob).where(AnalysisJob.idempotency_key == key)
     )
     if existing is not None:
+        if retry_failed and existing.status in ("failed", "cancelled"):
+            existing.status = job_logic.PENDING
+            existing.attempts = 0
+            existing.error_code = None
+            existing.error_message = None
+            session.add(existing)
+            session.commit()
+            return existing, True
         return existing, False
     job = AnalysisJob(
         job_id=uuid.uuid4().hex[:16],

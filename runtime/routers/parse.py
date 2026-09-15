@@ -21,14 +21,16 @@ router = APIRouter(prefix="/api/v1/parse", tags=["parse"])
 
 
 class ReviewBody(BaseModel):
-    decision: str = Field(..., pattern="^(approved|rejected|revised)$")
+    decision: str = Field(..., pattern="^(approved|rejected|revised|not_applicable)$")
     reviewer: str = Field(..., min_length=1)
     review_note: str | None = None
     revised_payload: dict | None = None
 
     @model_validator(mode="after")
     def _review_semantics(self) -> "ReviewBody":
-        """F021 §2.1 v1.3 复核语义：rejected 必带结构化原因；revised 必带修正值；approved 不带 payload。"""
+        """F021 §2.1 v1.5 复核语义：rejected 必带结构化原因；revised 必带修正值；approved 不带 payload；
+        not_applicable（本文件无此条款）必带人工核查说明、不带 payload。
+        missing 占位相关校验（approved 拒绝 / revised 逐字校验 / not_applicable 仅限 missing）在服务层按候选 payload 判定。"""
         if self.decision == "rejected":
             note = (self.review_note or "").strip()
             if not note or not any(
@@ -41,15 +43,39 @@ class ReviewBody(BaseModel):
             if self.revised_payload:
                 raise ValueError("rejected 不得携带 revised_payload（原因不是修正值）")
         if self.decision == "revised" and not self.revised_payload:
-            raise ValueError("revised 必须携带 revised_payload（修正后的 assertion/value 与依据）")
+            raise ValueError("revised 必须携带 revised_payload（修正后的 assertion+page_no 或 value）")
         if self.decision == "approved" and self.revised_payload:
             raise ValueError("approved 不得携带 revised_payload（确认无误无需修正值）")
+        if self.decision == "not_applicable":
+            if not (self.review_note or "").strip():
+                raise ValueError("not_applicable（本文件无此条款）必须填写人工核查说明 review_note")
+            if self.revised_payload:
+                raise ValueError("not_applicable 不得携带 revised_payload")
         return self
 
 
 class ConfirmBody(BaseModel):
     actor: str = Field(..., min_length=1)
-    as_of: str | None = Field(None, description="判定时点 ISO 日期；缺省用规则集锚点日期")
+    as_of: str | None = Field(
+        None,
+        description="判定时点 ISO 日期 YYYY-MM-DD（F021 §2.3 取值链第 1 级：投标专员在确认框确认/改写）",
+    )
+
+    @model_validator(mode="after")
+    def _as_of_format(self) -> "ConfirmBody":
+        if self.as_of is not None:
+            import re
+            from datetime import date
+
+            s = self.as_of.strip()
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+                raise ValueError("as_of 须为 ISO 日期 YYYY-MM-DD")
+            try:
+                date.fromisoformat(s)
+            except ValueError:
+                raise ValueError("as_of 不是合法日期")
+            self.as_of = s
+        return self
 
 
 @router.get("/projects/{project_id}/requirements")
@@ -172,21 +198,27 @@ def confirm_parse(
     if progress["pending"] > 0:
         raise ApiError("invalid_state_transition",
                        f"仍有 {progress['pending']} 个待决候选，不能确认（F021 §2.7）")
+    if progress.get("needs_redecision", 0) > 0:
+        raise ApiError("invalid_state_transition",
+                       f"{progress['needs_redecision']} 个候选未定位到原文却被「通过」（旧版遗留），"
+                       "请先重新决策为「本文件无此条款 / 人工定位补录 / 无法确认」（F021 §2.1 v1.5）")
 
-    # as_of：确认体显式传 → 否则取规则集锚点（seed 为 2025-10-30）；仍缺省则拒绝（不得默认当前时间）
-    from runtime.db.models import Requirement, RuleSet
-
+    # as_of 取值链（F021 §2.3 / F008 §4.1）：① 确认框显式传 → ② 已确认主卡 deadline_bid →
+    # ③ 项目既有规则集锚点 → ④ 拒绝（不得默认当前时间）
     as_of = body.as_of
+    as_of_source = "body" if as_of else None
     if not as_of:
-        anchor = session.scalar(
-            select(Requirement.as_of)
-            .join(RuleSet, RuleSet.rule_set_id == Requirement.rule_set_id)
-            .where(RuleSet.project_id == project_id)
-            .limit(1)
+        suggestion = parse_service.suggested_as_of(
+            session, project_id=project_id, material_id=material_id, version=material.version
         )
-        as_of = anchor
+        if suggestion:
+            as_of, as_of_source = suggestion["as_of"], suggestion["source"]
     if not as_of:
-        raise ApiError("invalid_request", "as_of 必填（判定时点不得默认当前时间，F008 §4.1）")
+        raise ApiError(
+            "invalid_request",
+            "as_of 必填：判定时点不得默认当前时间（F008 §4.1）。请先在解析候选中确认「投标文件递交截止时间」"
+            "字段（系统据此预填），或在确认框中填写判定日期",
+        )
 
     try:
         confirmed = parse_service.confirm_rules_from_approved(
@@ -219,16 +251,20 @@ def confirm_parse(
         material_status = "parsed"
 
     api_service.audit(session, actor=body.actor, action="parse.confirmed",
-                      basis=f"material={material_id}:v{material.version} as_of={as_of}",
+                      basis=f"material={material_id}:v{material.version} as_of={as_of} as_of_source={as_of_source}",
                       outcome=f"rules={confirmed['created_requirements']} "
-                              f"fields={fields_written} rule_set={confirmed['rule_set_id']}",
+                              f"fields={fields_written} rule_set={confirmed['rule_set_id']} "
+                              f"not_applicable={confirmed.get('not_applicable', 0)}",
                       object_ref=project_id)
     session.commit()
 
-    # R021-5 / F021 §2 第 7 步：确认（parsed）后自动创建 L2/L3 索引任务与首次匹配任务
-    # （幂等：重复 confirm 已由 RuleSet 唯一键拦截；重复调度由任务幂等键拦截）
+    # R021-5 / F021 §2 第 7 步：规则集写入即自动创建 L2/L3 索引任务与首次匹配任务
+    # （幂等：重复 confirm 已由 RuleSet 唯一键拦截；重复调度由任务幂等键拦截）。
+    # 2026-09-15 修复：此前仅 material_status == "parsed" 才调度——存在「无法确认」驳回时
+    # 材料停在 manual_review，规则集已写入却永不匹配（PJ-26a44c8684 实测：确认成功、匹配未跑）。
+    # 驳回项的跟进不阻断对已确认要求的匹配。
     scheduled: dict = {"index_jobs": [], "match_job": None}
-    if material_status == "parsed":
+    if confirmed["rule_set_id"]:
         scheduled = api_service.schedule_post_parse(session, project_id=project_id)
 
     return {
@@ -240,8 +276,10 @@ def confirm_parse(
         "rule_set_id": confirmed["rule_set_id"],
         "created_requirements": confirmed["created_requirements"],
         "rejected": confirmed["rejected"],
+        "not_applicable": confirmed.get("not_applicable", 0),
         "main_card_fields_written": fields_written,
         "as_of": as_of,
+        "as_of_source": as_of_source,
         "index_jobs": scheduled["index_jobs"],
         "match_job": scheduled["match_job"],
     }

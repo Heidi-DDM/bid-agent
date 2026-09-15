@@ -108,6 +108,53 @@ def _find_in_pages(pages: list, pattern: re.Pattern) -> list[tuple[int, str, str
     return hits
 
 
+_UNCHECKED_BOX = "□"
+_CHECKED_BOXES = ("☑", "■", "√", "☒", "☒", "✓", "✔")
+
+
+# 极性由 polarity 模块从命中原文派生的锚点（「（□接受/☑不接受）联合体」勾选语义在片段内部），不做抑制
+_POLARITY_ANCHORS = frozenset({"consortium"})
+
+
+def _unchecked_option(preceding: str, matched_head: str = "") -> bool:
+    """命中片段所属条款是否为「□ 未勾选」的可选项（勾选式招标文件：□3.6 … / ☑3.4 …）。
+
+    看本条款起点（最近句读之后）到命中处的前文 + 片段开头几个字符（勾选符号可能紧贴片段）：
+    含 □ 且不含任何已勾选符号 → 该条款在本文件未启用，不产出候选（否则把“未选中的模板条款”当成要求）。"""
+    cut = max(preceding.rfind("。"), preceding.rfind("；"), preceding.rfind(";"))
+    pre_seg = preceding[cut + 1:] if cut >= 0 else preceding
+    matched = matched_head or ""
+    if _UNCHECKED_BOX not in pre_seg + matched[:3]:
+        return False
+    # 片段内部出现已勾选符号（「□不要求…☑要求提交投标保证金…金额」从第一个词起匹配）→ 不是未勾选项
+    return not any(b in pre_seg + matched for b in _CHECKED_BOXES)
+
+
+def _clause_for_hit(preceding: str, line: str, default_clause: str) -> str:
+    """条款号：优先取命中前文（本句内）最后一个编号——「3.5 自 2020 年…业绩」的 3.5 在片段之前；
+    前文没有再在片段内找；都没有用章节提示。"""
+    cut = max(preceding.rfind("。"), preceding.rfind("；"), preceding.rfind(";"))
+    seg = preceding[cut + 1:] if cut >= 0 else preceding
+    nums = re.findall(r"(?<![\d.])(\d{1,2}(?:\.\d{1,2}){1,3})(?![\d.])", seg)
+    if nums:
+        return nums[-1]
+    return _clause_from_line(line, default_clause)
+
+
+def _find_in_pages_ctx(pages: list, pattern: re.Pattern, *, ctx: int = 24) -> list[tuple[int, str, str, str]]:
+    """同 _find_in_pages，另返回命中前 ctx 个归一字符（勾选框极性判断用）。"""
+    hits: list[tuple[int, str, str, str]] = []
+    for p in pages:
+        joined = _page_fulltext(p)
+        raw_chars = [ch for ch in joined if ch not in " \t\r\n\f"]
+        norm_text = "".join(raw_chars)
+        for m in pattern.finditer(norm_text):
+            start, end = m.start(), m.end()
+            hits.append((p.page_no, "".join(raw_chars[start:end]), norm_text[start:end],
+                         norm_text[max(0, start - ctx):start]))
+    return hits
+
+
 def _clause_from_line(line: str, default_clause: str) -> str:
     """从命中行提取条款号（如 '3.2' / '3.7'）；提取不到用默认章节。
 
@@ -148,7 +195,8 @@ ANCHORS: dict[str, dict] = {
     # 人员类（等级含「特级」，「及以上」可选——「二级注册建造师」无「及以上」亦为硬性要求）
     "pm_registered_builder": {
         "req_type": "hard_requirement", "category": "人员",
-        "pattern": re.compile(r"(?:拟派)?项目经理.{0,60}?[一二三壹贰叁特]级(?:及以上)?注册建造师执业资格", re.S),
+        # (?!\d{1,2}\.\d) 不跨下一条款号：避免从章节标题「…施工负责人（建造师）3.7 拟派项目经理…」起匹配
+        "pattern": re.compile(r"(?:拟派)?项目经理(?:(?!\d{1,2}\.\d)[^；。]){0,60}?[一二三壹贰叁特]级(?:及以上)?注册建造师执业资格", re.S),
         "evidence": ["manager_profile"],
         "clause_hint": "招标公告 §3.7",
     },
@@ -160,7 +208,8 @@ ANCHORS: dict[str, dict] = {
     },
     "pm_no_active": {
         "req_type": "hard_requirement", "category": "人员",
-        "pattern": re.compile(r"不得以拟派项目经理的身份参加本次投标|未在其他在[施建].{0,12}?担任项目经理"),
+        # v1.5：「不得以拟派项目经理或施工负责人的身份参加本次投标」（河北大学 EPC 实测）
+        "pattern": re.compile(r"不得以(?:拟派)?项目经理(?:或[\u4e00-\u9fff（）()]{2,12})?的身份参加本次投标|未在其他在[施建].{0,12}?担任项目经理"),
         "evidence": ["manager_profile"],
         "clause_hint": "招标公告 §3.8",
     },
@@ -176,7 +225,8 @@ ANCHORS: dict[str, dict] = {
     },
     "safety_officer": {
         "req_type": "hard_requirement", "category": "人员",
-        "pattern": re.compile(r"专职安全生产管理人员.{0,60}?配备(?:人数)?[0-9一二三四五六七八九十]+[个名]", re.S),
+        # v1.5：「配备人数不少于 1 个」（数量词前可有 不少于/不低于/至少）
+        "pattern": re.compile(r"专职安全生产管理人员.{0,60}?配备(?:人数)?(?:不少于|不低于|至少)?[0-9一二三四五六七八九十]+[个名人]", re.S),
         "evidence": ["safety_officer_cert"],
         "clause_hint": "招标公告 §3.10",
     },
@@ -224,8 +274,10 @@ ANCHORS: dict[str, dict] = {
     # 保证金（农大勾选表式；其他版式退回「投标保证金…人民币X万元」通用式。确定性核验在匹配层按统一单位比对）
     "bid_bond": {
         "req_type": "hard_requirement", "category": "保证金",
+        # v1.5：金额支持大写「人民币叁拾万元整，小写300000.00元」与「投标保证金的金额：」版式
         "pattern": re.compile(
             r"要求提交投标保证金.{0,20}?1.金额[：:]?人民币[：:]?([0-9，,.]+万?元).{0,120}?(银行汇票|电汇|支票|银行保函|电子保函|保证保险)"
+            r"|投标保证金(?:的)?(?:金额|数额)?.{0,40}?(?:人民币[：:]?(?:[零壹贰叁肆伍陆柒捌玖拾佰仟万亿]{1,12}元(?:整)?|[0-9，,.]+万?元)|小写[0-9，,.]+元)"
             r"|投标保证金.{0,40}?人民币[：:]?[0-9，,.]+万?元",
             re.S,
         ),
@@ -242,13 +294,21 @@ ANCHORS: dict[str, dict] = {
     # 评分类（scored）
     "scoring_tech": {
         "req_type": "scored_requirement", "category": "技术标",
-        "pattern": re.compile(r"技术标采取暗标评审|技术标.{0,80}?暗标.{0,20}?明标", re.S),
+        # v1.5：「技术标（暗标）采用暗标方式编制及评审」/「技术标采取暗标评审」/「…暗标…明标」
+        "pattern": re.compile(r"技术标(?:[（(]暗标[)）])?(?:采取|采用|实行).{0,20}?暗标|技术标采取暗标评审|技术标.{0,80}?暗标.{0,20}?(?:明标|评审|评标)", re.S),
         "evidence": [],
         "clause_hint": "评标办法 第三章 四(2)",
     },
     "scoring_similar_performance": {
         "req_type": "scored_requirement", "category": "技术标明标/类似业绩",
-        "pattern": re.compile(r"投标人.{0,20}?具有.{0,30}?类似.{0,16}?业绩|单体建筑面积.{0,30}?业绩", re.S),
+        # v1.5：增「(投标人|企业)…类似/同类…业绩…N分」「类似…业绩…得/加/计 N 分」评分写法
+        "pattern": re.compile(
+            r"投标人.{0,20}?具有.{0,30}?类似.{0,16}?业绩|单体建筑面积.{0,30}?业绩"
+            r"|(?:投标人|企业).{0,30}?(?:类似|同类).{0,16}?业绩.{0,40}?[0-9]{1,2}(?:\.[0-9])?分"
+            r"|(?:类似|同类).{0,10}?业绩.{0,30}?(?:得|加|计)[0-9]{1,2}(?:\.[0-9])?分"
+            # 河北 EPC 评标办法：「除资格审查以外，完成过一项 3000 万元及以上…业绩…得 5 分」/「企业业绩 … 得 N 分」
+            r"|除资格审查以外.{0,20}?完成过.{0,120}?业绩.{0,80}?(?:得|加|计)[0-9]{1,2}(?:\.[0-9])?分"
+            r"|企业业绩.{0,120}?(?:得|加|计)[0-9]{1,2}(?:\.[0-9])?分", re.S),
         "evidence": ["performance_record"],
         "clause_hint": "评标办法 第三章 四(5)",
     },
@@ -295,9 +355,14 @@ ANCHORS: dict[str, dict] = {
     },
     "similar_performance_hard": {
         "req_type": "hard_requirement", "category": "业绩",
+        # 四种版式：① 近N年 + 数量词 + 类似…业绩；② 近N年 + 完成/承建 + 类似…；
+        # ③（2026-09-14 v1.5，河北交易中心高频）「自 X 年 X 月 X 日以来完成过一项 3000 万元及以上…业绩」——
+        #    不含「类似」「近N年」，起算点是具体日期；④ 近N年（括注区间）+ 完成 + 规模量词 + 业绩
         "pattern": re.compile(
             r"近[0-9一二三四五]年(?:内|以来)?.{0,60}?(?:至少|不少于|[0-9一二三]项(?:及)?以上|以上|[0-9一二三]项).{0,60}?类似.{0,40}?(?:[\u4e00-\u9fff]{0,8}?业绩|工程|项目)"
-            r"|近[0-9一二三四五]年(?:内|以来)?.{0,40}?(?:完成|承建|承担|竣工).{0,40}?类似.{0,40}?(?:[\u4e00-\u9fff]{0,8}?业绩|工程|项目)",
+            r"|近[0-9一二三四五]年(?:内|以来)?.{0,40}?(?:完成|承建|承担|竣工).{0,40}?类似.{0,40}?(?:[\u4e00-\u9fff]{0,8}?业绩|工程|项目)"
+            r"|(?:自|从)?\d{4}年\d{1,2}月\d{1,2}日(?:以来|至今|起|以后)(?:[（(][^）)]{0,40}[)）])?.{0,40}?(?:完成|承建|承担|竣工|实施)(?:过|了)?.{0,80}?业绩"
+            r"|近[0-9一二三四五]年(?:内|以来|至今)?(?:[（(][^）)]{0,40}[)）])?.{0,40}?(?:完成|承建|承担|竣工|实施)(?:过|了)?.{0,80}?(?:万元|平方米|公里|㎡|m²).{0,40}?业绩",
             re.S),
         "evidence": ["performance_record"],
         "clause_hint": "招标公告 §3.5",
@@ -404,9 +469,71 @@ ANCHORS: dict[str, dict] = {
         "evidence": [],
         "clause_hint": "投标人须知 §1.9",
     },
+    # ── 追加锚点一律放末尾：候选编号含锚点序号，中间插入会让既有材料重解析时序号漂移撞出重复候选 ──
+    # EPC / 工程总承包（2026-09-14 v1.5）：拟派设计负责人 / 施工负责人的执业资格——施工总承包文件没有，
+    # 属可选锚点（未命中不产出 missing）；实测文件 §3.8「拟派设计负责人具有国家注册土木工程师（道路工程）
+    # 或公用设备工程师（给水排水）执业资格」、§3.9「拟派施工负责人（建造师）具有…壹级及以上注册建造师执业资格」
+    "design_lead": {
+        "req_type": "hard_requirement", "category": "人员",
+        "pattern": re.compile(
+            r"(?:拟派)?设计负责人.{0,40}?(?:注册[\u4e00-\u9fff（）()]{2,16}?工程师|注册建筑师|一级注册|执业资格|[高中]级(?:工程师|职称))", re.S),
+        "evidence": ["personnel_roster"],
+        "clause_hint": "招标公告 §3.8",
+    },
+    "construction_lead": {
+        "req_type": "hard_requirement", "category": "人员",
+        "pattern": re.compile(
+            r"(?:拟派)?施工负责人(?:[（(]建造师[)）])?(?:(?!\d{1,2}\.\d)[^；。]){0,40}?[一二三壹贰叁特]级(?:及以上)?注册建造师(?:执业资格)?", re.S),
+        "evidence": ["personnel_roster"],
+        "clause_hint": "招标公告 §3.9",
+    },
 }
 
-# ── 合同 / 商务 / 技术条款锚点（2026-09-14）──────────────────────────────
+# ── 人工定位检索关键词（F021 §2.1 v1.5）────────────────────────────────
+# 锚点未命中时聚合接口不再回传基线文件的条款提示（在别的招标文件里是错误位置），改为给出
+# 该锚点对应条款在各类招标文件里的常见措辞，供复核人全文搜索后「人工定位补录」或确认「本文件无此条款」。
+LOCATE_HINTS: dict[str, list[str]] = {
+    "qualification_grade": ["资质要求", "施工总承包", "专业承包", "工程设计", "级及以上"],
+    "safety_license": ["安全生产许可证", "安许"],
+    "pm_registered_builder": ["项目经理", "注册建造师", "建造师执业资格"],
+    "pm_b_cert": ["安全生产考核合格证", "B 证", "B类"],
+    "pm_no_active": ["在施", "在建", "不得同时担任", "无在施项目"],
+    "pm_social_security": ["社保", "养老保险", "社会保险缴费"],
+    "safety_officer": ["专职安全生产管理人员", "安全员", "C 证"],
+    "tech_team": ["技术人员", "各一名", "专业技术人员"],
+    "financial_audit": ["财务审计报告", "审计报告", "财务状况", "财务报表"],
+    "credit_no_loser": ["失信被执行人", "信用中国", "失信名单"],
+    "consortium": ["联合体", "接受联合体", "不接受联合体"],
+    "bid_validity": ["投标有效期", "日历天"],
+    "bid_bond": ["投标保证金", "保证金金额", "保函"],
+    "ceiling_price": ["最高投标限价", "拦标价", "招标控制价"],
+    "scoring_tech": ["技术标", "暗标", "技术部分评分"],
+    "scoring_similar_performance": ["类似业绩", "类似工程", "业绩得分"],
+    "scoring_business_credit": ["商务标", "评分基准价", "信用评分", "信用得分"],
+    "action_file_acquisition": ["招标文件的获取", "获取招标文件", "下载招标文件", "报名"],
+    "action_deadline_bid": ["投标截止时间", "投标文件递交", "递交截止"],
+    "action_bid_bond_due": ["保证金递交", "到账时间", "保证金到账"],
+    "action_open": ["开标时间", "开标地点"],
+    "business_license": ["营业执照", "独立法人", "民事责任"],
+    "similar_performance_hard": ["业绩", "类似工程", "以来完成过", "近三年", "近五年", "万元及以上"],
+    "no_major_violation": ["重大违法记录", "违法行为", "无违法"],
+    "credit_blacklist": ["严重违法失信", "重大税收违法", "黑名单", "不良行为"],
+    "tax_social_proof": ["纳税", "税收", "社会保障资金", "缴税证明"],
+    "prequalification_method": ["资格审查方式", "资格后审", "资格预审"],
+    "tech_lead": ["技术负责人", "职称"],
+    "pm_similar_performance": ["项目经理业绩", "担任项目经理", "主持完成"],
+    "evaluation_method": ["评标办法", "综合评估法", "最低投标价法", "经评审的"],
+    "scoring_price": ["评标基准价", "价格分", "报价得分", "价格部分"],
+    "scoring_pm": ["项目经理", "得分", "加分"],
+    "scoring_construction_plan": ["施工组织设计", "技术方案评分"],
+    "scoring_enterprise_honor": ["鲁班奖", "优质工程", "安全文明工地", "AAA", "信誉"],
+    "scoring_equipment": ["拟投入设备", "主要施工机械", "设备评分"],
+    "action_q_and_a": ["答疑", "质疑", "澄清截止", "异议"],
+    "action_site_visit": ["现场踏勘", "踏勘时间", "自行踏勘"],
+    "design_lead": ["设计负责人", "注册土木工程师", "注册公用设备工程师", "注册结构工程师", "设计负责人执业资格"],
+    "construction_lead": ["施工负责人", "建造师", "施工负责人执业资格"],
+}
+
 # 这些是招标文件里投标决策必看的**事实条款**（工期、质量标准、合同类型、付款、预付款、履约担保、
 # 质保、暂列金、下浮率、安全文明施工费、技术标准、分包），不是三类"要求"（F008 §4.1 硬性/评分/
 # 动作），因此不进 ANCHORS/RuleCandidate，而以 MainCardCandidate 形态、kind=term_field 落库
@@ -494,11 +621,14 @@ CATEGORY_EVIDENCE: dict[str, list[str]] = {
 # 2026-09-14 扩充批次的锚点：并非每份招标文件都有该条款，未命中**不**产出 missing 候选
 # （否则复核队列被"本文件本无此要求"的噪音淹没）；基线 21 项的 missing 语义不变。
 OPTIONAL_ANCHORS: frozenset[str] = frozenset({
-    "business_license", "similar_performance_hard", "no_major_violation", "credit_blacklist",
+    "business_license", "no_major_violation", "credit_blacklist",
     "tax_social_proof", "prequalification_method", "tech_lead", "pm_similar_performance",
     "evaluation_method", "scoring_price", "scoring_pm", "scoring_construction_plan",
     "scoring_enterprise_honor", "scoring_equipment", "action_q_and_a", "action_site_visit",
+    "design_lead", "construction_lead",
 })
+# similar_performance_hard 2026-09-14 v1.5 移出 OPTIONAL：类似业绩是致命条款，未命中必须以 missing 候选可见，
+# 由复核人三选一（本文件无此条款 / 人工定位补录 / 无法确认），不得静默消失
 
 
 # ── 抽取主逻辑 ────────────────────────────────────────────────────────
@@ -535,7 +665,9 @@ def extract_rule_candidates(
         req_type = anchor["req_type"]
         pattern = anchor["pattern"]
         evidence = list(anchor["evidence"]) or list(CATEGORY_EVIDENCE.get(anchor["category"], []))
-        hits = _find_in_pages(pages, pattern)
+        # 勾选式条款：「□」未勾选的模板项不算本文件要求（☑/■ 已勾选或无勾选框才计入）
+        hits = [(pg, ln, mt, pre) for pg, ln, mt, pre in _find_in_pages_ctx(pages, pattern)
+                if key in _POLARITY_ANCHORS or not _unchecked_option(pre, mt)]
         seq += 1
         if not hits:
             # 必查 hard/客观项未命中 → 产出 missing_marker 候选（进人工复核，F005 §4.2.1）；
@@ -557,8 +689,8 @@ def extract_rule_candidates(
                     note="锚点未命中（版式变化/澄清改写？）→ 人工复核补录，禁止推断",
                 ))
             continue
-        page_no, line, matched = hits[0]
-        clause = _clause_from_line(line, anchor["clause_hint"])
+        page_no, line, matched, pre = hits[0]
+        clause = _clause_for_hit(pre, line, anchor["clause_hint"])
         # assertion = 命中行的原文摘录（可回跳页码）；限长保留完整句
         assertion = (line or matched).strip()
         if len(assertion) > 300:
@@ -574,7 +706,8 @@ def extract_rule_candidates(
             requirement_id=f"{id_prefix}-{req_type_to_code(req_type)}-{seq:03d}-draft",
             req_type=req_type,
             category=anchor["category"],
-            clause_ref=f"{clause}（{anchor['clause_hint']}）",
+            clause_ref=(anchor["clause_hint"] if clause == anchor["clause_hint"]
+                        else f"{clause}（{anchor['clause_hint']}）"),
             assertion=assertion,
             page_no=page_no,
             rule=rule,
@@ -603,7 +736,9 @@ def _rule_type_for(anchor_key: str) -> str:
         "action_deadline_bid": "action", "action_bid_bond_due": "action",
         "action_open": "action",
         # 2026-09-14 扩充
-        "business_license": "qualification", "similar_performance_hard": "similar_performance",
+        # business_license 独立类型（v1.5）：曾映射 qualification → 匹配引擎按资质等级比对，把「有效营业执照」
+        # 误判为硬性失败（PJ-V15-E2E 实测）；未实现的类型进 manual_review 才是不推断的正确行为
+        "business_license": "business_license", "similar_performance_hard": "similar_performance",
         "no_major_violation": "credit", "credit_blacklist": "credit",
         "tax_social_proof": "financial", "prequalification_method": "prequalification",
         "tech_lead": "tech_lead", "pm_similar_performance": "project_manager",
@@ -611,6 +746,8 @@ def _rule_type_for(anchor_key: str) -> str:
         "scoring_pm": "scoring", "scoring_construction_plan": "scoring",
         "scoring_enterprise_honor": "scoring", "scoring_equipment": "scoring",
         "action_q_and_a": "action", "action_site_visit": "action",
+        # 2026-09-14 v1.5
+        "design_lead": "design_lead", "construction_lead": "construction_lead",
     }
     return mapping.get(anchor_key, "generic")
 
@@ -619,9 +756,13 @@ def _rule_type_for(anchor_key: str) -> str:
 
 MAIN_CARD_PATTERNS: dict[str, re.Pattern] = {
     # ① 农大式「…建设项目施工(招标公告)」；② 通用「项目名称：…」（到下一编号小节/句末为止）
+    # ① 农大式「…建设项目施工(招标公告)」；② 通用「项目名称：…」；
+    # ③（v1.5）公告标题「…工程/项目 + 工程总承包/施工/监理… + 招标公告/招标文件」；④ 招标条件首句「…工程/项目 已由 … 批准」
     "project_name": re.compile(
         r"(?:第[一二三四五六七八九十]+章)?(?:招标公告)?([\u4e00-\u9fff（）()]{4,80}?建设项目施工)(?:招标公告|施工招标)?"
         r"|项目名称[：:]([\u4e00-\u9fff0-9（）()、]{4,120}?)(?=\d\.\d|。|；|招标公告|$)"
+        r"|(?:第[一二三四五六七八九十]+章招标公告)?([\u4e00-\u9fff（）()0-9]{4,60}?(?:工程|项目))(?:工程总承包|设计施工总承包|EPC|施工|设计|监理|勘察|总承包)?(?:招标公告|招标文件)"
+        r"|([\u4e00-\u9fff（）()0-9]{4,60}?(?:工程|项目))已由"
     ),
     "tender_no": re.compile(r"(?:招标|项目)编号[：:]?\s*([A-Z0-9\-]{6,40})"),
     "tenderee": re.compile(r"(?:招标人|建设单位)[为：:]\s*([\u4e00-\u9fff（）()]{2,40}?)[，,。；]"),
@@ -690,7 +831,7 @@ def extract_main_card(pages: list, *, default_clause: str = "招标公告") -> l
             m = pattern.search(norm_hit)
             value = next((g for g in m.groups() if g), norm_hit) if m else norm_hit
         # project_name 清理章节前缀（匹配组含 "…施工)招标公告"，value 取项目名部分）
-        if field_key == "project_name":
+        if field_key == "project_name" and "建设项目施工" in value:
             pm = re.search(r"([\u4e00-\u9fff]{2,60}?宿舍建设项目施工|[\u4e00-\u9fff]{2,60}?建设项目施工)", value)
             if pm:
                 value = pm.group(1)
@@ -709,6 +850,10 @@ def extract_main_card(pages: list, *, default_clause: str = "招标公告") -> l
     # 命中词所在段落（原文逐字）；判不出走必填缺失标记，不推断
     cover = [p for p in pages if (p.page_no or 1) <= 2]
     pt = classify_project_type(" ".join(_page_fulltext(p) for p in cover)) if cover else None
+    if not pt:
+        # 图片封面（无文本）/ 目录占前两页时标题在公告首页（实测 p3）：扩到前 6 页再判一次
+        cover = [p for p in pages if (p.page_no or 1) <= 6]
+        pt = classify_project_type(" ".join(_page_fulltext(p) for p in cover)) if cover else None
     if pt:
         inner = pt.split("（", 1)[1].rstrip("）")
         keyword = inner[:-2] if inner.endswith(("招标", "采购")) else inner

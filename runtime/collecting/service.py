@@ -399,11 +399,13 @@ def import_candidate_detail(
     #    quote/start/end（固化原文偏移）+ content_hash（绑定入库 sha256），落库前
     #    round-trip 硬校验（审计关键字段不逐字即拒收转人工）。
     from runtime.parsing.provenance import build_detail_summary, text_sha256
+    prescreen_ok = True
     try:
         candidate.detail_summary = build_detail_summary(
             candidate.title, text, content_hash=text_sha256(text))
     except Exception:  # 抽取失败不阻断详情入库（存档优先，待补展示）
         candidate.detail_summary = {}
+        prescreen_ok = False
     # —— C4（2026-09-10）：详情「建设地点」抽取命中 → 回填候选 region（公告事实）——
     # 候选卡优先级：详情回填（announcement_fact）> 标题命中（title_fact）> 平台范围
     # 标注（source_scope_only）；未命中保持 None，不推断。
@@ -442,6 +444,12 @@ def import_candidate_detail(
         )
     finally:
         tmp.unlink(missing_ok=True)
+
+    # 公告材料的“解析”=导入任务内的初筛抽取（无独立解析队列）。此前 parse_status 一直停在
+    # pending，前端徽章把它显示成「排队中」误导用户（2026-09-15 实测）。随导入完成如实落状态：
+    # 初筛成功 → parsed；降级（抽取异常，detail_summary 置空）→ manual_review（待补展示）。
+    imported.material.parse_status = "parsed" if prescreen_ok else "manual_review"
+    session.add(imported.material)
 
     candidate.project_id = project.project_id
     candidate.import_status = "imported"

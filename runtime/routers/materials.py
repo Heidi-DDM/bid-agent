@@ -194,6 +194,57 @@ def get_material_versions(
     return {"request_id": request_id, "items": versions}
 
 
+# 魔数 → 媒体类型（MaterialVersion 不存文件名/MIME；与上传端魔数嗅探同口径）
+_MAGIC_MEDIA = (
+    (b"%PDF", "application/pdf", "pdf"),
+    (b"PK", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+    (b"\xd0\xcf\x11\xe0", "application/msword", "doc"),
+    (b"\x89PNG", "image/png", "png"),
+    (b"\xff\xd8", "image/jpeg", "jpg"),
+)
+
+
+@router.get("/materials/{material_id}/file")
+def get_material_file(
+    material_id: str,
+    version: int | None = None,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+):
+    """不可变原文直出（F021 §2.1 v1.5 定位跳转）：按 permission_scope 过滤；缺省最新版本。
+
+    前端以 Bearer 拉取 blob 后附 `#page=<page_no>` 打开（token 不进 URL）。
+    响应带 `X-Content-Hash`，供核对“打开的就是解析用的那份文件”。
+    """
+    from fastapi.responses import FileResponse
+
+    from runtime.db.models import MaterialVersion
+
+    material = api_service.get_material_or_404(session, material_id)
+    api_service.require_scope_or_403(session, role, material)
+    v = version or material.version
+    mv = session.get(MaterialVersion, (material_id, v))
+    if mv is None:
+        raise ApiError("not_found", f"材料版本不存在: {material_id}:v{v}")
+    path = Path(object_store_root()) / mv.object_uri
+    if not path.is_file():
+        raise ApiError("not_found", f"原文对象缺失: {material_id}:v{v}（不得伪造产物）")
+    with path.open("rb") as fh:
+        head = fh.read(8)
+    media, ext = "application/octet-stream", "bin"
+    for magic, mt, e in _MAGIC_MEDIA:
+        if head.startswith(magic):
+            media, ext = mt, e
+            break
+    return FileResponse(
+        str(path), media_type=media, filename=f"{material_id}-v{v}.{ext}",
+        content_disposition_type="inline",
+        headers={"X-Content-Hash": mv.content_hash, "X-Request-Id": request_id,
+                 "Cache-Control": "private, max-age=600"},
+    )
+
+
 @router.post("/materials/{material_id}/verify")
 def verify_material(
     material_id: str,

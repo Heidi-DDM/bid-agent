@@ -8,7 +8,7 @@ const STEPS = [
   { id: "import",    label: "选择与解析", page: "import.html" },
   { id: "matrix",    label: "自动匹配",   page: "matrix.html" },
   { id: "score",     label: "风险与缺失", page: "score.html" },
-  { id: "queue",     label: "人工补录",   page: "queue.html" },
+  { id: "queue",     label: "复核与补录", page: "queue.html" },
   { id: "approval",  label: "人工审核",   page: "approval.html" },
 ];
 
@@ -18,7 +18,7 @@ const NAV = [
   { label: "自动匹配", page: "matrix.html" },
   { label: "企业资料库（后台）", page: "materials.html" },
   { label: "风险与缺失", page: "score.html" },
-  { label: "人工补录", page: "queue.html" },
+  { label: "复核与补录", page: "queue.html" },
   { label: "人工审核", page: "approval.html" },
   { label: "异常态演示", page: "exceptions.html" },
 ];

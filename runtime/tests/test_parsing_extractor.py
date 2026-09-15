@@ -64,14 +64,19 @@ def test_extract_rule_candidates_all_anchors_hit():
         _PAGES, project_id="ND-2025", material_id="MAT-ND-TENDER",
         content_hash="abc123", as_of="2025-10-30",
     )
-    assert len(cands) >= 20  # 21 anchors，全部命中（无 missing）
+    assert len(cands) >= 20  # 基线 21 anchors 全部命中
     missing = [c for c in cands if c.missing_marker]
-    assert missing == [], f"不应有缺失: {missing}"
+    # v1.5：类似业绩硬性要求改为必查——农大文件资格审查无该条款（类似业绩是评分项），
+    # 须以可见的 missing 候选交复核人确认「本文件无此条款」，不得静默消失（F021 §2.1 v1.5）
+    assert [(c.rule or {}).get("anchor_key") for c in missing] == ["similar_performance_hard"], \
+        f"缺失项应仅为 similar_performance_hard: {missing}"
     # 类型分布（hard/scored/action 都有）
     types = {c.req_type for c in cands}
     assert "hard_requirement" in types and "scored_requirement" in types and "action_requirement" in types
-    # 每条有页码与原文断言（可回跳）
+    # 每条已定位候选有页码与原文断言（可回跳）
     for c in cands:
+        if c.missing_marker:
+            continue
         assert c.page_no is not None, c.requirement_id
         assert c.assertion, c.requirement_id
 

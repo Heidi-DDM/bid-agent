@@ -14,7 +14,7 @@
       <div class="steps"></div>
       <div id="api-error" style="display:none"></div>
 
-      <!-- 解析结果：以招标要求为中心（09-优化方案 §3.3，F021 §2.1 v1.3） -->
+      <!-- 解析结果：以招标要求为中心（09-优化方案 §3.3，F021 §2.1 v1.5） -->
       <section class="card" id="result-card">
         <div class="card-title-row">
           <h2>解析结果 <span id="rr-proj" style="font-size:13px"></span></h2>
@@ -22,7 +22,8 @@
         </div>
         <p class="sub" style="margin-top:6px">
           系统从招标文件读到了什么（按业务语言分组）。每条要求卡显示可读标题、要求值、硬性/评分/动作属性、
-          原文摘录、条款号、页码、置信与复核状态；内部编码与指纹仅在「审计信息」折叠展示（F021 §2.1 v1.3）。
+          <b>第几页 + 条款号 + 原文逐字摘录 + 「在原文中查看」</b>；未定位到原文的条目显示<b>检索关键词</b>而不是猜测的条款号。
+          「系统追溯编号」折叠区是审计与去重用的内部编号，不是原文位置（F021 §2.1 v1.5）。
         </p>
 
         <div class="notice info" style="margin-top:8px" id="rr-note"></div>
@@ -36,15 +37,16 @@
           <span class="hint" id="rr-viewhint"></span>
         </div>
 
-        <!-- 解析候选 → 复核入口（投标专员）：approved/revised/rejected + 原因枚举 -->
+        <!-- 解析候选 → 复核入口（投标专员） -->
         <div id="rr-review-toolbar" style="display:none;margin-top:10px">
           <div class="notice" style="margin-bottom:8px">
-            <b>复核提示</b>：请逐条确认“系统从招标文件读到了什么”——
-            <b>通过</b>＝原文确认无误；<b>编辑后确认</b>＝修正值后通过（带修正依据）；
-            <b>标记无法确认</b>＝必须选择原因（扫描不清 / 条款冲突 / 未识别 / 需业务解释），这不是上传企业材料（F021 §2.1 v1.3）。
+            <b>复核提示</b>：逐条确认“系统从招标文件读到了什么”。
+            已定位到原文的条目：<b>通过</b>＝原文确认无误；<b>编辑后确认</b>＝修正摘录（仍须原文逐字）并写修正说明；<b>标记无法确认</b>＝必须选原因。
+            未定位到原文的条目：<b>本文件无此条款</b>（写明如何核实）/ <b>人工定位补录</b>（填页码 + 从原文复制原句，系统逐字核对）/ <b>无法确认</b>。
+            这里不上传企业材料。
           </div>
           <div id="rr-review-actions" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <button type="button" class="btn sm" id="rr-batch-approve">批量通过（低置信待办除外）</button>
+            <button type="button" class="btn sm" id="rr-batch-approve">批量通过（高/中置信且已定位）</button>
             <span class="hint" id="rr-batch-hint"></span>
           </div>
         </div>
@@ -54,182 +56,55 @@
 
       <div style="display:flex;gap:10px;margin-top:6px;flex-wrap:wrap">
         <a class="btn ghost" id="rr-back" href="index.html">← 返回搜索结果</a>
-        <a class="btn" id="rr-to-review" href="queue.html" style="display:none">前往人工复核/补录 →</a>
+        <a class="btn" id="rr-to-review" href="queue.html" style="display:none">前往复核页确认写入规则集 →</a>
       </div>
     </div>
   </div>
 
   <footer class="footer">
-    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R011 / F021 v1.3）</span>
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R011 / F021 v1.5）</span>
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
   <script src="data.js"></script>
   <script src="api.js"></script>
   <script src="common.js"></script>
+  <script src="review.js"></script>
   <script>
     initPage("import.html", "import");
 
     /* ============================================================
-       解析结果页（09-优化方案 §3.3 / F021 §2.1 v1.3）
+       解析结果页（09-优化方案 §3.3 / F021 §2.1 v1.5）
        GET /api/v1/parse/projects/{project_id}/requirements
-       - 六组业务语言分组（项目基本信息/资格与资质/项目经理与人员/
-         业绩财务信用/场地设备资源/投标动作与风险条款/其他）
-       - 视图切换：candidates（待复核，带复核动作）/ confirmed（规则集）
-       - 内部编码（requirement_id/material_id/hash）仅 audit 折叠展示
+       - 六组业务语言分组；视图切换：candidates（待复核）/ confirmed（规则集）
+       - 复核卡片/动作/原文跳转/追溯编号：review.js 共享模块（与 queue.html 同源）
        ============================================================ */
     const params = new URLSearchParams(window.location.search);
-    const projectId = (params.get("project_id") || "").trim();
-
-    const GROUPS = [
-      "项目基本信息", "资格与资质", "项目经理与人员", "业绩、财务与信用",
-      "场地、设备和其他资源", "投标动作与风险条款", "其他",
-    ];
-    const REQ_TYPE_LABEL = { hard: "硬性", scored: "评分", action: "动作" };
-    const REJECT_REASONS = ["扫描不清", "条款冲突", "未识别", "需业务解释"];
+    /* URL 参数 > 上次选择的项目（import 页「选择深入」时写入）——导航返回不再丢项目；
+       都没有才提示回搜索页（不静默回落内置演示，避免把演示数据当成本人项目）。 */
+    const projectId = (params.get("project_id") || "").trim()
+      || (localStorage.getItem("demo_project_id") || "").trim();
+    if (projectId && !params.get("project_id"))
+      document.getElementById("rr-proj").insertAdjacentHTML("beforeend",
+        ` <span class="badge gray" title="导航进入未带参数，已使用上次「选择深入」的项目">上次选择</span>`);
     const CONFIRMED = "confirmed";
-    let curView = "candidates";       // candidates / confirmed
-    let curData = null;               // 最近一次聚合响应（视图切换用缓存）
-    let pendingReview = [];           // candidates 视图下待复核项
+    const esc = REVIEW.esc;
+    let curView = "candidates";
+    let curData = null;
+    let pendingReview = [];
 
-    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
-
-    function badgeFor(item) {
-      if (item.review_status === "confirmed") return '<span class="badge ok">已确认</span>';
-      if (item.review_status === "approved") return '<span class="badge ok">已通过</span>';
-      if (item.review_status === "revised") return '<span class="badge ok">已编辑确认</span>';
-      if (item.review_status === "rejected") return '<span class="badge error">无法确认</span>';
-      return '<span class="badge review">待复核</span>';
-    }
-    function confLabel(c) {
-      const m = { high: "高置信", medium: "中置信", low: "低置信" };
-      return c ? (m[c] || c) : "—";
-    }
-    function auditHtml(item) {
-      const a = item.audit || {};
-      return `<details class="audit-fold"><summary>审计信息（内部编码 / 指纹）</summary>
-        <div class="audit-code">
-          ${a.requirement_id ? `<span>requirement_id：<code>${esc(a.requirement_id)}</code></span>` : ""}
-          ${a.field_key ? `<span>field_key：<code>${esc(a.field_key)}</code></span>` : ""}
-          ${a.kind ? `<span>kind：<code>${esc(a.kind)}</code></span>` : ""}
-          <span>material_id：<code>${esc(a.material_id || "—")}</code></span>
-          <span>content_hash：<code>${esc((a.content_hash || "").slice(0, 16))}…</code></span>
-        </div></details>`;
-    }
-
-    /* ---------- 单条要求卡 ---------- */
-    function reqCardHtml(item, reviewable) {
-      const rt = item.requirement_type ? REQ_TYPE_LABEL[item.requirement_type] || item.requirement_type : "";
-      const quote = item.assertion
-        ? `<div class="req-quote">原文摘录：${esc(item.assertion).slice(0, 300)}${item.assertion.length > 300 ? "…" : ""}</div>` : "";
-      const issue = item.issue ? `<div class="issue-line">⚠ ${esc(item.issue)}</div>` : "";
-      const editArea = reviewable ? `<div class="review-actions" data-cid="${esc(item.id)}"></div>` : "";
-      return `
-        <div class="req-card" data-id="${esc(item.id)}">
-          <div class="req-title">${esc(item.title)} ${rt ? `<span class="badge gray">${esc(rt)}</span>` : ""} ${badgeFor(item)}</div>
-          ${item.value !== undefined && item.value !== null && item.value !== "" ? `<div class="req-value">要求值：${esc(item.value)}</div>` : ""}
-          <div class="req-meta">
-            <span>条款：<code>${esc(item.clause_ref || "—")}</code></span>
-            <span>页码：<span class="page-ref">${item.page_no ?? "—"}</span></span>
-            <span>置信：${confLabel(item.confidence)}</span>
-            ${item.source_link ? `<span>原文：<a href="${esc(item.source_link)}" target="_blank" rel="noopener">定位链接</a></span>` : ""}
-          </div>
-          ${quote}
-          ${issue}
-          ${editArea}
-          ${auditHtml(item)}
-        </div>`;
-    }
-
-    /* ---------- 复核动作（approved/revised/rejected + 原因枚举） ---------- */
-    function renderReviewActions(item) {
-      const box = document.querySelector(`.review-actions[data-cid="${CSS.escape(item.id)}"]`);
-      if (!box) return;
-      if (item.review_status && item.review_status !== "pending") {
-        box.innerHTML = `<span class="hint">${item.review_status === "approved" ? "已通过" :
-          item.review_status === "revised" ? "已编辑确认" : "已标记无法确认"}</span>
-          ${item.review_note ? `<span class="hint">：${esc(item.review_note)}</span>` : ""}
-          ${item.review_request_id ? `<span class="hint" style="display:block;margin-top:4px">request_id <code>${esc(item.review_request_id)}</code></span>` : ""}`;
-        return;
-      }
-      box.innerHTML = `
-        <button type="button" class="act" data-d="approved">通过</button>
-        <button type="button" class="act" data-d="revised">编辑后确认</button>
-        <button type="button" class="act" data-d="rejected">标记无法确认</button>
-        <span class="reason-chip-wrap" data-reasonwrap style="display:none">
-          <span class="hint">原因：</span>
-          ${REJECT_REASONS.map((r) => `<button type="button" class="reason-chip" data-reason="${esc(r)}">${esc(r)}</button>`).join("")}
-        </span>
-        <input class="inp" placeholder="备注（编辑后确认必填修正说明）" data-note style="width:200px;display:none">
-      `;
-      box.querySelector('[data-d="approved"]').addEventListener("click", () => submitReview(item, "approved", box, ""));
-      box.querySelector('[data-d="revised"]').addEventListener("click", () => {
-        box.querySelector('[data-note]').style.display = "";
-        box.querySelector('[data-d="revised"]').classList.add("on");
-        box.querySelector('[data-d="rejected"]').classList.remove("on");
-        box.querySelector('[data-reasonwrap]').style.display = "none";
-      });
-      box.querySelector('[data-d="rejected"]').addEventListener("click", () => {
-        const rw = box.querySelector('[data-reasonwrap]');
-        rw.style.display = rw.style.display === "none" ? "" : "none";
-        box.querySelector('[data-d="rejected"]').classList.add("on");
-        box.querySelector('[data-d="revised"]').classList.remove("on");
-        box.querySelector('[data-note]').style.display = "none";
-      });
-      box.querySelectorAll(".reason-chip").forEach((chip) => chip.addEventListener("click", () => {
-        box.querySelectorAll(".reason-chip").forEach((c) => c.classList.remove("on"));
-        chip.classList.add("on");
-        submitReview(item, "rejected", box, chip.dataset.reason);
-      }));
-    }
-
-    async function submitReview(item, decision, box, reason) {
-      const noteEl = box.querySelector("[data-note]");
-      let review_note = null;
-      if (decision === "rejected") review_note = reason;
-      else if (decision === "revised") {
-        const note = (noteEl && noteEl.value.trim()) || "";
-        if (!note) { alert("编辑后确认请填写修正说明（依据），以便审计留痕"); return; }
-        review_note = note;
-      }
-      const body = {
-        decision, reviewer: apiName() || apiRole() || "投标专员",
-        review_note,
-        ...(decision === "revised" ? { revised_payload: { assertion: item.assertion } } : {}),
-      };
-      const btns = box.querySelectorAll(".act, .reason-chip");
-      btns.forEach((b) => (b.disabled = true));
-      try {
-        const rev = await apiPost(`/parse/candidates/${item.id}/review`, body);
-        item.review_status = decision;
-        item.review_note = review_note;
-        item.review_request_id = rev.request_id || "";   // 审计锚点：本决定的写入请求
-        renderReviewActions(item);
-        // 同步卡片徽标
-        const card = document.querySelector(`.req-card[data-id="${CSS.escape(item.id)}"] .req-title`);
-        if (card) card.insertAdjacentHTML("beforeend", `<span class="badge ${decision === "approved" || decision === "revised" ? "ok" : "error"}">${decision === "approved" ? "已通过" : decision === "revised" ? "已编辑确认" : "无法确认"}</span>`);
-        refreshProgress();
-        apiShowError(null);
-      } catch (err) {
-        apiShowError(err);
-        btns.forEach((b) => (b.disabled = false));
-        alert("复核提交失败：" + err.message);
-      }
-    }
-
-    /* ---------- 批量通过（仅 high/medium 且无 issue；低置信/缺失留人工） ---------- */
+    /* ---------- 批量通过（仅高/中置信且已定位；未定位/低置信/遗留项留人工） ---------- */
     async function batchApprove() {
-      const targets = pendingReview.filter((it) => it.confidence === "high" || it.confidence === "medium");
-      if (!targets.length) { alert("当前没有可批量通过的候选（全部为低置信/缺失项，需人工逐条确认）"); return; }
-      if (!confirm(`批量通过 ${targets.length} 项（高/中置信且无缺失标记）？驳回项不进入规则集；低置信与缺失项仍留待人工复核。`)) return;
+      const targets = REVIEW.batchable(pendingReview);
+      if (!targets.length) { alert("当前没有可批量通过的候选（未定位到原文 / 低置信 / 需重新决策的条目需人工逐条处理）"); return; }
+      if (!confirm(`批量通过 ${targets.length} 项（高/中置信且已定位到原文）？未定位到原文、低置信与需重新决策的条目仍留待人工逐条处理。`)) return;
       const btn = document.getElementById("rr-batch-approve");
       btn.disabled = true;
       const rids = new Set();
       try {
         for (const it of targets) {
-          const rev = await apiPost(`/parse/candidates/${it.id}/review`, {
-            decision: "approved", reviewer: apiName() || apiRole() || "投标专员", review_note: "批量通过（高/中置信）",
+          const rev = await apiPost(`/parse/candidates/${encodeURIComponent(it.id)}/review`, {
+            decision: "approved", reviewer: apiName() || apiRole() || "投标专员", review_note: "批量通过（高/中置信，已定位）",
           });
           it.review_status = "approved";
           if (rev.request_id) rids.add(rev.request_id);
@@ -253,8 +128,7 @@
       try {
         resp = await apiGet(`/parse/projects/${encodeURIComponent(projectId)}/requirements`);
       } catch (err) {
-        // 2026-09-14：请求失败不得静默卡在「加载中…」（实测：页面 origin 失效/代理拦截时
-        // fetch 连接层失败，无任何提示）。401 已由 api:unauthorized 统一处理，这里兜底展示。
+        // 请求失败不得静默卡在「加载中…」；401 已由 api:unauthorized 统一处理，这里兜底展示。
         if (err.status !== 401) apiShowError(err);
         badgeEl.className = "badge error";
         badgeEl.textContent = "加载失败";
@@ -268,24 +142,22 @@
       document.getElementById("rr-proj").innerHTML = `· ${esc(resp.project_id || "")}`;
       const src = resp.source;
       const viewAvail = src === CONFIRMED ? ["confirmed"] : ["candidates", "confirmed"];
-      // 视图标签显隐
       document.querySelectorAll("#rr-viewtabs .seg-tab").forEach((t) => {
-        const v = t.dataset.view;
-        t.style.display = viewAvail.includes(v) ? "" : "none";
+        t.style.display = viewAvail.includes(t.dataset.view) ? "" : "none";
       });
       if (!viewAvail.includes(curView)) curView = viewAvail[0];
       document.querySelectorAll("#rr-viewtabs .seg-tab").forEach((t) =>
         t.classList.toggle("on", t.dataset.view === curView));
-      // 视图可用性说明
       const note = document.getElementById("rr-note");
+      const prog = resp.progress || {};
       if (src === CONFIRMED) {
         note.className = "notice ok";
-        note.innerHTML = "<b>规则集已确认</b>：以下为已写入的招标要求（确认后视图）。如需复核请回到「人工复核/补录」页查看驳回项。";
+        note.innerHTML = "<b>规则集已确认</b>：以下为已写入的招标要求（确认后视图）。";
       } else {
         note.className = "notice warn";
-        note.innerHTML = `<b>待人工复核</b>：候选 ${resp.progress ? resp.progress.total || 0 : 0} 条，未决 ${resp.progress ? resp.progress.pending || 0 : 0} 条。全部处理后确认写入规则集并触发匹配（F021 §2.7）。`;
+        const redo = prog.needs_redecision ? `，其中 <b>${prog.needs_redecision}</b> 条此前被「通过」但未定位到原文，需重新决策` : "";
+        note.innerHTML = `<b>待人工复核</b>：候选 ${prog.total || 0} 条，未决 ${prog.pending || 0} 条${redo}。全部处理后在复核页确认写入规则集并触发匹配（F021 §2.7）。`;
       }
-      // 工具栏显隐（仅投标专员在 candidates 视图显示）
       const canReview = apiRole() === "bid_specialist" || !apiToken();
       document.getElementById("rr-review-toolbar").style.display =
         curView === "candidates" && canReview ? "" : "none";
@@ -297,12 +169,11 @@
       const badgeEl = document.getElementById("rr-badge");
       if (curData && curData.source === CONFIRMED) {
         badgeEl.className = "badge ok"; badgeEl.textContent = "已确认视图";
-      } else {
-        const prog = (curData && curData.progress) || {};
-        const p = prog.pending || 0;
-        badgeEl.className = p > 0 ? "badge review" : "badge ok";
-        badgeEl.textContent = p > 0 ? `待复核 ${p} 项` : "全部已处理";
+        return;
       }
+      const n = REVIEW.pendingItems((curData && curData.groups) || []).length;
+      badgeEl.className = n > 0 ? "badge review" : "badge ok";
+      badgeEl.textContent = n > 0 ? `待处理 ${n} 项` : "全部已处理";
     }
 
     function renderGroups() {
@@ -314,21 +185,12 @@
         document.getElementById("rr-to-review").style.display = "none";
         return;
       }
-      // 视图决定是否展示复核动作
       const reviewable = curView === "candidates";
-      if (reviewable) {
-        pendingReview = [];
-        groups.forEach((g) => (g.items || []).forEach((it) => {
-          if (it.review_status === "pending") pendingReview.push(it);
-        }));
-      } else {
-        pendingReview = [];
-      }
+      pendingReview = reviewable ? REVIEW.pendingItems(groups) : [];
       const batch = document.getElementById("rr-batch-approve");
       if (reviewable) {
-        const batchable = pendingReview.filter((it) => it.confidence === "high" || it.confidence === "medium").length;
-        document.getElementById("rr-batch-hint").textContent =
-          `低置信/缺失/冲突项不参与批量（${batchable} 项可批量）`;
+        const n = REVIEW.batchable(pendingReview).length;
+        document.getElementById("rr-batch-hint").textContent = `未定位到原文 / 低置信 / 需重新决策的条目不参与批量（${n} 项可批量）`;
         batch.style.display = "";
       } else { batch.style.display = "none"; }
 
@@ -341,15 +203,16 @@
         const wrap = document.createElement("div");
         g.items.forEach((it) => {
           const node = document.createElement("div");
-          node.innerHTML = reqCardHtml(it, reviewable);
-          wrap.appendChild(node);
-          if (reviewable && it.review_status === "pending") renderReviewActions(it);
+          node.innerHTML = REVIEW.cardHtml(it, reviewable);
+          const card = node.firstElementChild;
+          wrap.appendChild(card);
+          REVIEW.bindCard(card, it);
+          if (reviewable) REVIEW.renderActions(it, { onDone: refreshProgress });
         });
         box.appendChild(wrap);
       });
-      // 页面尾按钮
       const toReview = document.getElementById("rr-to-review");
-      if (curView === "candidates" && (pendingReview.length || (curData && curData.source !== CONFIRMED))) {
+      if (curView === "candidates" && curData && curData.source !== CONFIRMED) {
         toReview.style.display = "";
         toReview.href = "queue.html?project_id=" + encodeURIComponent(projectId);
       } else {
@@ -362,15 +225,12 @@
       if (!tab || tab.dataset.view === curView) return;
       curView = tab.dataset.view;
       document.querySelectorAll("#rr-viewtabs .seg-tab").forEach((t) => t.classList.toggle("on", t === tab));
-      // confirmed 视图需要真实数据；candidates 用缓存或重拉
       if (curView === CONFIRMED) loadData(true);
       else renderGroups();
     });
     document.getElementById("rr-batch-approve").addEventListener("click", batchApprove);
-    document.getElementById("rr-back").href = "index.html" + (projectId ? "" : "");
 
-    // 无项目参数：提示回搜索（注意：经典 script 顶层 return 是语法错误——
-    // 2026-09-14 实测整块脚本因此解析失败、页面永远停在「加载中…」，必须用 if/else）
+    // 无项目参数：提示回搜索（经典 script 顶层 return 是语法错误，必须用 if/else）
     if (!projectId) {
       document.getElementById("groups-box").innerHTML =
         `<div class="notice warn"><b>尚未选择项目</b>：解析结果页需要来自搜索候选“选择深入”建立的 <code>project_id</code>。请先返回搜索结果选择项目并上传完整招标文件。</div>`;

@@ -44,9 +44,10 @@ def process_one(session, runner_id: str, stale_seconds: int) -> bool:
         _execute(session, kind, job.input_ref, job.project_id, job_id)
         finish_job(session, job_id, outcome="completed")
         logger.info("完成任务 job_id=%s kind=%s", job_id, kind)
-        # F020 §2.1：解析成功只触发一次首次匹配（parse.completed 幂等编排）
-        if kind == "parse.tender_document":
-            _on_parse_completed(session, job.project_id)
+        # 注意：parse.tender_document 完成后【不】在此调度索引/匹配（F021 §2 第 7 步：
+        # 编排发生在人工复核确认 confirm → parse_status=parsed 之后）。
+        # 2026-09-15 修复：此前这里调 _on_parse_completed 会把 match.run 提前排进队列，
+        # 候选未确认时必然「项目无规则集」失败，且失败任务占住幂等键，confirm 之后也补不回来。
     except ComplianceError as exc:
         # 限频/合规拒绝：终态失败不自动重试（窗口内重试必再被拒，徒耗 attempt），
         # 错误信息携带可重试时刻；用户按倒计时后重新提交导入任务（attempts 归零）。
@@ -76,25 +77,6 @@ def process_one(session, runner_id: str, stale_seconds: int) -> bool:
 
         fail_then_retryable(session, job_id, error_code=type(exc).__name__, error_message=str(exc)[:500])
     return True
-
-
-def _on_parse_completed(session, project_id: str | None) -> None:
-    """解析完成编排（兼容入口，R021-5 后统一走 api_service.schedule_post_parse）。
-
-    实际调度发生在人工复核确认（confirm API → parse_status=parsed）之后：
-    schedule_post_parse 按幂等键创建 knowledge_index（index:…）与 match.run
-    （kind+input_ref+project_id）；结果页 GET 查询不创建 run（F020 §2.1/§7）。
-    """
-    if not project_id:
-        return
-    from runtime.db import api_service
-
-    scheduled = api_service.schedule_post_parse(session, project_id=project_id)
-    if scheduled["index_jobs"] or scheduled["match_job"]:
-        logger.info(
-            "解析完成编排 project_id=%s index_jobs=%s match_job=%s",
-            project_id, scheduled["index_jobs"], scheduled["match_job"],
-        )
 
 
 def _execute_parse_tender_document(session, input_ref: str | None,
@@ -153,6 +135,15 @@ def _execute_parse_tender_document(session, input_ref: str | None,
         rule_cands = fallback_rule_candidates(route.pages, rule_cands, permission_scope="public_read")
     except Exception as exc:  # 兜底层任何异常不得阻断确定性主链
         logger.warning("LLM 兜底（规则候选）跳过：%s", exc)
+    # P4-2（2026-09-15）：锚点未覆盖、原文明确写了的条款 → 大模型定位逐字摘录 → 低置信
+    # generic 候选（必须人工复核；与既有候选/锚点重叠的已在发现层丢弃）
+    try:
+        from runtime.parsing.llm_fallback import discover_rule_candidates
+        rule_cands.extend(discover_rule_candidates(
+            route.pages, rule_cands, project_id=project, material_id=material.material_id,
+            content_hash=material.content_hash, permission_scope="public_read"))
+    except Exception as exc:
+        logger.warning("LLM 条款发现跳过：%s", exc)
     c_r, s_r = parse_service.store_candidates(
         session, project_id=project, material_id=material.material_id,
         version=material.version, kind="rule_candidate",
@@ -168,20 +159,41 @@ def _execute_parse_tender_document(session, input_ref: str | None,
         version=material.version, kind=parse_service.CANDIDATE_KIND_TERM,
         candidates=[c.to_dict() for c in term_cands],
     )
+    # 重新解析既有材料：抽取器升级后新锚点会增量落库，但若全部候选均已存在（无新增），
+    # 属幂等重放而非空解析——正常完成并如实留痕，让既有候选继续人工复核（2026-09-15：
+    # 此前一律 RuntimeError，用户对 manual_review 材料点「重新解析」必然收到任务失败）。
+    existing_candidates = None
     if c_r == 0 and c_f == 0 and c_t == 0:
-        raise RuntimeError(
-            f"材料 {material.material_id}:v{material.version} 未产出任何候选"
-            "（全部与既有候选重复且未落库？禁止静默通过）"
-        )
+        from runtime.db.models import ParseCandidate as _PC
+
+        existing_candidates = len(session.scalars(
+            select(_PC.candidate_id).where(
+                _PC.material_id == material.material_id, _PC.version == material.version)
+        ).all())
+        if existing_candidates > 0:
+            logger.info(
+                "重新解析无新增候选（幂等重放）material=%s:%s 既有候选=%s，保留待复核",
+                material.material_id, material.version, existing_candidates,
+            )
+        else:
+            raise RuntimeError(
+                f"材料 {material.material_id}:v{material.version} 未产出任何候选"
+                "（解析产物为空，禁止静默通过）"
+            )
+    note = (f"重新解析：无新增候选（既有 {existing_candidates} 条保留待复核）"
+            if existing_candidates is not None
+            else f"解析候选已生成 rule={c_r} main_card={c_f} term={c_t}，等待人工复核确认（F021 §2.7）")
     parse_service.mark_material_manual_review(
-        session, material_id=material.material_id, version=material.version,
-        note=f"解析候选已生成 rule={c_r} main_card={c_f} term={c_t}，等待人工复核确认（F021 §2.7）",
+        session, material_id=material.material_id, version=material.version, note=note,
     )
+    outcome = (f"rule_created={c_r} rule_skipped={s_r} field_created={c_f} field_skipped={s_f} "
+               f"term_created={c_t} term_skipped={s_t}")
+    if existing_candidates is not None:
+        outcome += f" idempotent_replay=true existing_candidates={existing_candidates}"
     api_service.audit(
         session, actor="system", action="parse.candidates_stored",
         basis=f"material={material.material_id}:v{material.version} kind={route.kind}",
-        outcome=f"rule_created={c_r} rule_skipped={s_r} field_created={c_f} field_skipped={s_f} "
-                f"term_created={c_t} term_skipped={s_t}",
+        outcome=outcome,
         object_ref=material.project_id or project_id,
     )
     session.commit()

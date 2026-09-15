@@ -226,3 +226,74 @@ def test_is_enabled_requires_both_switch_and_gate(monkeypatch):
     assert lf.is_enabled() is True
     monkeypatch.setenv("LLM_FALLBACK_ENABLED", "false")
     assert lf.is_enabled() is False
+
+
+# ── P4-2 条款发现（2026-09-15）───────────────────────────────────────
+
+def _pages_with_clauses():
+    from runtime.rag.chunker import ParsedPage
+    return [
+        ParsedPage(page_no=1, paragraphs=[
+            "3.1 具备有效的营业执照。",
+            "3.5 自 2020 年 9 月 1 日以来完成过一项 3000 万元及以上市政工程的施工业绩；",
+        ]),
+        ParsedPage(page_no=2, paragraphs=[
+            "（7）投标人通过 ISO9001 质量管理体系认证的得 3 分，本项满分 3 分。",
+        ]),
+    ]
+
+
+def _fake_client(quotes):
+    from runtime.core.model import ModelResult
+    def call(messages):
+        return ModelResult(ok=True, data={"items": [{"quote": q} for q in quotes]})
+    return call
+
+
+def test_discovery_offline_happy_and_filters():
+    from runtime.parsing.llm_fallback import discover_rule_candidates
+    from runtime.parsing.extractor import extract_rule_candidates
+
+    pages = _pages_with_clauses()
+    existing = extract_rule_candidates(pages, project_id="P", material_id="M", content_hash="h")
+    # 既有：3.5 业绩（锚点已覆盖）
+    quotes = [
+        "投标人通过 ISO9001 质量管理体系认证的得 3 分，本项满分 3 分",   # 发现：评分
+        "自 2020 年 9 月 1 日以来完成过一项 3000 万元及以上市政工程的施工业绩",  # 与既有锚点候选重叠 → 丢弃
+        "这句话不在原文里",                                              # 伪造 → 丢弃
+        "好的",                                                          # 太短 → 丢弃
+    ]
+    out = discover_rule_candidates(pages, existing, project_id="P", material_id="M",
+                                   content_hash="h", client=_fake_client(quotes), enabled=True)
+    assert len(out) == 1
+    c = out[0]
+    assert c.req_type == "scored_requirement" and c.category == "评分"
+    assert c.page_no == 2 and c.confidence == "low" and not c.missing_marker
+    assert c.rule == {"type": "generic", "located_by": "llm", "discovered": True}
+    assert c.requirement_id.startswith("M-LLM-") and c.requirement_id.endswith("-draft")
+    assert "大模型发现" in (c.note or "")
+    # 幂等：同摘录重跑产出同 ID
+    out2 = discover_rule_candidates(pages, existing, project_id="P", material_id="M",
+                                    content_hash="h", client=_fake_client(quotes[:1]), enabled=True)
+    assert [x.requirement_id for x in out2] == [c.requirement_id]
+
+
+def test_discovery_disabled_and_non_public_zero_effect():
+    from runtime.parsing.llm_fallback import discover_rule_candidates
+    pages = _pages_with_clauses()
+    assert discover_rule_candidates(pages, [], project_id="P", material_id="M",
+                                    content_hash="h", enabled=False) == []
+    assert discover_rule_candidates(pages, [], project_id="P", material_id="M",
+                                    content_hash="h", permission_scope="enterprise_read",
+                                    client=_fake_client(["x" * 30]), enabled=True) == []
+
+
+def test_discovery_category_closed_set():
+    from runtime.parsing.llm_fallback import discover_rule_candidates
+    from runtime.rag.chunker import ParsedPage
+    pages = [ParsedPage(page_no=1, paragraphs=["本项目所在区域气候宜人风景秀丽适合施工。"])]
+    out = discover_rule_candidates(pages, [], project_id="P", material_id="M",
+                                   content_hash="h",
+                                   client=_fake_client(["本项目所在区域气候宜人风景秀丽适合施工。"]),
+                                   enabled=True)
+    assert out == []  # 词表类别判不出 → 丢弃（不猜）

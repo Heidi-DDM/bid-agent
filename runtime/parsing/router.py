@@ -293,6 +293,42 @@ def _sniff_kind(path: Path) -> str | None:
     return None
 
 
+def _route_text_file(p: Path, digest: str) -> RouteResult:
+    """纯文本 → 单页（公告原文以净化 txt 固化，对象库禁 html，F019 §4；L1 索引用）。"""
+    for enc in ("utf-8", "gb18030"):
+        try:
+            text = p.read_text(encoding=enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        return RouteResult(kind="error", source=str(p), sha256=digest,
+                           error="文本编码无法识别（utf-8/gb18030 均失败）", needs_review=True)
+    if not text.strip():
+        return RouteResult(kind="error", source=str(p), sha256=digest,
+                           error="空文本文件", needs_review=True)
+    return RouteResult(kind="text", source=str(p), sha256=digest,
+                       pages=[ParsedPage(page_no=1, paragraphs=[ln for ln in text.splitlines() if ln.strip()])])
+
+
+def _looks_like_text(p: Path) -> bool:
+    """魔数嗅探失败后的纯文本探测：前 4KB 可解码且控制字符占比 <5%（排除 \n\r\t）。"""
+    head = p.read_bytes()[:4096]
+    if not head:
+        return False
+    for enc in ("utf-8", "gb18030"):
+        try:
+            s = head.decode(enc)
+        except (UnicodeDecodeError, ValueError, LookupError):
+            continue
+        ctrl = sum(1 for ch in s if ord(ch) < 32 and ch not in "\n\r\t")
+        return ctrl / max(len(s), 1) < 0.05
+    # 截断的多字节序列会解码失败：errors=ignore 只做可打印率估计（嗅探用途足够）
+    s = head.decode("utf-8", errors="ignore") + head.decode("gb18030", errors="ignore")
+    ctrl = sum(1 for ch in s if ord(ch) < 32 and ch not in "\n\r\t")
+    return ctrl / max(len(s), 1) < 0.05
+
+
 def route_document(path: str) -> RouteResult:
     """Document Router 入口：文件 → kind 判定 → 逐页文本（F017 §3 路由表）。
 
@@ -315,6 +351,8 @@ def route_document(path: str) -> RouteResult:
         return _route_text_pdf(path, digest)
     if ext == ".docx":
         return _route_docx(path, digest)
+    if ext in (".txt", ".text", ".md"):
+        return _route_text_file(p, digest)
     if ext == ".doc":
         return _route_doc(path, digest)
     if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"):
@@ -325,6 +363,10 @@ def route_document(path: str) -> RouteResult:
     if ext in ("", ".bin", ".dat", ".blob", ".sha256", ".digest"):
         sniffed = _sniff_kind(p)
         if sniffed is None:
+            # 嗅探失败再探纯文本：对象库里的公告原文是无扩展名的 sha256 文件名 txt
+            # （2026-09-15：此前 unsupported → L1 索引任务失败）
+            if _looks_like_text(p):
+                return _route_text_file(p, digest)
             return RouteResult(kind="unsupported", source=path, sha256=digest,
                                needs_review=True, note=f"无法识别文件类型（魔数嗅探失败）{ext}")
         if sniffed == ".pdf":

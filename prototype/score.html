@@ -40,7 +40,7 @@
       </section>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
-        <a class="btn" href="queue.html">进入人工补录 →</a>
+        <a class="btn" href="queue.html">进入复核与补录 →</a>
         <a class="btn ghost" href="matrix.html">← 查看自动匹配</a>
         <a class="btn ghost" href="approval.html">审批页（仅满分显示操作）</a>
       </div>
@@ -57,7 +57,8 @@
   <script src="common.js"></script>
   <script>
     initPage("score.html", "score");
-    const PJ = () => demoProjectId();
+    const PJ0 = apiProjectId();
+    const PJ = () => PJ0.id;
 
     function matchBadge(m) {
       const map = {
@@ -115,7 +116,7 @@
             <div class="cap">待处置</div>
           </div></div>
           <div class="info">
-            <h2>${name}（${PJ()}）</h2>
+            <h2>${name}（${PJ()}）${apiProjectChip(PJ0)}</h2>
             <p class="sub" style="margin-top:2px">招标文件解析完成 · 自动匹配结果（准入状态 ${stateBadge(state)}）</p>
             <div class="rows">
               <div><span class="k">资格/响应性核查：</span><span class="v">${a.qualification || "pending"}（${a.hard_satisfied || 0}/${a.hard_total || 0} 满足）</span></div>
@@ -128,7 +129,7 @@
               <div><span class="k">准入：</span><span class="v" style="color:${a.eligible ? "var(--ok)" : "var(--warn)"}">${a.eligible ? "内部满分（可提交人工审批）" : "阻断/未满分（不可进入审批）"}</span></div>
             </div>
             <div class="notice info" style="margin-top:10px;margin-bottom:0">
-              <b>结果说明</b>：系统展示条款、企业证据和缺失原因，不把缺失推断为满足；补录后由数据管理员核验并重新执行匹配（在「人工补录」页）。<br>
+              <b>结果说明</b>：系统展示条款、企业证据和缺失原因，不把缺失推断为满足；补录后由数据管理员核验并重新执行匹配（在「复核与补录」页）。<br>
               <span class="hint">满分 ≠ 自动投标：满分仅进入待审批，最终由经营负责人决定（ADR-001 §2.3）。</span>
             </div>
           </div>`;

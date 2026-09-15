@@ -45,7 +45,8 @@ def build_search_idempotency_key(request: SearchRequest, index_version: str, as_
 
 
 def create_index_job(session: Session, *, material_id: str, version: int,
-                     project_id: str | None = None) -> tuple[object, bool]:
+                     project_id: str | None = None,
+                     retry_failed: bool = False) -> tuple[object, bool]:
     """创建 knowledge_index 任务（幂等：方案 §8.3 index:... 键）。"""
     from runtime.rag.indexer import build_index_idempotency_key
 
@@ -65,6 +66,7 @@ def create_index_job(session: Session, *, material_id: str, version: int,
         input_ref=f"{material_id}:{version}",
         project_id=project_id,
         idempotency_key=key,
+        retry_failed=retry_failed,
     )
 
 

@@ -373,6 +373,16 @@ textarea { resize: vertical; min-height: 76px; }
 .seg-tab.on { border-color: var(--navy); background: var(--navy); color: #fff; }
 .issue-line { font-size: 12.5px; color: #b45309; margin-top: 3px; }
 .page-ref { font-variant-numeric: tabular-nums; }
+/* v1.5：未定位到原文的候选 / 人工定位表单 / 检索关键词 / 追溯编号白话 */
+.req-card.is-missing { border-left: 3px solid var(--warn); }
+.hint-chip { font-size: 12px; padding: 1px 6px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); margin-right: 2px; }
+.audit-fold .audit-code span { display: block; }
+.audit-why { font-style: normal; color: var(--ink-3); margin-left: 6px; font-size: 11.5px; }
+.review-form { width: 100%; margin-top: 6px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 6px; background: var(--bg); }
+.review-form .form-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.review-form textarea.inp { font-family: inherit; line-height: 1.5; }
+.review-form .hint a { margin-left: 6px; }
+.stage-hint { font-size: 13px; color: var(--ink-2); padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--radius); background: var(--bg); }
 
 /* ---------- 审批时间线 ---------- */
 .timeline { position: relative; padding-left: 22px; }

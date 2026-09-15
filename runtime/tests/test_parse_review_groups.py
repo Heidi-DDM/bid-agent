@@ -149,13 +149,26 @@ def test_revised_requires_payload(session):
             session, candidate_id="RC-2", material_id="MAT-TEST", version=1,
             decision="revised", reviewer="投标专员",
         )
+    # v1.5：规则候选的 revised 必须逐字校验；无原文时 fail-closed（原文不可得 → 拒绝）
+    with pytest.raises(parse_service.ParseServiceError, match="原文不可得"):
+        parse_service.decide_candidate(
+            session, candidate_id="RC-2", material_id="MAT-TEST", version=1,
+            decision="revised", reviewer="投标专员",
+            revised_payload={"assertion": "修正后的原文", "value": "二级及以上"},
+        )
     r = parse_service.decide_candidate(
         session, candidate_id="RC-2", material_id="MAT-TEST", version=1,
         decision="revised", reviewer="投标专员",
         revised_payload={"assertion": "修正后的原文", "value": "二级及以上"},
+        verbatim_checker=lambda *a, **k: {"ok": True, "check": "verified", "reason": None},
     )
     assert r["status"] == "revised"
+    # revised_payload 落库为合并后的完整 payload（确认写入直接作为 Requirement 来源）
     assert r["revised_payload"]["value"] == "二级及以上"
+    assert r["revised_payload"]["assertion"] == "修正后的原文"
+    assert r["revised_payload"]["req_type"] == "hard_requirement"
+    assert r["revised_payload"]["rule"]["located_by"] == "human"
+    assert r["revised_payload"]["verbatim_check"] == "verified"
 
 
 # ── 聚合：candidates 视图分组 ──────────────────────────────────

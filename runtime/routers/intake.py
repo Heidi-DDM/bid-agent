@@ -952,8 +952,13 @@ def reparse(
     """重新解析（F020 §2.2）：仅已入库材料可重解析；创建新任务并轮询。"""
     require_role(role, "tender_document", "write", session=session, actor=role, object_ref=intake_id)
     material = api_service.get_material_or_404(session, intake_id)
+    # 每次重解析都是一次新执行：用调用级幂等键（2026-09-15 修复：此前走默认键
+    # kind+input_ref+project_id，同一材料第二次重解析只会拿回旧任务、什么都不跑）
+    import uuid as _uuid
+
     job, created = worker_service.create_job(
         session, kind="parse.tender_document", input_ref=material.material_id,
         project_id=material.project_id,
+        idempotency_key=f"parse.tender_document:reparse:{material.material_id}:{_uuid.uuid4().hex[:12]}",
     )
     return {"request_id": request_id, "job_id": job.job_id, "created": created}

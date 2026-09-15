@@ -480,6 +480,41 @@ def test_parse_review_semantics_validation(client):
     assert resp.status_code == 422, resp.text
 
 
+def test_parse_review_not_applicable_and_confirm_as_of_validation(client):
+    """F021 §2.1/§2.3 v1.5：not_applicable 必带人工核查说明、不得带修正值；
+    confirm 的 as_of 须为 ISO 日期（请求体校验 422，先于触库）。"""
+    base = {"reviewer": "投标专员"}
+    resp = client.post("/api/v1/parse/candidates/C-1/review", headers=_headers("bid_specialist"),
+                       json={**base, "decision": "not_applicable"})
+    assert resp.status_code == 422, resp.text
+    resp = client.post("/api/v1/parse/candidates/C-1/review", headers=_headers("bid_specialist"),
+                       json={**base, "decision": "not_applicable", "review_note": "无此要求",
+                             "revised_payload": {"assertion": "x"}})
+    assert resp.status_code == 422, resp.text
+    # 带说明 → 过请求体校验（沙盒无库 → 触库 500）
+    resp = client.post("/api/v1/parse/candidates/C-1/review", headers=_headers("bid_specialist"),
+                       json={**base, "decision": "not_applicable", "review_note": "全文检索无此条款"})
+    assert resp.status_code == 500, resp.text
+    # 未知决策 → 422
+    resp = client.post("/api/v1/parse/candidates/C-1/review", headers=_headers("bid_specialist"),
+                       json={**base, "decision": "maybe"})
+    assert resp.status_code == 422, resp.text
+    # confirm：as_of 非 ISO 日期 → 422；合法日期 → 过校验（沙盒触库 500）
+    for bad in ("2025/12/19", "2025-13-01", "today"):
+        resp = client.post("/api/v1/parse/projects/ND-2025/materials/MAT-1/confirm",
+                           headers=_headers("bid_specialist"), json={"actor": "投标专员", "as_of": bad})
+        assert resp.status_code == 422, (bad, resp.text)
+    resp = client.post("/api/v1/parse/projects/ND-2025/materials/MAT-1/confirm",
+                       headers=_headers("bid_specialist"), json={"actor": "投标专员", "as_of": "2025-12-19"})
+    assert resp.status_code == 500, resp.text
+
+
+def test_openapi_registers_material_file_route(client):
+    """F021 §2.1 v1.5：原文文件接口已注册（定位跳转用）。"""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/v1/materials/{material_id}/file" in paths
+
+
 def test_parse_requirements_aggregate_role_gate(client):
     # 聚合读门禁与 candidates 一致：tender_document read（bid_specialist/business_head/legal 可读，
     # 沙盒无库 → 500）；data_admin 403 不触库

@@ -137,6 +137,16 @@
     const params = new URLSearchParams(window.location.search);
     let projectId = (params.get("project_id") || "").trim();
     let candidateId = (params.get("candidate_id") || "").trim();
+    /* 项目上下文持久化（2026-09-15）：带参进入 → 记住项目（matrix/score/queue 同源读取）；
+       无参进入（导航返回）→ 恢复上次选择的项目并明示，不再退回「尚未选择项目」。
+       从未选择过（无记录）→ 保持原引导回搜索页。 */
+    let projectRestored = false;
+    if (projectId) {
+      localStorage.setItem("demo_project_id", projectId);
+    } else {
+      const last = localStorage.getItem("demo_project_id") || "";
+      if (last) { projectId = last; projectRestored = true; }
+    }
 
     const progress = document.getElementById("parse-progress");
     const dropzone = document.getElementById("dropzone");
@@ -180,6 +190,8 @@
         noProject.style.display = "none";
         document.getElementById("upload-card").style.display = "block";
         const isParsed = (p.materials || []).some((m) => m.material_type === "tender_document" && m.parse_status === "parsed");
+        const restoredNote = projectRestored
+          ? `<div class="hint" style="margin-top:6px">已自动载入<b>上次选择的项目</b>（导航返回后不再丢失）。要处理其他项目，请<a href="index.html">返回搜索结果</a>重新「选择深入」。</div>` : "";
         box.innerHTML = `
           <div class="pc-main" style="border:1px solid var(--line);border-radius:10px;padding:12px">
             <div class="pc-title">${p.project_name || projectId} ${apiBadge(isParsed ? "ok" : "info", isParsed ? "招标文件已解析" : "待上传完整招标文件")}</div>
@@ -188,7 +200,7 @@
               ${candidateId ? `<span><b>来源候选</b>：<code>${candidateId}</code></span>` : ""}
               <span><b>公告</b>：${p.announcement ? p.announcement.title || "已入库" : "—"}</span>
               <span><b>解析状态</b>：${apiStatusBadge(p.parse_status || "pending")}</span>
-            </div>
+            </div>${restoredNote}
           </div>`;
         document.getElementById("raw-panel").style.display = "block";
         document.getElementById("proj-id").textContent = p.project_id;
@@ -397,7 +409,7 @@
       // 明确拒绝加密固化格式与 Excel（招标文件入口只收 pdf/docx，§3.2.3/§3.5）
       if (dotSuffix === ".gef" || dotSuffix === ".etb") {
         resetFileSelection();
-        setFileError(`<b>不支持 ${dotSuffix} 加密固化格式</b>：招标文件入口仅接受 .pdf/.docx，且系统不会绕过加密保护（F005 §约束）。如为补录证据/企业台账，请到「人工补录」页走企业资料受控导入。`);
+        setFileError(`<b>不支持 ${dotSuffix} 加密固化格式</b>：招标文件入口仅接受 .pdf/.docx，且系统不会绕过加密保护（F005 §约束）。如为补录证据/企业台账，请到「复核与补录」页走企业资料受控导入。`);
         return;
       }
       if (TENDER_SUFFIXES.indexOf(dotSuffix) === -1) {
@@ -520,7 +532,7 @@
             再到「人工复核」逐条确认候选。复核完成后系统自动写入规则集并触发企业资料匹配。
             <div style="margin-top:8px;display:flex;gap:8px">
               <a class="btn sm" href="requirements.html?project_id=${encodeURIComponent(projectId)}">查看解析结果 →</a>
-              <a class="btn sm ghost" href="queue.html?project_id=${encodeURIComponent(projectId)}">前往人工复核/补录</a>
+              <a class="btn sm ghost" href="queue.html?project_id=${encodeURIComponent(projectId)}">前往复核与补录</a>
             </div>
           </div>`);
         resetFileSelection();
@@ -553,29 +565,70 @@
         p.materials.forEach((m) => {
           const tr = document.createElement("tr");
           const isTender = m.material_type === "tender_document";
+          const isAnnouncement = m.material_type === "announcement";
+          const pj = encodeURIComponent(projectId);
+          /* 公告材料没有独立解析队列：初筛随「选择深入」导入完成。旧数据 parse_status 可能停在
+             pending——不再显示误导性的「排队中」（2026-09-15）。 */
+          const statusCell = isAnnouncement
+            ? (m.parse_status === "pending"
+                ? `<span class="badge info">已入库</span> <span class="hint">初筛随导入完成，无独立解析队列</span>`
+                : apiStatusBadge(m.parse_status || "parsed"))
+            : `${apiStatusBadge(m.parse_status || "pending")}${isTender && m.parse_status === "parsed" ? ' <span class="hint">正文可解析</span>' : ""}`;
+          /* 招标文件按状态给出下一步入口（2026-09-15：此前 manual_review 只给「重新解析」，
+             复核入口缺失——用户被卡在解析页进不了复核）。 */
+          let actionCell = "";
+          if (isTender) {
+            if (m.parse_status === "manual_review") {
+              actionCell = `<a class="btn sm" href="queue.html?project_id=${pj}">去人工复核 →</a>
+                            <a class="btn sm ghost" href="requirements.html?project_id=${pj}">查看解析结果</a>
+                            <a href="#" class="reparse-link hint">重新解析</a>`;
+            } else if (m.parse_status === "parsed") {
+              actionCell = `<a class="btn sm ghost" href="requirements.html?project_id=${pj}">查看解析结果（已确认）</a>
+                            <a class="btn sm ghost" href="queue.html?project_id=${pj}">复核与补录</a>`;
+            } else if (m.parse_status === "failed") {
+              actionCell = `<button class="btn sm reparse-btn">重新解析</button>`;
+            } else {
+              actionCell = `<span class="hint">解析任务排队/执行中，完成后刷新本页</span> <a href="#" class="refresh-link">刷新</a>`;
+            }
+          }
           tr.innerHTML = `
             <td>${typeName[m.material_type] || m.material_type} <code>${m.material_id}</code></td>
             <td>v${m.version}</td>
-            <td>${apiStatusBadge(m.parse_status || "pending")}${isTender && m.parse_status === "parsed" ? ' <span class="hint">正文可解析</span>' : ""}</td>
+            <td>${statusCell}</td>
             <td class="num">sha256:${m.content_hash || "—"}</td>
-            <td>${isTender && m.parse_status !== "parsed" ? `<a href="#" class="reparse-link">重新解析</a>` : ""}</td>`;
+            <td>${actionCell}</td>`;
           tbody.appendChild(tr);
-          if (isTender && m.parse_status !== "parsed") {
-            tr.querySelector(".reparse-link").addEventListener("click", async (e) => {
-              e.preventDefault();
-              progress.innerHTML = `<div class="notice info">提交重新解析…</div>`;
-              try {
-                const rj = await apiPost(`/intake/${m.material_id}/reparse`, {});
-                progress.innerHTML = `<div class="notice info">重新解析任务 request_id <code>${rj.request_id || "—"}</code> · job_id <code>${rj.job_id}</code> 已提交，轮询中…</div>`;
-                await apiPollJob(`/intake/${rj.job_id}`, { label: "重新解析" });
-                progress.innerHTML = `<div class="notice info">重新解析完成：<a href="requirements.html?project_id=${encodeURIComponent(projectId)}">查看解析结果 →</a></div>`;
-                loadMaterials();
-              } catch (err2) { apiShowError(err2); }
-            });
-          }
+          const refresh = tr.querySelector(".refresh-link");
+          if (refresh) refresh.addEventListener("click", (e) => { e.preventDefault(); loadMaterials(); });
+          const failedBtn = tr.querySelector(".reparse-btn");
+          if (failedBtn) failedBtn.addEventListener("click", () => submitReparse(m));
+          const link = tr.querySelector(".reparse-link");
+          if (link) link.addEventListener("click", async (e) => {
+            e.preventDefault();
+            const ok = confirm("重新解析会用当前版本的抽取器重新抽取全文：已有候选与你的复核决策全部保留（幂等），可能补充新锚点候选。继续？");
+            if (ok) submitReparse(m);
+          });
         });
       } catch (err) {
         tbody.innerHTML = `<tr><td colspan="5" class="hint">材料加载失败：${err.message}</td></tr>`;
+      }
+    }
+
+    async function submitReparse(m) {
+      progress.innerHTML = `<div class="notice info">提交重新解析…</div>`;
+      try {
+        const rj = await apiPost(`/intake/${m.material_id}/reparse`, {});
+        progress.innerHTML = `<div class="notice info">重新解析任务 request_id <code>${rj.request_id || "—"}</code> · job_id <code>${rj.job_id}</code> 已提交，轮询中…</div>`;
+        await apiPollJob(`/intake/${rj.job_id}`, { label: "重新解析" });
+        progress.innerHTML = `<div class="notice ok"><b>重新解析完成</b>：已定位候选保留、新锚点候选已补充（如有）——请到解析结果核对后人工复核。
+          <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+            <a class="btn sm" href="requirements.html?project_id=${encodeURIComponent(projectId)}">查看解析结果 →</a>
+            <a class="btn sm ghost" href="queue.html?project_id=${encodeURIComponent(projectId)}">前往人工复核 →</a>
+          </div></div>`;
+        loadMaterials();
+      } catch (err2) {
+        apiShowError(err2);
+        progress.innerHTML = `<div class="notice error">重新解析失败：${err2.message}——既有候选不受影响，仍可<a href="queue.html?project_id=${encodeURIComponent(projectId)}">前往人工复核</a>。</div>`;
       }
     }
     loadProjectContext();

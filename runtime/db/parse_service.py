@@ -11,6 +11,7 @@
 #      确认后=Requirement(+FieldTrace) 视图，按六组业务语言确定性分组（09-优化方案 §3.3）。
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -27,8 +28,15 @@ STATUS_PENDING = "pending"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUS_REVISED = "revised"
+# F021 §2.1 v1.5：「确认本文件无此条款」——仅 missing_marker 候选允许；确认写入时不产出
+# Requirement，但进 RuleSet.snapshot.not_applicable[]（审计可查“谁确认了本文件没有这一条”）
+STATUS_NOT_APPLICABLE = "not_applicable"
 
-TERMINAL_STATUSES = (STATUS_APPROVED, STATUS_REJECTED, STATUS_REVISED)
+TERMINAL_STATUSES = (STATUS_APPROVED, STATUS_REJECTED, STATUS_REVISED, STATUS_NOT_APPLICABLE)
+
+MISSING = "__待补__"
+# 逐字校验可用的路由类型；扫描件/图片走 OCR，文本噪声大，放行并在 payload 标 verbatim_check=skipped_ocr
+VERBATIM_CHECKABLE_KINDS = ("text_pdf", "docx", "doc")
 
 # 硬性必查类别（缺失候选必须有人工处理才能 parsed；与 extractor 的 missing 语义一致）
 HARD_MISSING_CATEGORIES = {"资质", "人员", "财务", "信用", "联合体", "响应性", "保证金"}
@@ -148,7 +156,7 @@ def _row_dict(row: ParseCandidate) -> dict:
 
 
 def pending_summary(session: Session, *, project_id: str, material_id: str) -> dict:
-    """复核进度（前端展示）：总数/已决/待决 + 硬性缺失项。"""
+    """复核进度（前端展示）：总数/已决/待决 + 需重新决策的遗留行（已通过的 missing 占位）。"""
     total = session.scalar(
         select(func.count()).select_from(ParseCandidate).where(
             ParseCandidate.project_id == project_id,
@@ -162,11 +170,165 @@ def pending_summary(session: Session, *, project_id: str, material_id: str) -> d
             ParseCandidate.status == STATUS_PENDING,
         )
     )
+    redo = len(legacy_approved_missing_ids(session, project_id=project_id, material_id=material_id))
     return {"total": total or 0, "pending": pending or 0,
-            "decided": (total or 0) - (pending or 0)}
+            "decided": (total or 0) - (pending or 0),
+            "needs_redecision": redo}
 
 
 # ── 复核决策（F005 §8 留痕） ─────────────────────────────────────────
+
+
+def _is_missing(kind: str, payload: dict) -> bool:
+    """候选是否为「锚点未命中/未定位到原文」占位（规则看 assertion，字段看 value）。"""
+    if payload.get("missing_marker"):
+        return True
+    if kind == CANDIDATE_KIND_RULE:
+        return (payload.get("assertion") or "") in ("", MISSING)
+    return (payload.get("value") or "") == MISSING
+
+
+# 逐字比对前要剥掉的不可见字符（PDF 文本层与阅读器复制常见的零宽/软连字符/控制符）
+_INVISIBLE_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff\u00ad\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# 粘贴伪影：单独成行的页码/页眉（如「41」「- 41 -」）——跨页复制时页脚会被带进摘录
+_PASTE_PAGE_NO_RE = re.compile(r"\s*[-—–—]?\s*\d{1,4}\s*[-—–]?\s*")
+
+
+def _norm_nospace(s: str | None) -> str:
+    """比对归一：去不可见字符 → 去全部空白 → NFKC（全角数字/字母/括号等编码变体归一）。
+    仅用于「是否逐字」的判定与页码定位，不改写落库的原文摘录。"""
+    import unicodedata
+
+    cleaned = _INVISIBLE_RE.sub("", s or "")
+    cleaned = "".join(cleaned.split())
+    return unicodedata.normalize("NFKC", cleaned)
+
+
+def _strip_paste_artifacts(quote: str) -> str:
+    """去掉用户粘贴里单独成行的页码（全行都被剥掉时回退原文，避免把摘录剥空）。"""
+    lines = quote.splitlines()
+    kept = [ln for ln in lines if not _PASTE_PAGE_NO_RE.fullmatch(ln)]
+    return "\n".join(kept) if kept else quote
+
+
+def _strip_page_number_lines(text: str, *, head: bool, tail: bool) -> str:
+    """跨页拼接前剥掉页眉/页脚的纯数字行（PDF 页码会把跨页句子隔断）。"""
+    lines = (text or "").split("\n")
+    if tail:
+        while lines and lines[-1].strip().isdigit():
+            lines.pop()
+    if head:
+        while lines and lines[0].strip().isdigit():
+            lines.pop(0)
+    return "\n".join(lines)
+
+
+def _verbatim_in_pages(pages: list[tuple[int, str]], quote: str, page_no: int) -> tuple[bool, str | None, int | None]:
+    """纯函数：quote 去空白后是否为第 page_no 页原文子串（允许相邻页与跨页句子）。
+
+    返回 (ok, 拒绝原因, 实际所在页)。实际页与填写页不同（填错一页 / 句子跨页）时返回真实起始页，
+    调用方以此落库，不把错误页码写进规则。pages = [(page_no, 整页文本)]。"""
+    nq = _norm_nospace(_strip_paste_artifacts(quote))
+    if not nq:
+        return False, "摘录为空", None
+    raw = {p: t for p, t in pages}
+    if page_no not in raw:
+        return False, f"页码 {page_no} 不存在（原文共 {len(pages)} 页）", None
+    norm = {p: _norm_nospace(t) for p, t in pages}
+    if nq in norm[page_no]:
+        return True, None, page_no
+    # 页码给偏（印刷页码 vs 物理页序不一致、或数错）：全文找真实所在页（2026-09-15 实测
+    # 「第 41 页」报错即此类）——逐字性由内容保证，页码元数据以校验结果为准落库
+    for p in sorted(norm):
+        if p != page_no and nq in norm[p]:
+            return True, None, p
+    # 句子跨页：给定页相邻对优先，其次全文相邻对（剥页脚页码行后拼接）
+    order = sorted(raw)
+    pairs = [(page_no - 1, page_no), (page_no, page_no + 1)] + list(zip(order, order[1:]))
+    for a, b in pairs:
+        if a in raw and b in raw:
+            joined = _norm_nospace(_strip_page_number_lines(raw[a], head=False, tail=True)
+                                   + _strip_page_number_lines(raw[b], head=True, tail=False))
+            if nq in joined:
+                return True, None, a
+    return False, f"摘录不是第 {page_no} 页原文的逐字子串（请从原文复制，不要改写；跨页请分段）", None
+
+
+# 进程内原文页文本缓存（按 content_hash；130 页文本 PDF 路由约 1-2s，逐条复核不重复解析）
+_PAGES_CACHE: dict[str, tuple[str, list[tuple[int, str]]]] = {}
+_PAGES_CACHE_MAX = 8
+
+
+def _material_pages(session: Session, material_id: str, version: int) -> tuple[str | None, list[tuple[int, str]]]:
+    """原文逐页文本 (route.kind, [(page_no, text)])；原文不可得 → (None, [])。"""
+    from pathlib import Path
+
+    from runtime.core.config import object_store_root
+    from runtime.db.models import MaterialVersion
+
+    mv = session.get(MaterialVersion, (material_id, version))
+    if mv is None:
+        return None, []
+    cached = _PAGES_CACHE.get(mv.content_hash)
+    if cached is not None:
+        return cached
+    path = Path(object_store_root()) / mv.object_uri
+    if not path.is_file():
+        return None, []
+    from runtime.parsing.router import route_document
+
+    route = route_document(str(path))
+    pages = [(p.page_no, "\n".join(getattr(p, "paragraphs", []) or [])) for p in (route.pages or [])]
+    if len(_PAGES_CACHE) >= _PAGES_CACHE_MAX:
+        _PAGES_CACHE.pop(next(iter(_PAGES_CACHE)))
+    _PAGES_CACHE[mv.content_hash] = (route.kind, pages)
+    return route.kind, pages
+
+
+def verify_verbatim(session: Session, *, material_id: str, version: int,
+                    quote: str, page_no: int) -> dict:
+    """人工定位/修正摘录的逐字校验（F021 §2.1 v1.5，禁止编造）。
+
+    返回 {"ok", "check", "reason"}：check ∈ verified / skipped_ocr（扫描件放行）；
+    原文不可得或不在页 → ok=False（fail-closed，与解析链“原文缺失不得伪造产物”同口径）。
+    """
+    kind, pages = _material_pages(session, material_id, version)
+    if kind is None or not pages:
+        return {"ok": False, "check": "unavailable", "page_no": None,
+                "reason": "原文不可得，无法做逐字校验（材料版本/对象缺失）"}
+    if kind not in VERBATIM_CHECKABLE_KINDS:
+        return {"ok": True, "check": "skipped_ocr", "page_no": page_no, "reason": None}
+    ok, reason, found = _verbatim_in_pages(pages, quote, page_no)
+    return {"ok": ok, "check": "verified" if ok else "failed",
+            "page_no": found if ok else None, "reason": reason}
+
+
+def _merge_rule_revision(payload: dict, revised: dict, *, is_missing: bool, check: str) -> dict:
+    """规则候选的 revised_payload = 原 payload + 人工修正（assertion/page_no/clause_ref），
+    确认写入时直接作为 Requirement 来源；missing 占位转为已定位（confidence=low）。"""
+    from runtime.parsing.extractor import _rule_type_for
+
+    merged = dict(payload)
+    merged["assertion"] = str(revised["assertion"]).strip()[:400]
+    if revised.get("page_no") is not None:
+        merged["page_no"] = int(revised["page_no"])
+    clause = (revised.get("clause_ref") or "").strip() if isinstance(revised.get("clause_ref"), str) else None
+    if clause:
+        merged["clause_ref"] = clause
+    elif is_missing:
+        merged["clause_ref"] = None  # 不保留锚点基线文件的条款提示（在本文件里是错误位置）
+    if revised.get("value") is not None:
+        merged["value"] = revised["value"]
+    merged["missing_marker"] = False
+    merged["confidence"] = "low" if is_missing else (payload.get("confidence") or "low")
+    rule = dict(payload.get("rule") or {})
+    rule["located_by"] = "human"
+    if rule.get("type") == "missing" and rule.get("anchor_key"):
+        rule["type"] = _rule_type_for(rule["anchor_key"])
+    merged["rule"] = rule
+    merged["verbatim_check"] = check
+    merged["note"] = None
+    return merged
 
 
 def decide_candidate(
@@ -179,26 +341,20 @@ def decide_candidate(
     reviewer: str,
     review_note: str | None = None,
     revised_payload: dict | None = None,
+    verbatim_checker=None,
 ) -> dict:
-    """投标专员复核：approved / rejected / revised（revised 须带修正 payload）。
+    """投标专员复核（F021 §2.1 v1.5）：approved / rejected / revised / not_applicable。
 
-    留痕：reviewer / review_note / revised_payload / decided_at；
-    终态不可重复决策（F005 §8 + F020 一致性）。
+    - approved：已定位候选确认无误；对 missing 占位候选**拒绝**（此前确认写入时被静默跳过）。
+    - not_applicable：确认本文件无此条款，仅 missing 候选允许，必带人工核查说明。
+    - revised：规则候选 = 人工定位/修正原文摘录（逐字校验，missing 必带 page_no）；
+      字段/条款候选 = 修正 value。revised_payload 落库为合并后的完整 payload。
+    - rejected：必带结构化原因枚举。
+    留痕：reviewer / review_note / revised_payload / decided_at；终态不可重复决策
+    （例外：旧版遗留「已通过的 missing 候选」允许重新决策，见 04-修改日志 2026-09-14）。
     """
-    if decision not in (STATUS_APPROVED, STATUS_REJECTED, STATUS_REVISED):
+    if decision not in TERMINAL_STATUSES:
         raise ParseServiceError(f"不支持决策: {decision}")
-    if decision == STATUS_REVISED and not revised_payload:
-        raise ParseServiceError("revised 决策必须携带 revised_payload（人工修正值/依据）")
-    if decision == STATUS_REJECTED:
-        # F021 §2.1 v1.3：标记无法确认必须携带结构化原因枚举（扫描不清/条款冲突/未识别/需业务解释），
-        # 这不是上传企业材料；原因写入 review_note，允许“原因：补充说明”格式。
-        if not review_note or not any(
-            review_note == r or review_note.startswith(f"{r}：") or review_note.startswith(f"{r}:")
-            for r in REJECT_REASONS
-        ):
-            raise ParseServiceError(
-                f"rejected 决策必须携带结构化原因（{' / '.join(REJECT_REASONS)}），写入 review_note"
-            )
     row = session.scalar(
         select(ParseCandidate).where(
             ParseCandidate.candidate_id == candidate_id,
@@ -208,8 +364,83 @@ def decide_candidate(
     )
     if row is None:
         raise CandidateNotFound(f"候选不存在: {candidate_id}@{material_id}:v{version}")
-    if row.status in TERMINAL_STATUSES:
+    payload = row.payload or {}
+    is_missing = _is_missing(row.kind, payload)
+    # 可重开的两类（其余终态不可重复决策，F005 §8）：
+    # - 旧版遗留「已通过的 missing 占位」（v1.5 起通过即无效，须重新三选一）；
+    # - rejected（无法确认）——它是「暂未核实」的搁置而非终局判断：复核人后来找到原文/
+    #   扫描件辨清后应能补录（2026-09-15：逐字校验误报曾迫使用户点「无法确认」锁死候选）。
+    #   原决策留在 audit_events（parse.candidate.review），重开不抹审计。
+    reopenable = (row.status == STATUS_APPROVED and is_missing) or row.status == STATUS_REJECTED
+    if row.status in TERMINAL_STATUSES and not reopenable:
         raise CandidateAlreadyDecided(f"候选已决策（{row.status}），终态不可重复决策")
+
+    note = (review_note or "").strip()
+    if decision == STATUS_APPROVED:
+        if is_missing:
+            raise ParseServiceError(
+                "该候选未在原文定位到（锚点未命中），不能「通过」：请选择「本文件无此条款」、"
+                "「人工定位补录」或「无法确认」（F021 §2.1 v1.5）"
+            )
+        if revised_payload:
+            raise ParseServiceError("approved 不得携带 revised_payload（确认无误无需修正值）")
+    elif decision == STATUS_NOT_APPLICABLE:
+        if not is_missing:
+            raise ParseServiceError(
+                "「本文件无此条款」仅适用于未定位到原文的候选；已定位候选请用通过 / 编辑后确认 / 无法确认"
+            )
+        if not note:
+            raise ParseServiceError(
+                "「本文件无此条款」必须填写人工核查说明（如：全文检索“审计报告”，资格审查无此要求）"
+            )
+    elif decision == STATUS_REJECTED:
+        # F021 §2.1 v1.3：标记无法确认必须携带结构化原因枚举（扫描不清/条款冲突/未识别/需业务解释），
+        # 这不是上传企业材料；原因写入 review_note，允许“原因：补充说明”格式。
+        if not note or not any(
+            note == r or note.startswith(f"{r}：") or note.startswith(f"{r}:")
+            for r in REJECT_REASONS
+        ):
+            raise ParseServiceError(
+                f"rejected 决策必须携带结构化原因（{' / '.join(REJECT_REASONS)}），写入 review_note"
+            )
+    elif decision == STATUS_REVISED:
+        if not revised_payload:
+            raise ParseServiceError("revised 决策必须携带 revised_payload（人工修正值/依据）")
+        if row.kind == CANDIDATE_KIND_RULE:
+            assertion = str(revised_payload.get("assertion") or "").strip()
+            if not assertion or assertion == MISSING:
+                raise ParseServiceError("编辑后确认必须提供原文逐字摘录 assertion（不是修正说明）")
+            page_no = revised_payload.get("page_no")
+            if page_no is None:
+                page_no = payload.get("page_no")
+            if page_no is None:
+                raise ParseServiceError("人工定位补录必须提供页码 page_no（摘录所在页）")
+            try:
+                page_no = int(page_no)
+            except (TypeError, ValueError):
+                raise ParseServiceError("page_no 必须是整数页码")
+            checker = verbatim_checker or verify_verbatim
+            check = checker(session, material_id=material_id, version=version,
+                            quote=assertion, page_no=page_no)
+            if not check.get("ok"):
+                raise ParseServiceError(check.get("reason") or "摘录逐字校验未通过")
+            # 校验器回报的实际所在页优先（填错一页/跨页句子时不把错误页码写进规则）
+            if check.get("page_no") is not None:
+                page_no = int(check["page_no"])
+            revised_payload = _merge_rule_revision(
+                payload, dict(revised_payload, page_no=page_no),
+                is_missing=is_missing, check=check.get("check") or "verified",
+            )
+        else:
+            value = str(revised_payload.get("value") or "").strip()
+            if not value or value == MISSING:
+                raise ParseServiceError("字段修正必须提供修正后的 value")
+            merged = dict(payload)
+            merged["value"] = value[:200]
+            merged["missing_marker"] = False
+            merged["confidence"] = "low" if is_missing else (payload.get("confidence") or "low")
+            revised_payload = merged
+
     row.status = decision
     row.reviewer = reviewer
     row.review_note = review_note
@@ -218,6 +449,20 @@ def decide_candidate(
     row.updated_at = _now()
     session.commit()
     return _row_dict(row)
+
+
+def legacy_approved_missing_ids(session: Session, *, project_id: str, material_id: str,
+                                version: int | None = None) -> list[str]:
+    """v1.4 及以前「通过了 missing 占位候选」的遗留行（确认写入时会被静默跳过 = 规则无声消失）。
+    v1.5 起这些行必须重新决策（本文件无此条款 / 人工定位补录 / 无法确认），确认前阻断。"""
+    q = select(ParseCandidate).where(
+        ParseCandidate.project_id == project_id,
+        ParseCandidate.material_id == material_id,
+        ParseCandidate.status == STATUS_APPROVED,
+    )
+    if version is not None:
+        q = q.where(ParseCandidate.version == version)
+    return [r.candidate_id for r in session.scalars(q).all() if _is_missing(r.kind, r.payload or {})]
 
 
 def material_parse_status(session: Session, *, project_id: str, material_id: str) -> str:
@@ -236,7 +481,9 @@ def material_parse_status(session: Session, *, project_id: str, material_id: str
         return "pending"
     if any(r.status == STATUS_PENDING for r in rows):
         return "manual_review"  # 有待决候选：人工复核中
-    # 全部已决：rejected 存在 → manual_review（需人工补录/修正）；否则 parsed
+    if any(r.status == STATUS_APPROVED and _is_missing(r.kind, r.payload or {}) for r in rows):
+        return "manual_review"  # 旧版遗留：已通过的 missing 占位必须重新决策
+    # 全部已决：rejected 存在 → manual_review（需人工补录/修正）；否则 parsed（not_applicable 属正常终态）
     rejected = [r for r in rows if r.status == STATUS_REJECTED]
     if rejected:
         return "manual_review"
@@ -288,8 +535,19 @@ def confirm_rules_from_approved(
     approved = [r for r in rows if r.status in (STATUS_APPROVED, STATUS_REVISED)]
     rejected = [r for r in rows if r.status == STATUS_REJECTED]
     pending = [r for r in rows if r.status == STATUS_PENDING]
+    not_applicable = [r for r in rows if r.status == STATUS_NOT_APPLICABLE]
     if pending:
         raise ParseServiceError(f"仍有 {len(pending)} 个待决候选，不能生成规则集")
+    # v1.5：已「通过」的 missing 占位不得静默跳过（= 规则无声消失）→ 阻断并点名，要求重新决策
+    # （revised 行的原始 payload 仍是 missing，但 revised_payload 已人工定位，不算遗留）
+    legacy = [r.candidate_id for r in approved
+              if r.status == STATUS_APPROVED and _is_missing(r.kind, r.payload or {})]
+    if legacy:
+        raise ParseServiceError(
+            f"{len(legacy)} 个候选未定位到原文却被「通过」（旧版遗留），需重新决策为"
+            f"「本文件无此条款 / 人工定位补录 / 无法确认」后再确认：{', '.join(legacy[:6])}"
+            + ("…" if len(legacy) > 6 else "")
+        )
 
     snapshot_requirements = []
     session.add(RuleSet(
@@ -303,6 +561,18 @@ def confirm_rules_from_approved(
             "as_of": as_of,
             "confirmed_by": created_by,
             "requirement_count": len(approved),
+            # 审计：谁确认了“本文件没有这一条”（F021 §2.1 v1.5）
+            "not_applicable": [
+                {
+                    "candidate_id": r.candidate_id,
+                    "anchor_key": ((r.payload or {}).get("rule") or {}).get("anchor_key"),
+                    "category": (r.payload or {}).get("category"),
+                    "reviewer": r.reviewer,
+                    "note": r.review_note,
+                    "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+                }
+                for r in not_applicable
+            ],
         },
         diff=None,
     ))
@@ -311,9 +581,13 @@ def confirm_rules_from_approved(
         payload = row.revised_payload or row.payload
         req_id = payload.get("requirement_id", row.candidate_id)
         req_type = payload.get("req_type", "hard_requirement")
-        # missing_marker 候选（__待补__）不得写为正式规则（缺失阻断）
-        if payload.get("missing_marker") or not payload.get("assertion") or payload.get("assertion") == "__待补__":
+        # 防御：合并后的 revised_payload 已保证非缺失；此处仅拦截异常数据
+        if payload.get("missing_marker") or not payload.get("assertion") or payload.get("assertion") == MISSING:
             continue
+        # 页码随规则固化（Requirement 无独立页码列；confirmed 视图与解释链回跳原文用）
+        rule_dict = dict(payload.get("rule") or {})
+        if payload.get("page_no") is not None and "page_no" not in rule_dict:
+            rule_dict["page_no"] = payload.get("page_no")
         session.add(Requirement(
             requirement_id=f"{req_id}",
             rule_set_id=rule_set_id,
@@ -322,7 +596,7 @@ def confirm_rules_from_approved(
             lot_id=None,
             clause_ref=payload.get("clause_ref") or "",
             assertion=payload.get("assertion") or "",
-            rule=payload.get("rule") or {},
+            rule=rule_dict,
             evidence_required=payload.get("evidence_required") or [],
             as_of=as_of,
             missing_action="blocked_missing_data",
@@ -344,7 +618,42 @@ def confirm_rules_from_approved(
         })
     session.commit()
     return {"rule_set_id": rule_set_id, "created_requirements": created,
-            "rejected": len(rejected), "pending": len(pending)}
+            "rejected": len(rejected), "pending": len(pending),
+            "not_applicable": len(not_applicable)}
+
+
+def suggested_as_of(session: Session, *, project_id: str, material_id: str, version: int) -> dict | None:
+    """确认写入的 as_of 建议（F021 §2.3 取值链第 2/3 级）：
+    ① 该材料已 approved/revised 的主卡字段 deadline_bid（投标文件递交截止）日期部分；
+    ② 项目既有规则集的 as_of 锚点（澄清版本重确认沿用）。都没有 → None（不得默认当前时间）。"""
+    import re
+
+    row = session.scalar(
+        select(ParseCandidate).where(
+            ParseCandidate.project_id == project_id,
+            ParseCandidate.material_id == material_id,
+            ParseCandidate.version == version,
+            ParseCandidate.kind == CANDIDATE_KIND_FIELD,
+            ParseCandidate.candidate_id == f"{material_id}:deadline_bid",
+            ParseCandidate.status.in_((STATUS_APPROVED, STATUS_REVISED)),
+        )
+    )
+    if row is not None:
+        payload = row.revised_payload or row.payload or {}
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", str(payload.get("value") or ""))
+        if m:
+            return {"as_of": m.group(0), "source": "main_card:deadline_bid",
+                    "page_no": payload.get("page_no"), "value": payload.get("value")}
+    anchor = session.scalar(
+        select(Requirement.as_of)
+        .join(RuleSet, RuleSet.rule_set_id == Requirement.rule_set_id)
+        .where(RuleSet.project_id == project_id)
+        .order_by(RuleSet.created_at.desc())
+        .limit(1)
+    )
+    if anchor:
+        return {"as_of": anchor, "source": "rule_set_anchor", "page_no": None, "value": anchor}
+    return None
 
 
 def confirm_main_card_fields(
@@ -481,6 +790,20 @@ ANCHOR_GROUP: dict[str, str] = {
     "scoring_price": GROUP_ACTION,
     "action_q_and_a": GROUP_ACTION,
     "action_site_visit": GROUP_ACTION,
+    # 2026-09-14 v1.5：EPC 设计/施工负责人
+    "design_lead": GROUP_PERSONNEL,
+    "construction_lead": GROUP_PERSONNEL,
+}
+
+# 类别 → 业务分组（P4-2 发现候选：anchor_key 为空，按类别归组；未命中归“其他”）
+CATEGORY_GROUP: dict[str, str] = {
+    "资质": GROUP_QUALIFICATION,
+    "人员": GROUP_PERSONNEL,
+    "业绩": GROUP_EVIDENCE,
+    "财务": GROUP_EVIDENCE,
+    "信用": GROUP_EVIDENCE,
+    "评分": GROUP_ACTION,
+    "动作": GROUP_ACTION,
 }
 
 # 规则锚点 → 可读标题（展示层确定性生成，审计可查；未登记锚点用“类别 + 待复核”）
@@ -523,6 +846,9 @@ ANCHOR_TITLE: dict[str, str] = {
     "scoring_equipment": "拟投入设备评分项",
     "action_q_and_a": "答疑 / 质疑截止",
     "action_site_visit": "现场踏勘安排",
+    # 2026-09-14 v1.5：EPC 设计/施工负责人
+    "design_lead": "设计负责人执业资格（EPC）",
+    "construction_lead": "施工负责人执业资格（EPC）",
 }
 
 # 合同/商务/技术条款字段（kind=term_field，extractor.TERM_ANCHORS）→ 可读标题
@@ -580,6 +906,9 @@ def _review_title(payload: dict, *, kind: str) -> str:
     if anchor and anchor in ANCHOR_TITLE:
         return ANCHOR_TITLE[anchor]
     category = payload.get("category") or "未分类"
+    rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+    if (rule or {}).get("discovered"):
+        return f"{category}要求（大模型发现，待复核）"
     return f"{category}要求（待复核）"
 
 
@@ -595,15 +924,61 @@ def _review_group(payload: dict, *, kind: str) -> str:
     anchor = _anchor_key_of(payload)
     if anchor and anchor in ANCHOR_GROUP:
         return ANCHOR_GROUP[anchor]
-    return GROUP_OTHER
+    return CATEGORY_GROUP.get(payload.get("category") or "", GROUP_OTHER)
 
 
 def _issue_text(payload: dict, row: ParseCandidate | None = None) -> str | None:
-    """缺失/歧义原因：missing_marker 候选 → note；低置信且无锚点 → 如实标注；无则 None。"""
+    """缺失/歧义原因（复核人可读，F021 §2.1 v1.5）：
+    - missing 占位 → 说明“系统未在原文找到该条款的常见措辞”，并指引三种处置；
+    - 旧版遗留“已通过的 missing” → 必须重新决策；
+    - rejected → 复核原因；无则 None。"""
+    if row is not None and row.status == STATUS_APPROVED and payload.get("missing_marker"):
+        return "已「通过」但未定位到原文（旧版遗留）：请重新决策——本文件无此条款 / 人工定位补录 / 无法确认"
+    if row is not None and row.status == STATUS_NOT_APPLICABLE:
+        return None
     if payload.get("missing_marker"):
-        return payload.get("note") or "候选缺失/歧义：请人工确认原文含义"
+        return ("系统没有在原文中找到这条要求的常见措辞。请用「检索关键词」全文搜索：找到 → 「人工定位补录」"
+                "填页码与原文摘录；确认本文件没有这条 → 「本文件无此条款」；无法判断 → 「无法确认」。")
+    rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+    if (rule or {}).get("located_by") == "llm" and (row is None or row.status == STATUS_PENDING):
+        return payload.get("note") or "模型定位的原文摘录（低置信）：请核对原文后再通过"
     if row is not None and row.status == STATUS_REJECTED:
         return row.review_note or "标记无法确认（原因见复核记录）"
+    return None
+
+
+def _locate_hints(payload: dict) -> list[str]:
+    from runtime.parsing.extractor import LOCATE_HINTS
+
+    anchor = _anchor_key_of(payload)
+    if anchor and anchor in LOCATE_HINTS:
+        return list(LOCATE_HINTS[anchor])
+    category = payload.get("category")
+    return [category] if category else []
+
+
+def _source_link(material_id: str, version: int) -> str:
+    """原文文件接口（F021 §2.1 v1.5）；前端以 Bearer 拉取 blob 后附 #page=<page_no> 打开。"""
+    return f"/api/v1/materials/{material_id}/file?version={version}"
+
+
+def _clean_clause(clause: str | None) -> str | None:
+    """历史候选的 clause_ref 在条款号回退时被写成「提示（提示）」（extractor 旧行为），展示时折叠。"""
+    if not clause:
+        return None
+    import re
+
+    m = re.fullmatch(r"(.+?)（\1）", clause)
+    return m.group(1) if m else clause
+
+
+def _requirement_type(req_type: str | None) -> str | None:
+    if req_type == "hard_requirement":
+        return "hard"
+    if req_type == "scored_requirement":
+        return "scored"
+    if req_type == "action_requirement":
+        return "action"
     return None
 
 
@@ -652,6 +1027,8 @@ def grouped_requirements(
     groups: dict[str, list[dict]] = {g: [] for g in REVIEW_GROUP_ORDER}
     content_hash = material.content_hash
     audit = {"material_id": material_id, "content_hash": (content_hash or "")[:16]}
+    source_link = _source_link(material_id, version)
+    as_of_suggestion: dict | None = None
 
     if confirmed:
         # ── confirmed 视图：Requirement（规则） + FieldTrace（主卡字段溯源） ──
@@ -671,16 +1048,16 @@ def grouped_requirements(
             item = {
                 "id": req.requirement_id,
                 "title": _review_title(payload, kind=CANDIDATE_KIND_RULE),
-                "requirement_type": "hard" if req.req_type == "hard_requirement"
-                else ("scored" if req.req_type == "scored_requirement" else "action"),
+                "requirement_type": _requirement_type(req.req_type),
                 "value": None,  # Requirement 无结构化 value 列；要求值见 assertion（不推断）
                 "assertion": req.assertion,
-                "clause_ref": req.clause_ref,
-                "page_no": None,
+                "clause_ref": _clean_clause(req.clause_ref),
+                "page_no": (req.rule or {}).get("page_no") if isinstance(req.rule, dict) else None,
                 "confidence": None,
                 "review_status": "confirmed",
                 "issue": None,
-                "source_link": None,
+                "locate_hints": [],
+                "source_link": source_link,
                 "audit": dict(audit, requirement_id=req.requirement_id),
             }
             groups[_review_group(payload, kind=CANDIDATE_KIND_RULE)].append(item)
@@ -692,7 +1069,7 @@ def grouped_requirements(
         for tr in traces:
             groups[GROUP_BASIC].append({
                 "id": f"{tr.object_id}:{tr.field_key}",
-                "title": MAIN_CARD_TITLE.get(tr.field_key) or tr.field_key,
+                "title": MAIN_CARD_TITLE.get(tr.field_key) or TERM_TITLE.get(tr.field_key) or tr.field_key,
                 "requirement_type": None,
                 "value": tr.assertion,  # 主卡字段的“要求值”即已确认字段内容（FieldTrace 溯源）
                 "assertion": tr.assertion,
@@ -701,12 +1078,13 @@ def grouped_requirements(
                 "confidence": tr.confidence,
                 "review_status": "confirmed",
                 "issue": None,
-                "source_link": tr.source_link,
+                "locate_hints": [],
+                "source_link": tr.source_link or source_link,
                 "audit": dict(audit, field_key=tr.field_key),
             })
         source = "confirmed"
     else:
-        # ── candidates 视图：待复核/已决候选全量（rule + field） ──
+        # ── candidates 视图：待复核/已决候选全量（rule + field + term） ──
         rows = session.scalars(
             select(ParseCandidate)
             .where(ParseCandidate.project_id == project_id,
@@ -716,28 +1094,37 @@ def grouped_requirements(
         ).all()
         for row in rows:
             payload = row.payload or {}
-            req_type = payload.get("req_type")
+            # 已决 revised 行展示合并后的修正 payload（人工定位的页码/摘录），未决行展示解析原值
+            shown = (row.revised_payload or payload) if row.status == STATUS_REVISED else payload
+            missing = _is_missing(row.kind, shown)
+            is_rule = row.kind == CANDIDATE_KIND_RULE
             item = {
                 "id": row.candidate_id,
                 "title": _review_title(payload, kind=row.kind),
-                "requirement_type": "hard" if req_type == "hard_requirement"
-                else ("scored" if req_type == "scored_requirement"
-                      else ("action" if req_type == "action_requirement" else None)),
-                "value": (payload.get("value") if row.kind in (CANDIDATE_KIND_FIELD, CANDIDATE_KIND_TERM) else
-                          ((row.revised_payload or {}).get("value"))),
-                "assertion": payload.get("assertion") or "",
-                "clause_ref": payload.get("clause_ref") or payload.get("clause") or "",
-                "page_no": payload.get("page_no"),
-                "confidence": payload.get("confidence"),
+                "requirement_type": _requirement_type(payload.get("req_type")),
+                "value": shown.get("value"),
+                "assertion": "" if missing else (shown.get("assertion") or ""),
+                # 未定位到原文的候选不回传锚点基线文件的条款提示（在本文件里是错误位置）
+                "clause_ref": None if (missing and is_rule) else _clean_clause(shown.get("clause_ref") or shown.get("clause")),
+                "page_no": None if missing else shown.get("page_no"),
+                "confidence": shown.get("confidence"),
                 "review_status": row.status,
-                "issue": _issue_text(payload, row),
-                "source_link": payload.get("source_link"),
+                "missing": missing,
+                "needs_redecision": row.status == STATUS_APPROVED and missing,
+                "issue": _issue_text(shown, row),
+                "locate_hints": _locate_hints(payload) if (missing and is_rule) else [],
+                "review_note": row.review_note,
+                "reviewer": row.reviewer,
+                "source_link": source_link,
                 "audit": dict(audit, kind=row.kind,
                               requirement_id=payload.get("requirement_id"),
                               field_key=payload.get("field_key")),
             }
             groups[_review_group(payload, kind=row.kind)].append(item)
         source = "candidates"
+        as_of_suggestion = suggested_as_of(
+            session, project_id=project_id, material_id=material_id, version=version
+        )
 
     return {
         "source": source,
@@ -749,4 +1136,5 @@ def grouped_requirements(
             for g in REVIEW_GROUP_ORDER
         ],
         "progress": pending_summary(session, project_id=project_id, material_id=material_id),
+        "as_of_suggestion": as_of_suggestion,
     }

@@ -121,15 +121,34 @@ def schedule_post_parse(session: Session, *, project_id: str) -> dict:
         for m in materials
     ]
 
-    # 1) 知识索引：已解析材料 → L2/L3 索引任务（幂等；向量不可用时不伪造成功）
+    # 0) 首次匹配的触发依据 = 已确认规则集（2026-09-15：此前按材料 parse_status=parsed 判定，
+    #    存在驳回项的材料停在 manual_review，规则集写入后匹配永不触发）。匹配执行本身要求的
+    #    也是规则集（无规则集 MatchNotRunnableError），parse_status 只是解析产物形态。
+    from runtime.db.models import RuleSet
+
+    rule_set_exists = session.scalar(
+        select(RuleSet.rule_set_id).where(RuleSet.project_id == project_id).limit(1)
+    ) is not None
+
+    # 1) 知识索引：已解析材料 + 已确认规则集下处于 manual_review 的招标文件（索引的是不可变
+    #    原文，不依赖复核全部完成；驳回项跟进不影响 L2 建档）
     from typing import cast
 
     from runtime.db.models import AnalysisJob
 
     index_jobs: list[str] = []
-    for material_id, version in orchestration.materials_needing_index(material_dicts):
+    index_targets = list(orchestration.materials_needing_index(material_dicts))
+    if rule_set_exists:
+        for m in material_dicts:
+            if (m.get("material_type") == "tender_document"
+                    and m.get("parse_status") == "manual_review"):
+                pair = (m.get("material_id"), int(m.get("version") or 1))
+                if pair not in index_targets:
+                    index_targets.append(pair)
+    for material_id, version in index_targets:
         job, created = rag_service.create_index_job(
-            session, material_id=material_id, version=version, project_id=project_id
+            session, material_id=material_id, version=version, project_id=project_id,
+            retry_failed=True,
         )
         index_jobs.append(cast(AnalysisJob, job).job_id)
         audit(session, actor="system", action="knowledge.index_triggered",
@@ -141,9 +160,10 @@ def schedule_post_parse(session: Session, *, project_id: str) -> dict:
     run = latest_match_run(session, project_id)
     existing_runs = 1 if run is not None else 0
     match_job: str | None = None
-    if orchestration.should_trigger_first_match(material_dicts, existing_runs):
+    if rule_set_exists and existing_runs == 0:
         job, created = worker_service.create_job(
-            session, kind="match.run", input_ref=project_id, project_id=project_id
+            session, kind="match.run", input_ref=project_id, project_id=project_id,
+            retry_failed=True,
         )
         match_job = job.job_id
         audit(session, actor="system", action="match.auto_trigger",

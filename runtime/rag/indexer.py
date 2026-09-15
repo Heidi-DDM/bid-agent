@@ -198,8 +198,9 @@ def index_material(
     material = session.get(Material, (material_id, version))
     if material is None:
         raise ApiError("not_found", f"材料不存在: {material_id}:v{version}")
-    if material.parse_status not in ("parsed", "pending"):
-        # 仅允许已解析/待解析材料索引（F021 解析完成后索引）
+    if material.parse_status not in ("parsed", "pending", "manual_review"):
+        # 允许已解析/待解析/复核中材料索引：索引的是不可变原文（L1/L2 建档），
+        # 不依赖复核全部完成（2026-09-15：确认后含驳回项的材料停在 manual_review，此前被拒）
         raise ApiError("invalid_state_transition", f"材料 {material_id}:v{version} 未解析，不能索引")
 
     _check_vector_ready(session, embed_fn)

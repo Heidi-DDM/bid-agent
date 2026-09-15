@@ -73,7 +73,7 @@
           <div class="form-item full">
             <label>② 台账文件（.xlsx / .csv，.xls 仅可留存预览）</label>
             <input type="file" id="ledger-file" class="inp" accept=".xlsx,.xls,.csv">
-            <span class="hint" id="ledger-file-hint">单份证明（pdf/docx）请走「人工补录」页；本入口不接受图片证据（待 OCR 方案确认）。</span>
+            <span class="hint" id="ledger-file-hint">单份证明（pdf/docx）请走「复核与补录」页；本入口不接受图片证据（待 OCR 方案确认）。</span>
           </div>
           <div class="form-item"><label>数据责任人 data_owner<span class="req">*</span></label>
             <input type="text" id="ledger-owner" class="inp" placeholder="姓名/角色（匹配准入审计用）"></div>
@@ -230,7 +230,7 @@
       const f = pvFile.files[0];
       const suffix = (f.name || "").toLowerCase().split(".").pop();
       if (!["xlsx", "xls", "csv"].includes(suffix)) {
-        pvBox.innerHTML = `<div class="notice warn"><b>${esc(f.name)}</b> 不是台账格式：本入口仅收 .xlsx/.xls/.csv；单份证明（pdf/docx）请走「人工补录」页（§3.5 入口分离）。</div>`;
+        pvBox.innerHTML = `<div class="notice warn"><b>${esc(f.name)}</b> 不是台账格式：本入口仅收 .xlsx/.xls/.csv；单份证明（pdf/docx）请走「复核与补录」页（§3.5 入口分离）。</div>`;
         return;
       }
       const btn = document.getElementById("btn-ledger-preview");

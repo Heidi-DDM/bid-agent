@@ -116,6 +116,28 @@ const apiRole = () => localStorage.getItem("api_role") || "";
 const apiName = () => localStorage.getItem("api_name") || "";
 const demoProjectId = () => localStorage.getItem("demo_project_id") || DEMO_PROJECT_ID;
 
+/* 当前项目统一解析（2026-09-15）：URL 参数 project_id > 上次选择（localStorage，由
+   import/requirements/queue/matrix/score 任一页带参进入时写入）> 内置演示项目。
+   source 用于页面明示数据来源——内置演示只在用户从未选择过项目时出现，且必须带提示，
+   避免把演示项目的匹配结果误认为用户所选项目（2026-09-15 实测问题④）。 */
+function apiProjectId() {
+  const q = (new URLSearchParams(location.search).get("project_id") || "").trim();
+  const stored = (localStorage.getItem("demo_project_id") || "").trim();
+  if (q) {
+    if (q !== stored) localStorage.setItem("demo_project_id", q);
+    return { id: q, source: "url" };
+  }
+  if (stored) return { id: stored, source: "last" };
+  return { id: DEMO_PROJECT_ID, source: "builtin" };
+}
+/* 项目来源徽标（页面标题旁）：上次选择 / 内置演示（附指引） */
+function apiProjectChip(p) {
+  if (!p || p.source === "url") return "";
+  if (p.source === "last")
+    return ` <span class="badge gray" title="导航进入未带项目参数，已自动使用上次「选择深入」的项目">上次选择 ${p.id}</span>`;
+  return ` <span class="badge warn" title="尚未选择任何项目，当前展示的是内置演示数据">内置演示 ${p.id}</span> <a class="hint" href="index.html">去搜索结果选择项目 →</a>`;
+}
+
 /* 角色展示元数据（与 data.js ROLES 对齐；权限门禁以后端为准，前端仅显示） */
 const ROLE_META = {
   bid_specialist: { label: "投标专员" },
