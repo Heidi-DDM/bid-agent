@@ -655,8 +655,25 @@ def match_runs_compare(session: Session, project_id: str, *, base_run_id: str | 
     }
 
 
+NOT_EVALUATED = "not_evaluated"  # 本次运行未执行到该条（旧版门禁短路）/ 尚无运行——不得伪装成 unverifiable
+
+
+def _display_clause(clause: str | None) -> str | None:
+    """结果页/队列的条款号展示折叠：历史规则的 clause_ref 在条款号回退时被写成「提示（提示）」
+    （extractor 旧行为，如「招标公告 §3.11（招标公告 §3.11）」），与解析结果页同口径折叠为「招标公告 §3.11」。"""
+    from runtime.db.parse_service import _clean_clause
+
+    return _clean_clause(clause)
+
+
 def list_requirements(session: Session, project_id: str) -> list[dict[str, Any]]:
-    """项目要求列表（对齐 PROTOTYPE.requirements；无 run 时按最近 RuleSet 展示）。"""
+    """项目要求列表（对齐 PROTOTYPE.requirements；无 run 时按最近 RuleSet 展示）。
+
+    每条要求带最近一次运行的逐条结论：match / match_reason.text / evidence / score。
+    有运行但无 MatchItem 的要求 = 该次运行未执行到（旧版 gate 在首个硬性失败处 break，
+    其后条目没有结论）→ 显式 ``not_evaluated`` 并说明，禁止默认成 unverifiable 冒充"已判定缺证"
+    （F008 覆盖门禁：未执行项必须标识）。尚无运行时同样 ``not_evaluated``（"尚无匹配运行"）。
+    """
     run = latest_match_run(session, project_id)
     rule_set_id = run.rule_set_id if run else _latest_rule_set(session, project_id)
     if rule_set_id is None:
@@ -669,28 +686,43 @@ def list_requirements(session: Session, project_id: str) -> list[dict[str, Any]]
     items_by_req: dict[str, dict] = {}
     if run is not None:
         for item in session.scalars(select(MatchItem).where(MatchItem.run_id == run.run_id)).all():
+            reason = dict(item.match_reason or {})
             items_by_req[item.requirement_id] = {
                 "match": item.match_result,
-                "match_reason": item.match_reason,
+                "match_reason": reason,
+                "gate_executed": reason.get("gate_executed", True),
                 "evidence_refs": item.evidence_refs or [],
                 "score": item.score,
                 "max_score": item.max_score,
             }
-    return [
-        {
+    if run is None:
+        fallback = {"match": NOT_EVALUATED, "match_reason": {"text": "尚无匹配运行：规则集已确认但匹配尚未执行"},
+                    "gate_executed": None}
+    else:
+        fallback = {"match": NOT_EVALUATED, "gate_executed": False,
+                    "match_reason": {"text": "本次匹配运行未执行到此项（旧版门禁在前序硬性要求不满足处停止，"
+                                             "其后条目无结论）。重算后将逐条全量判定。"}}
+
+    def _row(r: Requirement) -> dict[str, Any]:
+        it = items_by_req.get(r.requirement_id, fallback)
+        rule = r.rule if isinstance(r.rule, dict) else {}
+        return {
             "requirement_id": r.requirement_id,
             "req_type": r.req_type,
             "category": r.category,
-            "clause_ref": r.clause_ref,
+            "clause_ref": _display_clause(r.clause_ref),
+            "page_no": rule.get("page_no"),
             "assertion": r.assertion,
+            "evidence_required": r.evidence_required or [],
             "max_score": r.max_score,
-            "score": items_by_req.get(r.requirement_id, {}).get("score"),
-            "match": items_by_req.get(r.requirement_id, {}).get("match", "unverifiable"),
-            "match_reason": items_by_req.get(r.requirement_id, {}).get("match_reason"),
-            "evidence": items_by_req.get(r.requirement_id, {}).get("evidence_refs"),
+            "score": it.get("score"),
+            "match": it.get("match"),
+            "match_reason": it.get("match_reason"),
+            "gate_executed": it.get("gate_executed"),
+            "evidence": it.get("evidence_refs") or [],
         }
-        for r in rows
-    ]
+
+    return [_row(r) for r in rows]
 
 
 def _latest_rule_set(session: Session, project_id: str) -> str | None:
@@ -705,8 +737,23 @@ def _latest_rule_set(session: Session, project_id: str) -> str | None:
     return row.rule_set_id if row else None
 
 
+def _display_item(it: dict) -> dict:
+    """处置项展示副本：条款号折叠（不改快照本体）。"""
+    out = dict(it)
+    for k in ("clause", "clause_ref"):
+        if out.get(k):
+            out[k] = _display_clause(out[k])
+    return out
+
+
 def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
-    """准入摘要（对齐 PROTOTYPE.admission，F020 §2.2.4）。"""
+    """准入摘要（对齐 PROTOTYPE.admission，F020 §2.2.4）。
+
+    ``state`` 是项目的**业务准入状态**（Project.admission_status：blocked_missing_data /
+    blocked_hard_requirement / not_qualified / qualified_full_score / pending_bid_approval …，
+    ADR-001 §2.2），不是 AdmissionResult.state（快照生命周期 final/stale）——此前误回传后者，
+    页面上显示成英文 "final"（2026-09-16 用户实测）。
+    """
     result = latest_admission(session, project_id)
     if result is None:
         return {
@@ -718,6 +765,9 @@ def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
                 "missing": [], "review": [], "manager": None, "price": None,
             }
         }
+    project = session.get(Project, project_id)
+    business_state = (project.admission_status if project else None) or (
+        result.internal_admission_result or {}).get("status") or "matching"
     return {
         "admission": {
             "qualification": result.qualification_result.get("status", "pending"),
@@ -730,9 +780,12 @@ def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
             "action_done": result.operational_readiness.get("action_done", 0),
             "action_total": result.operational_readiness.get("action_total", 0),
             "eligible": result.internal_admission_eligible,
-            "state": result.state,
-            "missing": result.pending_items or [],
-            "review": result.review_items or [],
+            "state": business_state,
+            "result_freshness": result.result_freshness,
+            "decision": (result.internal_admission_result or {}).get("decision"),
+            "missing": [_display_item(it) for it in (result.pending_items or [])],
+            "review": [_display_item(it) for it in (result.review_items or [])],
+            "blocked": [_display_item(it) for it in (result.blocked_items or [])],
             "manager": (result.manager_matches[0] if result.manager_matches else None),
             "price": result.scoring_result.get("price"),
         }
@@ -756,11 +809,12 @@ def queues_summary(session: Session, project_id: str) -> dict[str, Any]:
         return {
             "project_id": project_id,
             "requirement_id": it.get("req") or it.get("requirement_id"),
-            "clause": it.get("clause"),
-            "clause_ref": it.get("clause_ref") or it.get("clause"),
+            "clause": _display_clause(it.get("clause")),
+            "clause_ref": _display_clause(it.get("clause_ref") or it.get("clause")),
             "text": it.get("text"),
             "match_result": it.get("match_result"),
             "req_type": it.get("req_type"),
+            "gate_executed": it.get("gate_executed", True),
             "missing_field": it.get("missing_field"),
             "reason": it.get("reason"),
             "purpose": it.get("purpose"),

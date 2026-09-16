@@ -55,6 +55,7 @@ def _queue_item(entry: dict[str, Any], req: dict[str, Any] | None) -> dict[str, 
         "text": (req or {}).get("assertion") or entry.get("match_reason"),
         "match_result": entry.get("match_result"),
         "req_type": entry.get("req_type"),
+        "gate_executed": entry.get("gate_executed", True),
         "failure_effect": (req or {}).get("failure_effect"),
         "missing_field": None,
         "reason": entry.get("match_reason"),
@@ -302,13 +303,22 @@ def generate_admission_result(
         })
 
     # ---- 解释链（F008 §4.6 / F024 §2：as_of/版本/检索/证据快照/决策依据） ----
+    coverage = engine_result.get("coverage", {}) or {}
+    short = coverage.get("short_circuited") or []
+    coverage_text = (
+        f"mode={run.mode} 声明 {coverage.get('declared')} 执行 {coverage.get('executed')} "
+        f"完整 {coverage.get('complete')}"
+    )
+    if coverage.get("gate_executed") is not None:
+        coverage_text += (
+            f"；门禁执行 {coverage.get('gate_executed')}"
+            + (f"，在硬性失败处短路，其后 {len(short)} 条由诊断全量补齐判定（供补录参考，不改变一票否决结论）"
+               if short else "，未短路")
+        )
     explanation = [
         {"step": "as_of", "text": f"判定时点 {run.as_of}（不得默认当前时间，F008 §4.1）"},
         {"step": "rule_set", "text": f"规则集 {run.rule_set_id}（版本化，历史项目保留当时规则）"},
-        {"step": "coverage", "text": f"mode={run.mode} 声明 "
-                                     f"{engine_result.get('coverage', {}).get('declared')} 执行 "
-                                     f"{engine_result.get('coverage', {}).get('executed')} 完整 "
-                                     f"{engine_result.get('coverage', {}).get('complete')}"},
+        {"step": "coverage", "text": coverage_text},
         {"step": "rag_snapshot",
          "text": f"retrieval_run_id={run.retrieval_run_id or '—'} index_version="
                  f"{run.index_version or '—'} candidate_chunks="

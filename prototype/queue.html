@@ -30,6 +30,8 @@
           全部处理后确认判定时点并写入规则集，系统随后自动建索引并触发首次匹配（F021 §2.3 / §2.7）。
         </p>
         <div id="rv-progress" class="hint" style="margin-top:8px"></div>
+        <!-- 批量通过（与解析结果页同源，review.js mountBatchToolbar）：仅投标专员、复核阶段显示 -->
+        <div id="rv-review-toolbar" style="display:none;margin-top:8px"></div>
         <div id="candidates-box" style="margin-top:10px"><div class="hint">加载中…</div></div>
         <div id="confirm-row" style="margin-top:12px;display:none">
           <div id="asof-panel"></div>
@@ -44,7 +46,7 @@
       <section class="card" id="queues-panel" style="display:none">
         <div class="card-title-row">
           <h2>② 匹配后处置队列（项目 <span id="q-proj">—</span>）</h2>
-          <span class="hint">匹配完成后才生成；每项绑定 requirement、条款、缺失字段、原因、用途、建议材料类型、负责角色与截止。</span>
+          <span class="hint">匹配完成后才生成；只列需处置的项（硬性失败 / 缺证 / 复核）。<b>每一条要求</b>的满足/不满足及原因见 <a id="q-to-matrix" href="matrix.html">自动匹配</a> 页逐条明细。</span>
         </div>
         <div id="queues-box"><div class="hint">加载中…</div></div>
       </section>
@@ -55,13 +57,13 @@
           <summary style="cursor:pointer"><b>③ 补录企业证据材料</b> <span class="hint" id="sup-target-hint">——针对处置队列里的缺证项上传企业证据；上传后由数据管理员核验 → 经营负责人重算。与①解析复核无关。</span></summary>
           <div id="sup-context" style="margin-top:8px"></div>
           <div class="form-grid" style="margin-top:10px">
-            <div class="form-item"><label>补录目的 purpose<span class="req">*</span></label>
+            <div class="form-item"><label>补录目的<span class="req">*</span></label>
               <input type="text" id="sup-purpose" class="inp" placeholder="为哪条缺失要求补材料"></div>
-            <div class="form-item"><label>关联缺失要求 requirement_id<span class="req">*</span></label>
-              <input type="text" id="sup-req-id" class="inp" placeholder="来自队列项「补录证据」按钮带入"></div>
-            <div class="form-item"><label>缺失字段 missing_field</label>
+            <div class="form-item"><label>关联缺失要求（系统编号）<span class="req">*</span></label>
+              <input type="text" id="sup-req-id" class="inp" placeholder="点队列项「补录证据」自动带入"></div>
+            <div class="form-item"><label>缺失字段</label>
               <input type="text" id="sup-missing-field" class="inp" placeholder="如：资质等级（缺哪项填哪项）"></div>
-            <div class="form-item"><label>材料类型 material_subtype<span class="req">*</span></label>
+            <div class="form-item"><label>材料类型<span class="req">*</span></label>
               <select id="sup-subtype" class="inp">
                 <option value="">请选择…</option>
                 <option value="qualification">资质证明</option>
@@ -72,29 +74,29 @@
                 <option value="project_specific">项目专用证明</option>
                 <option value="other">其他</option>
               </select></div>
-            <div class="form-item"><label>材料归属（intake_mode）<span class="req">*</span></label>
+            <div class="form-item"><label>材料归属<span class="req">*</span></label>
               <select id="sup-mode" class="inp">
                 <option value="supplement_evidence">本项目投标补录材料</option>
                 <option value="enterprise_ledger">企业长期资料/台账</option>
               </select></div>
-            <div class="form-item"><label>条款 clause_ref</label>
+            <div class="form-item"><label>条款</label>
               <input type="text" id="sup-clause" class="inp" readonly placeholder="来自队列项"></div>
-            <div class="form-item"><label>负责角色 owner_role</label>
+            <div class="form-item"><label>负责角色</label>
               <input type="text" id="sup-owner-role" class="inp" readonly placeholder="来自队列项"></div>
-            <div class="form-item"><label>截止时间 due_at</label>
+            <div class="form-item"><label>截止时间</label>
               <input type="date" id="sup-due" class="inp"></div>
-            <div class="form-item"><label>数据责任人 data_owner<span class="req">*</span></label>
+            <div class="form-item"><label>数据责任人<span class="req">*</span></label>
               <input type="text" id="sup-owner" class="inp" placeholder="姓名/角色"></div>
             <div class="form-item full">
-              <label>证据文件（pdf/docx）*</label>
+              <label>证据文件（PDF / Word）*</label>
               <input type="file" id="sup-file" accept=".pdf,.docx" class="inp">
-              <span class="hint">带 * 的字段只在提交本表单时必填（审计语义：为哪条要求、补什么、谁负责）。台账/清单（xlsx/xls/csv）请走「企业资料库（后台）」受控导入（F022 §5.1）。</span>
+              <span class="hint">带 * 的字段只在提交本表单时必填（审计语义：为哪条要求、补什么、谁负责）。台账/清单（Excel/CSV）请走「企业资料库（后台）」受控导入（F022 §5.1）。</span>
             </div>
           </div>
           <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
             <button class="btn" id="btn-upload">① 上传补录材料</button>
-            <button class="btn" id="btn-verify" disabled>② 核验通过（data_admin）</button>
-            <button class="btn" id="btn-recalc" disabled>③ 重算（business_head）</button>
+            <button class="btn" id="btn-verify" disabled>② 核验通过（数据管理员）</button>
+            <button class="btn" id="btn-recalc" disabled>③ 重算（经营负责人）</button>
           </div>
           <div id="sup-progress" style="margin-top:12px"></div>
         </details>
@@ -141,6 +143,13 @@
     let curData = null;                       // A 区最近聚合响应
     let confirmMaterialId = null;             // A 区确认写入所用材料
 
+    /* 批量通过工具栏（review.js 共享）：候选加载后按阶段/角色显隐并刷新可批量计数 */
+    const batchToolbar = document.getElementById("rv-review-toolbar");
+    const batchBar = REVIEW.mountBatchToolbar(batchToolbar, {
+      getGroups: () => (curData && curData.groups) || [],
+      reload: () => loadCandidates(),
+    });
+
     function setStage(stage) {
       const hint = document.getElementById("stage-hint");
       const qp = document.getElementById("queues-panel");
@@ -163,6 +172,7 @@
       const badgeEl = document.getElementById("rv-badge");
       const confirmRow = document.getElementById("confirm-row");
       const canReview = apiRole() === "bid_specialist" || !apiToken();
+      batchToolbar.style.display = "none";
       try {
         const data = await apiGet(`/parse/projects/${encodeURIComponent(PJ())}/requirements`);
         curData = data;
@@ -171,7 +181,7 @@
 
         if (data.source === "confirmed") {
           document.getElementById("rv-progress").innerHTML =
-            `规则集已确认（材料 <code>${esc(confirmMaterialId || "—")}</code> v${data.version ?? "?"}）。要求明细请到「解析结果」页（已确认视图）。`;
+            `规则集已确认（招标文件版本 ${data.version ?? "?"}<span class="hint" title="材料编号 ${esc(confirmMaterialId || "—")}" style="cursor:help"> ⓘ</span>）。要求明细请到「解析结果」页（已确认视图）。`;
           box.innerHTML = `<div class="notice ok"><b>复核已完成</b>：候选已全部处理并写入规则集，首次匹配已自动触发。匹配结果与处置队列见下方 ②。</div>`;
           badgeEl.className = "badge ok";
           badgeEl.textContent = "已确认";
@@ -197,7 +207,7 @@
         const redo = prog.needs_redecision || 0;
         document.getElementById("rv-progress").innerHTML =
           `候选 ${prog.total ?? "?"} 条 · 待处理 <b>${open.length}</b>（未决 ${prog.pending ?? 0}${redo ? `，需重新决策 ${redo}` : ""}）· 已决 ${prog.decided ?? 0}`
-          + (confirmMaterialId ? `（材料 <code>${esc(confirmMaterialId)}</code> v${data.version ?? "?"}）` : "");
+          + (confirmMaterialId ? `（招标文件版本 ${data.version ?? "?"}<span class="hint" title="材料编号 ${esc(confirmMaterialId)}" style="cursor:help"> ⓘ</span>）` : "");
         badgeEl.className = open.length > 0 ? "badge review" : "badge ok";
         badgeEl.textContent = open.length > 0 ? `待处理 ${open.length} 项` : "全部已处理";
 
@@ -222,6 +232,8 @@
             if (canReview) REVIEW.renderActions(it, { onDone: () => loadCandidates() });
           });
         });
+        // 批量通过工具栏：投标专员在复核阶段可见（与解析结果页同源）
+        if (canReview) { batchToolbar.style.display = ""; batchBar.refresh(); }
 
         // 全部处理后显示确认行（含 as_of 确认框，F021 §2.3）
         const allDecided = open.length === 0;
@@ -236,7 +248,7 @@
         }
       } catch (err) {
         if (err.status === 403) {
-          box.innerHTML = `<div class="notice error">权限不足：解析复核需投标专员（bid_specialist）。当前：${esc(apiRole() || "未登录")}。请用右上角登录切换。</div>`;
+          box.innerHTML = `<div class="notice error">权限不足：解析复核需<b>投标专员</b>。当前「${esc(apiRoleLabel())}」，请用右上角登录切换。</div>`;
           document.getElementById("rv-progress").innerHTML = "";
         } else {
           box.innerHTML = `<div class="notice error">加载候选失败：${esc(err.message)}${err.requestId ? `（${esc(err.requestId)}）` : ""}</div>`;
@@ -262,9 +274,11 @@
       try {
         const body = { actor: apiName() || apiRole() || "投标专员", as_of: asof.as_of };
         const r = await apiPost(`/parse/projects/${encodeURIComponent(PJ())}/materials/${encodeURIComponent(confirmMaterialId)}/confirm`, body);
-        const msg = `确认完成：规则集 <code>${esc(r.rule_set_id)}</code> · 写入要求 ${r.created_requirements} 条 · 本文件无此条款 ${r.not_applicable ?? 0} 条 · 主卡字段 ${r.main_card_fields_written} 条 · 判定时点 ${esc(r.as_of)}（${esc(r.as_of_source || "")}）。`;
+        const AS_OF_SOURCE_LABEL = { body: "确认框填写/确认", "main_card:deadline_bid": "已确认的投标截止时间", rule_set_anchor: "既有规则集沿用" };
+        const msg = `确认完成：写入要求 ${r.created_requirements} 条 · 本文件无此条款 ${r.not_applicable ?? 0} 条 · 项目基本信息字段 ${r.main_card_fields_written} 条 · 判定时点 ${esc(r.as_of)}（来源：${esc(AS_OF_SOURCE_LABEL[r.as_of_source] || r.as_of_source || "—")}）。`;
         document.getElementById("confirm-hint").innerHTML = msg +
-          (r.match_job ? ` 已自动触发首次匹配（job <code>${esc(r.match_job)}</code>）与索引任务 ${(r.index_jobs || []).length} 个。` : " 索引/匹配将排队执行。");
+          (r.match_job ? ` 已自动触发首次匹配与 ${(r.index_jobs || []).length} 个索引任务，完成后本页出现处置队列。` : " 索引/匹配将排队执行。")
+          + `<details class="audit-fold" style="display:inline-block;margin-left:6px"><summary style="display:inline">系统追溯编号</summary><div class="audit-code"><span>规则集 <code>${esc(r.rule_set_id)}</code>${r.match_job ? ` · 匹配任务 <code>${esc(r.match_job)}</code>` : ""}</span></div></details>`;
         apiShowError(null);
         errBox.style.display = "none";
         const badgeEl = document.getElementById("rv-badge");
@@ -283,13 +297,14 @@
     async function loadQueues() {
       const box = document.getElementById("queues-box");
       document.getElementById("q-proj").textContent = PJ();
+      document.getElementById("q-to-matrix").href = "matrix.html?project_id=" + encodeURIComponent(PJ());
       try {
         const data = await apiGet(`/projects/${encodeURIComponent(PJ())}/queues`);
         const q = data.queues || { blocked_hard_requirement: [], blocked_missing_data: [], manual_review: [] };
         const groups = [
-          { key: "blocked_hard_requirement", title: "硬性失败（blocked_hard_requirement）— 证据充分但不满足，一票否决", tone: "danger" },
-          { key: "blocked_missing_data", title: "缺证阻断（blocked_missing_data）— 默认阻断，不推断满足", tone: "warn" },
-          { key: "manual_review", title: "人工复核（manual_review）— 评分公式/主观项", tone: "review" },
+          { key: "blocked_hard_requirement", label: "硬性不满足", title: "硬性不满足 — 证据充分但明确不符合，一票否决（不提供补录）", tone: "danger" },
+          { key: "blocked_missing_data", label: "缺证阻断", title: "缺证阻断 — 关键证据缺失或未核验，默认阻断、不推断满足", tone: "warn" },
+          { key: "manual_review", label: "人工复核", title: "人工复核 — 规则未结构化 / 评分无可复算公式 / 主观项，需按条款原文核对", tone: "review" },
         ];
         box.innerHTML = "";
         let any = false;
@@ -297,11 +312,11 @@
           const items = q[g.key] || [];
           if (!items.length) return;
           any = true;
-          box.insertAdjacentHTML("beforeend", `<h3 style="margin:10px 0 6px">${g.title}（${items.length}）</h3>`);
-          items.forEach((it) => {
+          box.insertAdjacentHTML("beforeend", `<h3 style="margin:10px 0 6px">${g.title}（${items.length} 项）</h3>`);
+          items.forEach((it, i) => {
             const div = document.createElement("div");
             div.className = "queue-card";
-            div.innerHTML = queueCardHtml(it, g);
+            div.innerHTML = queueCardHtml(it, g, i + 1);
             box.appendChild(div);
             const supBtn = div.querySelector(".sup-btn");
             if (supBtn) supBtn.addEventListener("click", () => prefillSupplement(it));
@@ -316,25 +331,28 @@
       }
     }
 
-    function queueCardHtml(it, g) {
+    /* 负责角色字段是后端流程事实字符串（RBAC 口径），页面转成中文 */
+    const OWNER_ROLE_LABEL = { "bid_specialist:upload → data_admin:verify": "投标专员上传 → 数据管理员核验" };
+    function queueCardHtml(it, g, seq) {
       const rec = it.recommended_material_types || [];
-      const recText = rec.map((t) => SUBTYPE_LABEL[t] || t).join("、") || "—";
+      const recText = rec.map((t) => SUBTYPE_LABEL[t] || apiEvidenceKindLabel(t)).join("、") || "—";
       const canSupplement = g.key !== "blocked_hard_requirement";   // 硬性失败不提供补录（证据充分但不满足，避免伪装）
       const actionBtn = canSupplement
         ? `<div class="q-actions"><button class="btn sm sup-btn">补录证据</button></div>` : "";
       const fields = [
-        ["关联要求", it.requirement_id || "—"],
         ["条款", it.clause_ref || it.clause || "—"],
         ["缺失字段", it.missing_field || "—"],
         ["原因", it.reason || "—"],
         ["用途", it.purpose || "—"],
         ["建议材料类型", recText],
-        ["负责角色", it.owner_role || "—"],
+        ["负责角色", OWNER_ROLE_LABEL[it.owner_role] || it.owner_role || "—"],
         ["截止", it.due_at || "—"],
       ].filter(([, v]) => v !== "—").map(([k, v]) => `<span>${esc(k)}</span><b>${esc(v)}</b>`).join("");
+      const gateTag = it.gate_executed === false
+        ? ` <span class="gate-tag" title="门禁在前序硬性不满足处已短路（一票否决结论不变）；此条由诊断全量补齐判定，供补录参考">门禁短路后·诊断结果</span>` : "";
       return `
         <div class="q-body">
-          <div class="q-title">${esc(it.project_id || "")} · ${esc(it.requirement_id || "—")} <span class="badge ${g.tone}">${g.key.replaceAll("_", " ")}</span></div>
+          <div class="q-title" title="系统编号：${esc(it.requirement_id || "—")}"><span class="badge ${g.tone}">${esc(g.label)}</span> 第 ${seq} 项${(it.clause_ref || it.clause) ? ` · 条款 ${esc(it.clause_ref || it.clause)}` : ""}${gateTag}</div>
           <div class="q-desc">${it.text ? `<div class="q-quote">${esc(it.text).slice(0, 220)}${it.text.length > 220 ? "…" : ""}</div>` : ""}
             <div class="q-fields">${fields}</div>
           </div>
@@ -368,20 +386,21 @@
       setVal("sup-subtype", firstKnown);
       setVal("sup-mode", "supplement_evidence");
       setVal("sup-clause", it.clause_ref || it.clause || "");
-      setVal("sup-owner-role", it.owner_role || "");
+      setVal("sup-owner-role", OWNER_ROLE_LABEL[it.owner_role] || it.owner_role || "");
       setVal("sup-due", (it.due_at || "").slice(0, 10));
       const mid = genSupplementMaterialId(it);
       document.getElementById("sup-context").innerHTML = `
         <div class="sup-target">
-          <span class="k">定向上下文：</span>requirement <code>${esc(it.requirement_id || "—")}</code>
-          · 条款 <code>${esc(it.clause_ref || it.clause || "—")}</code>
+          <span class="k">本次补录针对：</span>${it.text ? `「${esc(String(it.text).slice(0, 40))}${String(it.text).length > 40 ? "…" : ""}」` : ""}
+          条款 <b>${esc(it.clause_ref || it.clause || "—")}</b>
           · 缺失 <b>${esc(it.missing_field || "—")}</b> · 原因 <b>${esc(it.reason || "—")}</b><br>
-          <span class="k">本次材料编号（语义生成，非默认占位）：</span><code>${esc(mid)}</code>
-          <span class="hint">——上传后进入 pending_verification，需数据管理员核验后才能重算。</span>
+          <span class="k">本次材料编号（系统按项目与要求生成）：</span><code>${esc(mid)}</code>
+          <span class="hint">——上传后为「待核验」，需数据管理员核验后才能重算。</span>
+          <details class="audit-fold"><summary>系统追溯编号</summary><div class="audit-code"><span><b>关联要求</b>：<code>${esc(it.requirement_id || "—")}</code></span></div></details>
         </div>`;
       document.getElementById("sup-details").open = true;
       document.getElementById("supplement-panel").scrollIntoView({ behavior: "smooth" });
-      supMsg(`<div class="notice info">已带入队列上下文，请核对表单并选择证据文件后点击 ① 上传（仅 pdf/docx；台账走企业资料库受控导入）。</div>`);
+      supMsg(`<div class="notice info">已带入队列上下文，请核对表单并选择证据文件后点击 ① 上传（仅 PDF / Word；台账走企业资料库受控导入）。</div>`);
     }
 
     async function supMsg(html) { supProg.innerHTML = html; }
@@ -392,10 +411,10 @@
       const subtype = document.getElementById("sup-subtype").value;
       const mode = document.getElementById("sup-mode").value;
       const owner = document.getElementById("sup-owner").value.trim();
-      if (!purpose) { supMsg(`<div class="notice warn">请填写补录目的 purpose（为哪条缺失要求补材料）。</div>`); return null; }
-      if (!reqId) { supMsg(`<div class="notice warn">请填写关联缺失要求 requirement_id（从处置队列带入，禁止无语义默认）。</div>`); return null; }
-      if (!subtype) { supMsg(`<div class="notice warn">请选择材料类型 material_subtype。</div>`); return null; }
-      if (!owner) { supMsg(`<div class="notice warn">请填写数据责任人 data_owner。</div>`); return null; }
+      if (!purpose) { supMsg(`<div class="notice warn">请填写补录目的（为哪条缺失要求补材料）。</div>`); return null; }
+      if (!reqId) { supMsg(`<div class="notice warn">请填写关联缺失要求（从处置队列「补录证据」带入，不接受无语义默认值）。</div>`); return null; }
+      if (!subtype) { supMsg(`<div class="notice warn">请选择材料类型。</div>`); return null; }
+      if (!owner) { supMsg(`<div class="notice warn">请填写数据责任人。</div>`); return null; }
       return {
         purpose, reqId, subtype, mode, owner,
         clause: document.getElementById("sup-clause").value.trim(),
@@ -407,7 +426,7 @@
       const btn = document.getElementById("btn-upload");
       const ctx = collectForm();
       if (!ctx) return;
-      if (!supFile.files.length) { supMsg(`<div class="notice warn">请先选择补录证据文件（pdf/docx）。</div>`); return; }
+      if (!supFile.files.length) { supMsg(`<div class="notice warn">请先选择补录证据文件（PDF / Word）。</div>`); return; }
       const f = supFile.files[0];
       const suffix = (f.name || "").toLowerCase().split(".").pop();
       if (["xlsx", "xls", "csv"].includes(suffix)) {
@@ -416,7 +435,7 @@
       }
       btn.disabled = true;
       const materialId = genSupplementMaterialId(null);
-      supMsg(`<div class="notice info">① 上传补录材料（POST /api/v1/materials）· <code>${esc(materialId)}</code> …</div>`);
+      supMsg(`<div class="notice info">① 正在上传补录材料 · 材料编号 <code>${esc(materialId)}</code> …</div>`);
       try {
         const form = new FormData();
         form.append("file", f);
@@ -445,8 +464,8 @@
         localStorage.setItem("last_sup_material_id", latestMaterialId);
         document.getElementById("btn-verify").disabled = false;
         applyRoleGate();
-        supMsg(`<div class="notice info">① 完成：<code>${esc(latestMaterialId)}</code> v${data.version ?? "?"} · sha256 ${esc((data.content_hash || "").slice(0, 12))}… · created=${data.created} · 状态 pending_verification。<br>
-          <span class="hint">request_id <code>${esc(data.request_id || "—")}</code> · 关联要求 <code>${esc(ctx.reqId)}</code>（requirement_ids[] 已回链 evidence_refs，前缀 requirement:）。② 核验需 data_admin 角色——请用右上角切换「数据管理员」登录后点击核验通过。</span></div>`);
+        supMsg(`<div class="notice info">① 上传完成：材料编号 <code>${esc(latestMaterialId)}</code>（版本 ${data.version ?? "?"}）· 文件指纹 ${esc((data.content_hash || "").slice(0, 12))}… · ${data.created ? "新建" : "已存在（幂等复用）"} · 状态<b>待核验</b>。<br>
+          <span class="hint">已回链到本条要求。② 核验需<b>数据管理员</b>角色——请用右上角切换「数据管理员」登录后点击核验通过。请求编号 <code>${esc(data.request_id || "—")}</code></span></div>`);
       } catch (err) {
         apiShowError(err);
         supMsg(`<div class="notice error">上传失败：${esc(err.message)}</div>`);
@@ -462,10 +481,10 @@
         verifiedMaterialReady = true;
         applyRoleGate();
         const needSwitch = apiRole() !== "business_head";
-        supMsg(`<div class="notice info">② 核验通过：request_id <code>${esc(r.request_id || "—")}</code> · <code>${esc(latestMaterialId)}</code> → active（verified_at ${esc(r.verified_at)}）。<br>
-          <span class="hint">③ 重算接口 = <code>match:write</code>，RBAC 仅 <b>business_head（经营负责人）</b>持有（F020 §5）——${needSwitch ? "请右上角切换「经营负责人」登录，页面将自动识别已核验补录材料并开放 ③ 重算。" : "当前已就绪，可直接点击 ③ 重算。"}</span></div>`);
+        supMsg(`<div class="notice info">② 核验通过：材料 <code>${esc(latestMaterialId)}</code> 已生效（核验时间 ${esc(String(r.verified_at || "").slice(0, 19).replace("T", " "))}）。<br>
+          <span class="hint">③ 重算只有<b>经营负责人</b>可执行（F020 §5）——${needSwitch ? "请右上角切换「经营负责人」登录，页面将自动识别已核验补录材料并开放 ③ 重算。" : "当前已就绪，可直接点击 ③ 重算。"} 请求编号 <code>${esc(r.request_id || "—")}</code></span></div>`);
       } catch (err) {
-        if (err.status === 403) { supMsg(`<div class="notice error">权限不足：核验需 data_admin。当前 ${esc(apiRole() || "未登录")}——右上角切换数据管理员后重试。</div>`); }
+        if (err.status === 403) { supMsg(`<div class="notice error">权限不足：核验需<b>数据管理员</b>。当前「${esc(apiRoleLabel())}」——右上角切换数据管理员后重试。</div>`); }
         else { apiShowError(err); supMsg(`<div class="notice error">核验失败：${esc(err.message)}</div>`); }
       } finally { btn.disabled = false; }
     });
@@ -478,7 +497,7 @@
         beforeRunId = latest.run_id;
         const ev = "supplement-" + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
         const r = await apiPost(`/projects/${encodeURIComponent(PJ())}/recalculate`, { evidence_version: ev });
-        supMsg(`<div class="notice info">③ 重算任务 request_id <code>${esc(r.request_id || "—")}</code> · job <code>${esc(r.job_id)}</code>（created=${esc(r.created)}）已提交，轮询新 run…</div>`);
+        supMsg(`<div class="notice info">③ 重算任务已提交（${r.created ? "新任务" : "同证据版本已有任务，复用"}），等待后台执行并刷新结果… <span class="hint">请求编号 <code>${esc(r.request_id || "—")}</code></span></div>`);
         // 轮询 latest run 变化（无独立 job 状态端点；run_id 更新即完成）。
         // 重算任务在 worker 单线程队列排在 knowledge_index（L2 索引）之后 → 上限 20min 覆盖索引排队
         const deadline = Date.now() + 20 * 60 * 1000;
@@ -489,12 +508,13 @@
           if (cur.run_id && cur.run_id !== beforeRunId) { done = cur; break; }
           if (r.created === false && cur.run_id === beforeRunId) { done = { run_id: beforeRunId, idempotent: true }; break; }
         }
-        if (!done) throw new Error("重算超时（轮询 20 分钟无新 run）");
+        if (!done) throw new Error("重算超时（等待 20 分钟仍无新结果，请确认后台任务进程已启动）");
+        const cov = done.coverage || {};
         const badgeLine = done.idempotent
-          ? `幂等复用：同证据版本已有任务，run 未变化（<code>${esc(beforeRunId)}</code>）。`
-          : `新 run：<code>${esc(done.run_id)}</code> · 规则集 ${esc(done.rule_set_id)} · coverage ${esc(JSON.stringify(done.coverage || ""))} · as_of ${esc(done.as_of)}。`;
+          ? `同一证据版本已重算过，结果未变化。`
+          : `已生成新结果：逐条执行 ${esc(cov.executed ?? "?")}/${esc(cov.declared ?? "?")} 条 · 判定时点 ${esc(done.as_of || "—")}。`;
         supMsg(`<div class="notice ok"><b>③ 重算完成</b>：${badgeLine}<br>
-          <span class="hint">结果已刷新（旧 run 标记 stale）。请到「风险与缺失 / 自动匹配」查看新结果；审批入口仅在后端返回 internal_admission_eligible=true 时出现。</span></div>`);
+          <span class="hint">旧结果已标记过期。请到「风险与缺失 / 自动匹配」查看每一项的满足/不满足及原因；审批入口只在内部满分时出现。<details class="audit-fold" style="display:inline-block;margin-left:6px"><summary style="display:inline">系统追溯编号</summary><div class="audit-code"><span>匹配运行 <code>${esc(done.run_id || beforeRunId || "—")}</code> · 规则集 <code>${esc(done.rule_set_id || "—")}</code></span></div></details></span></div>`);
         loadQueues();
       } catch (err) {
         apiShowError(err);
@@ -523,9 +543,9 @@
           const role = apiRole();
           document.getElementById("btn-recalc").disabled = !(role === "business_head");
           if (role === "business_head") {
-            supMsg(`<div class="notice ok">已核验补录材料 <code>${esc(mid)}</code> v${d.version || "?"}（verified_at ${esc(String(d.verified_at).slice(0, 10))}）——<b>经营负责人可直接 ③ 重算</b>（以新证据版本重跑匹配，旧结果标记 stale，F020 §2.2.5）。</div>`);
+            supMsg(`<div class="notice ok">已核验的补录材料 <code>${esc(mid)}</code>（版本 ${d.version || "?"}，核验于 ${esc(String(d.verified_at).slice(0, 10))}）——<b>经营负责人可直接 ③ 重算</b>（以新证据重跑匹配，旧结果标记过期，F020 §2.2.5）。</div>`);
           } else {
-            supMsg(`<div class="notice info">已核验补录材料 <code>${esc(mid)}</code> v${d.version || "?"}（verified_at ${esc(String(d.verified_at).slice(0, 10))}）。<br><span class="hint">③ 重算需 <b>business_head</b>（match:write）——右上角切换「经营负责人」登录后自动开放。</span></div>`);
+            supMsg(`<div class="notice info">已核验的补录材料 <code>${esc(mid)}</code>（版本 ${d.version || "?"}，核验于 ${esc(String(d.verified_at).slice(0, 10))}）。<br><span class="hint">③ 重算需<b>经营负责人</b>——右上角切换「经营负责人」登录后自动开放。</span></div>`);
           }
         }
       } catch (err) {

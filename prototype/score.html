@@ -28,9 +28,11 @@
         </table>
       </section>
 
-      <!-- 硬条件与计分 -->
+      <!-- 硬条件与计分：每条要求都列出（满足 / 不满足 / 待补 / 复核 / 未执行）+ 原因 -->
       <section class="card">
         <h2>逐条匹配明细</h2>
+        <p class="sub" style="margin-top:4px">招标文件解析并确认的每一条要求 × 企业资料快照的逐项结论：满足项写明依据，不满足/待补/复核项写明原因。完整表格与证据抽屉见「自动匹配」页。</p>
+        <div id="detail-note" style="margin-top:6px"></div>
         <div class="tabs" id="tabs">
           <button class="tab active" data-t="hard_requirement">硬性要求（…）</button>
           <button class="tab" data-t="scored_requirement">评分项（…）</button>
@@ -61,27 +63,30 @@
     const PJ = () => PJ0.id;
 
     function matchBadge(m) {
+      // 引擎输出 satisfied/not_satisfied/unverifiable/manual_review；结果页补 not_evaluated（未执行）；兼容旧演示枚举
       const map = {
         satisfied: ["ok", "满足"], passed: ["ok", "满足"],
+        not_satisfied: ["danger", "不满足"], failed: ["danger", "不满足"], not_qualified: ["danger", "不满足"],
+        blocked_hard_requirement: ["danger", "硬性不满足"],
         unverifiable: ["warn", "待补/不可判定"], blocked_missing_data: ["warn", "缺证阻断"],
         manual_review: ["review", "人工复核"],
-        failed: ["danger", "不满足"], not_qualified: ["danger", "不满足"], blocked_hard_requirement: ["danger", "硬性不满足"],
+        not_evaluated: ["gray", "未执行"],
       };
       const mm = map[m] || ["gray", m || "未判定"];
       return `<span class="badge ${mm[0]}">${mm[1]}</span>`;
     }
-
-    const STATE_META2 = {
-      collecting: ["info", "信息收集中"], parsing: ["info", "解析中"], manual_review: ["review", "待人工复核"],
-      matching: ["info", "匹配中"], blocked_missing_data: ["warn", "缺证阻断"], blocked_hard_requirement: ["danger", "硬性不满足"],
-      blocked_waiver_expired: ["warn", "豁免过期阻断"], qualified_full_score: ["ok", "内部满分"], not_qualified: ["danger", "不满足"],
-      pending_bid_approval: ["info", "待审批"], approved_for_bidding: ["ok", "已批准投标"], rejected_by_approver: ["gray", "已驳回"],
-    };
-
-    function stateBadge(s) {
-      const m = STATE_META2[s] || ["gray", s || "未知"];
-      return `<span class="badge ${m[0]}">${m[1]}</span>`;
+    const escS = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    function gateTag(r) {
+      return r.gate_executed === false && r.match !== "not_evaluated"
+        ? `<div class="gate-tag" title="门禁在前序硬性不满足处已短路；此条由诊断全量补齐判定，供补录/核对参考">门禁短路后·诊断结果</div>` : "";
     }
+
+    /* 准入状态 / 四类结论 / 处置项摘要的中文化统一在 api.js（ADMISSION_STATE_META 等），本页只做布局 */
+    const labelOf = apiMetaLabel;
+    const badgeOf = apiMetaBadge;
+    const stateBadge = apiAdmissionStateBadge;
+    const briefList = apiQueueBriefList;
 
     async function loadScore() {
       const errBox = document.getElementById("api-error");
@@ -94,42 +99,44 @@
         const name = proj.project_name;
         const state = a.state || "collecting";
 
-        // state banner
+        // state banner（徽标文字一律中文）
         const banner = document.getElementById("state-banner");
         banner.style.display = "flex";
-        const bTone = a.eligible ? ["ok", "qualified_full_score", "内部满分——可进入人工审批"] :
-          (state === "blocked_hard_requirement" ? ["danger", state, "存在硬性不满足项（一票否决）"] :
-          (state === "blocked_missing_data" ? ["warn", state, "存在缺证阻断项——不推断满足，补录后重算"] :
-          ["info", state, ""]));
-        banner.innerHTML = `<span class="badge ${bTone[0]}">${bTone[1]}</span>
-          <div><span class="state-name">${name}</span>
-          <span class="state-desc">— ${bTone[2] || "当前准入状态，随匹配结果更新。"}</span></div>`;
+        const stateLabel = labelOf(ADMISSION_STATE_META, a.eligible ? "qualified_full_score" : state, "状态待定");
+        const bTone = a.eligible ? ["ok", "内部满分——可进入人工审批"] :
+          (state === "blocked_hard_requirement" || state === "not_qualified" ? ["danger", "存在硬性不满足项（一票否决）"] :
+          (state === "blocked_missing_data" ? ["warn", "存在缺证阻断项——不推断满足，补录核验后重算"] :
+          (state === "matching" ? ["info", "存在需人工复核项——核对后重算"] : ["info", ""])));
+        banner.innerHTML = `<span class="badge ${bTone[0]}">${stateLabel}</span>
+          <div><span class="state-name">${escS(name)}</span>
+          <span class="state-desc">— ${bTone[1] || "当前准入状态，随匹配结果更新。"}</span></div>`;
 
         // hero
         const hero = document.getElementById("score-hero");
         hero.style.display = "flex";
-        const missingN = (a.missing || []).length;
-        const reviewN = (a.review || []).length;
+        const missing = a.missing || [], review = a.review || [], blocked = a.blocked || [];
+        const missingN = missing.length, reviewN = review.length, blockedN = blocked.length;
         hero.innerHTML = `
           <div class="score-ring"><div class="inner">
-            <div class="val">${missingN + reviewN} 项</div>
+            <div class="val">${missingN + reviewN + blockedN} 项</div>
             <div class="cap">待处置</div>
           </div></div>
           <div class="info">
-            <h2>${name}（${PJ()}）${apiProjectChip(PJ0)}</h2>
-            <p class="sub" style="margin-top:2px">招标文件解析完成 · 自动匹配结果（准入状态 ${stateBadge(state)}）</p>
+            <h2>${escS(name)}${apiProjectChip(PJ0)}</h2>
+            <p class="sub" style="margin-top:2px">招标文件解析完成 · 自动匹配结果（准入状态 ${stateBadge(a.eligible ? "qualified_full_score" : state)}）</p>
             <div class="rows">
-              <div><span class="k">资格/响应性核查：</span><span class="v">${a.qualification || "pending"}（${a.hard_satisfied || 0}/${a.hard_total || 0} 满足）</span></div>
-              <div><span class="k">计分结论：</span><span class="v">${a.scoring || "not_full"}（客观分 ${a.objective_score ?? 0}/${a.objective_max ?? 0}）</span></div>
-              <div><span class="k">行动就绪：</span><span class="v">${a.readiness || "not_ready"}（动作 ${a.action_done ?? 0}/${a.action_total ?? 0}）</span></div>
-              <div><span class="k">缺失项：</span><span class="v" style="color:var(--warn)">${missingN ? missingN + " 项待补（" + a.missing.map((m) => m.req || m.requirement_id || "").join("、") + "）" : "无"}</span></div>
-              <div><span class="k">人工复核：</span><span class="v">${reviewN ? reviewN + " 项（" + a.review.map((r) => r.req || r.requirement_id || "").join("、") + "）" : "无"}</span></div>
-              <div><span class="k">项目经理：</span><span class="v">${a.manager ? (a.manager.name || a.manager.manager_id || JSON.stringify(a.manager)) + "（候选匹配）" : "无合格候选"}</span></div>
+              <div><span class="k">资格/响应性核查：</span><span class="v">${labelOf(QUALIFICATION_META, a.qualification, "待定")}（硬性要求 ${a.hard_satisfied || 0}/${a.hard_total || 0} 满足）</span></div>
+              <div><span class="k">计分结论：</span><span class="v">${labelOf(SCORING_META, a.scoring, "未满分")}（可复算客观分 ${a.objective_score ?? 0}/${a.objective_max ?? 0}）</span></div>
+              <div><span class="k">行动就绪：</span><span class="v">${labelOf(READINESS_META, a.readiness, "未就绪")}（投标动作 ${a.action_done ?? 0}/${a.action_total ?? 0} 已登记）</span></div>
+              ${blockedN ? `<div><span class="k">硬性不满足：</span><span class="v" style="color:var(--danger)">${blockedN} 项——${briefList(blocked, true)}</span></div>` : ""}
+              <div><span class="k">缺证待补：</span><span class="v" style="color:var(--warn)">${missingN ? `${missingN} 项——${briefList(missing, true)}` : "无"}</span></div>
+              <div><span class="k">人工复核：</span><span class="v">${reviewN ? `${reviewN} 项——${briefList(review, false)}` : "无"}</span></div>
+              <div><span class="k">项目经理：</span><span class="v">${a.manager && !a.manager._summary ? escS(a.manager.display_name || a.manager.name || a.manager.manager_id || "") + "（可用候选，规则判定见逐条明细）" : "无可用候选（资料未核验或规则待人工核对）"}</span></div>
               ${a.price ? `<div><span class="k">报价：</span><span class="v">${apiFmtMoney(a.price)}</span></div>` : ""}
               <div><span class="k">准入：</span><span class="v" style="color:${a.eligible ? "var(--ok)" : "var(--warn)"}">${a.eligible ? "内部满分（可提交人工审批）" : "阻断/未满分（不可进入审批）"}</span></div>
             </div>
             <div class="notice info" style="margin-top:10px;margin-bottom:0">
-              <b>结果说明</b>：系统展示条款、企业证据和缺失原因，不把缺失推断为满足；补录后由数据管理员核验并重新执行匹配（在「复核与补录」页）。<br>
+              <b>结果说明</b>：每一项的满足/不满足及原因见下方「逐条匹配明细」；系统不把缺失推断为满足。缺证项补录后由数据管理员核验并重算（「复核与补录」页）；人工复核项按条款原文核对企业资料后处置。<br>
               <span class="hint">满分 ≠ 自动投标：满分仅进入待审批，最终由经营负责人决定（ADR-001 §2.3）。</span>
             </div>
           </div>`;
@@ -137,26 +144,28 @@
         // 四类结论
         const four = document.getElementById("four-rows");
         const mk = (t, badgeHtml, desc) => `<tr><td><b>${t}</b></td><td>${badgeHtml}</td><td style="color:var(--ink-2)">${desc}</td></tr>`;
-        four.innerHTML = mk("① 资格/响应性核查", a.qualification === "satisfied" || a.qualification === "passed" ? `<span class="badge ok">通过</span>` : `<span class="badge ${a.qualification === "pending" ? "warn" : "warn"}">${a.qualification || "pending"}</span>`,
-            `${a.hard_satisfied || 0}/${a.hard_total || 0} 满足；${missingN} 项缺证默认阻断，不推断`)
-          + mk("② 计分结论", a.scoring === "full" ? `<span class="badge ok">满分</span>` : `<span class="badge warn">${a.scoring || "not_full"}</span>`,
-            `客观分 ${a.objective_score ?? 0}/${a.objective_max ?? 0}；${reviewN} 项人工复核`)
-          + mk("③ 行动就绪", a.readiness === "ready" ? `<span class="badge ok">就绪</span>` : `<span class="badge ${a.readiness === "not_ready" ? "warn" : "info"}">${a.readiness || "not_ready"}</span>`,
-            `动作 ${a.action_done ?? 0}/${a.action_total ?? 0}`)
-          + mk("④ 下一步", a.eligible ? `<span class="badge ok">可进入审批</span>` : `<span class="badge info">人工补录/复核</span>`,
-            a.eligible ? "满分结果可提交经营负责人审批（approval 页）" : "补齐材料并核验后重算（queue 页）");
+        four.innerHTML = mk("① 资格/响应性核查", badgeOf(QUALIFICATION_META, a.qualification, "待定"),
+            `硬性要求 ${a.hard_satisfied || 0}/${a.hard_total || 0} 满足；${blockedN ? `${blockedN} 项明确不满足（一票否决）；` : ""}${missingN} 项缺证默认阻断、不推断`)
+          + mk("② 计分结论", badgeOf(SCORING_META, a.scoring, "未满分"),
+            `可复算客观分 ${a.objective_score ?? 0}/${a.objective_max ?? 0}；${reviewN} 项待人工复核（规则未结构化或无可复算公式，不计入满分）`)
+          + mk("③ 行动就绪", badgeOf(READINESS_META, a.readiness, "未就绪"),
+            `投标动作 ${a.action_done ?? 0}/${a.action_total ?? 0} 已登记（报名/递交/开标等由人员完成后登记，系统不代办）`)
+          + mk("④ 下一步", a.eligible ? `<span class="badge ok">可进入审批</span>` : `<span class="badge info">人工补录 / 复核</span>`,
+            a.eligible ? "满分结果可提交经营负责人审批（「人工审核」页）" : "补齐材料并核验后重算（「复核与补录」页）；人工复核项核对后处置");
       } catch (err) {
-        if (err.status === 403) { errBox.innerHTML = `<div class="notice error">权限不足：当前角色 ${apiRole() || "未登录"} 无权查看结果。请用右上角登录（演示：bid_specialist）。</div>`; errBox.style.display = "block"; return; }
-        errBox.innerHTML = `<div class="notice error">加载准入摘要失败：${err.message}</div>`; errBox.style.display = "block";
+        if (err.status === 403) { errBox.innerHTML = `<div class="notice error">权限不足：当前角色「${apiRoleLabel()}」无权查看结果。请用右上角切换投标专员或经营负责人登录。</div>`; errBox.style.display = "block"; return; }
+        errBox.innerHTML = `<div class="notice error">加载准入摘要失败：${escS(err.message)}</div>`; errBox.style.display = "block";
       }
     }
 
-    /* 逐条明细（matrix 数据，按 tab 分组） */
+    /* 逐条明细（matrix 数据，按 tab 分组）：每条要求都列出结论与原因，满足项同样展示（不只列缺项） */
     let REQS = [];
+    let RUN2 = null;
     async function loadDetails() {
       try {
         const data = await apiGet(`/projects/${PJ()}/matrix`);
         REQS = data.requirements || [];
+        RUN2 = data.run || null;
         const counts = {};
         REQS.forEach((r) => { counts[r.req_type] = (counts[r.req_type] || 0) + 1; });
         document.querySelectorAll("#tabs .tab").forEach((t) => {
@@ -164,6 +173,16 @@
           const label = { hard_requirement: "硬性要求", scored_requirement: "评分项", action_requirement: "动作项" }[t.dataset.t];
           t.textContent = `${label}（${n}）`;
         });
+        const cov = (RUN2 && RUN2.coverage) || {};
+        const note = document.getElementById("detail-note");
+        if (Array.isArray(cov.short_circuited) && cov.short_circuited.length) {
+          note.innerHTML = `<div class="notice warn">门禁在硬性不满足处短路（一票否决结论已定）；其后 ${cov.short_circuited.length} 条为诊断全量补齐判定（标「门禁短路后·诊断结果」），供逐条核对补录。</div>`;
+        } else if (RUN2 && RUN2.run_id && cov.complete === false) {
+          const notRun = REQS.filter((r) => r.match === "not_evaluated").length;
+          note.innerHTML = `<div class="notice warn">此运行为旧版门禁短路结果：只执行了 ${cov.executed ?? "?"}/${cov.declared ?? REQS.length} 条，其后 ${notRun} 条无结论（标「未执行」）。请到「自动匹配」页由经营负责人重算，获得逐条全量结论。</div>`;
+        } else {
+          note.innerHTML = "";
+        }
         renderDetails("hard_requirement");
       } catch (err) {
         document.getElementById("detail-rows").innerHTML = `<div class="notice error">加载明细失败：${err.message}</div>`;
@@ -173,13 +192,26 @@
       const rows = REQS.filter((r) => r.req_type === type);
       const box = document.getElementById("detail-rows");
       if (!rows.length) { box.innerHTML = `<div class="hint">该类别暂无条目。</div>`; return; }
-      box.innerHTML = `<table class="tbl"><tbody>
-        ${rows.map((r) => `<tr>
-          <td class="num" style="width:90px"><b>${r.requirement_id}</b></td>
-          <td>${(r.assertion || "").slice(0, 150)}${(r.assertion || "").length > 150 ? "…" : ""}<br><span class="hint">${fmtClause(r.clause_ref)}</span></td>
-          <td style="width:120px">${matchBadge(r.match)}</td>
-          <td style="width:210px;color:var(--ink-2)">${(r.match_reason && r.match_reason.text) || "—"}</td>
-          ${type === "scored_requirement" ? `<td class="num" style="width:90px">${r.max_score ?? "—"}${r.score != null ? `（${r.score}）` : ""}</td>` : ""}
+      const tone = (m) => ({ satisfied: "ok", passed: "ok", not_satisfied: "danger", failed: "danger", not_qualified: "danger",
+        blocked_hard_requirement: "danger", unverifiable: "warn", blocked_missing_data: "warn", manual_review: "review" }[m] || "gray");
+      const tally = { ok: 0, danger: 0, warn: 0, review: 0, gray: 0 };
+      rows.forEach((r) => { tally[tone(r.match)]++; });
+      const reason = (r) => (r.match_reason && (typeof r.match_reason === "string" ? r.match_reason : r.match_reason.text)) || "—";
+      box.innerHTML = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <span class="badge gray">共 ${rows.length} 项</span><span class="badge ok">满足 ${tally.ok}</span>
+          ${tally.danger ? `<span class="badge danger">不满足 ${tally.danger}</span>` : ""}
+          ${tally.warn ? `<span class="badge warn">待补/不可判定 ${tally.warn}</span>` : ""}
+          ${tally.review ? `<span class="badge review">人工复核 ${tally.review}</span>` : ""}
+          ${tally.gray ? `<span class="badge gray">未执行 ${tally.gray}</span>` : ""}
+        </div>
+        <table class="tbl"><tbody>
+        ${rows.map((r, i) => `<tr class="row-${tone(r.match)}" title="系统编号：${escS(r.requirement_id)}">
+          <td class="num" style="width:96px"><b>第 ${i + 1} 项</b>${r.category ? `<div class="hint">${escS(r.category)}</div>` : ""}</td>
+          <td>${escS((r.assertion || "").slice(0, 150))}${(r.assertion || "").length > 150 ? "…" : ""}<br><span class="hint">条款 ${fmtClause(r.clause_ref) || "—"}${r.page_no != null ? ` · 第 ${escS(r.page_no)} 页` : ""}</span></td>
+          <td style="width:120px">${matchBadge(r.match)}${gateTag(r)}</td>
+          <td style="width:260px;color:var(--ink-2)">${escS(reason(r))}${(r.evidence || []).length ? `<div class="ev-list">证据：${r.evidence.map((e) => `<span title="${escS(e)}">${escS(apiEvidenceRefLabel(e))}</span>`).join("；")}</div>` : ""}</td>
+          ${type === "scored_requirement" ? `<td class="num" style="width:90px">${r.max_score ?? "—"}${r.score != null ? `（可复算 ${escS(r.score)}）` : ""}</td>` : ""}
         </tr>`).join("")}
       </tbody></table>`;
     }

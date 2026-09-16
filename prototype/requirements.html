@@ -45,10 +45,7 @@
             未定位到原文的条目：<b>本文件无此条款</b>（写明如何核实）/ <b>人工定位补录</b>（填页码 + 从原文复制原句，系统逐字核对）/ <b>无法确认</b>。
             这里不上传企业材料。
           </div>
-          <div id="rr-review-actions" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <button type="button" class="btn sm" id="rr-batch-approve">批量通过（高/中置信且已定位）</button>
-            <span class="hint" id="rr-batch-hint"></span>
-          </div>
+          <div id="rr-review-actions"></div>
         </div>
 
         <div id="groups-box" style="margin-top:6px"><div class="hint">加载中…</div></div>
@@ -93,31 +90,11 @@
     let curData = null;
     let pendingReview = [];
 
-    /* ---------- 批量通过（仅高/中置信且已定位；未定位/低置信/遗留项留人工） ---------- */
-    async function batchApprove() {
-      const targets = REVIEW.batchable(pendingReview);
-      if (!targets.length) { alert("当前没有可批量通过的候选（未定位到原文 / 低置信 / 需重新决策的条目需人工逐条处理）"); return; }
-      if (!confirm(`批量通过 ${targets.length} 项（高/中置信且已定位到原文）？未定位到原文、低置信与需重新决策的条目仍留待人工逐条处理。`)) return;
-      const btn = document.getElementById("rr-batch-approve");
-      btn.disabled = true;
-      const rids = new Set();
-      try {
-        for (const it of targets) {
-          const rev = await apiPost(`/parse/candidates/${encodeURIComponent(it.id)}/review`, {
-            decision: "approved", reviewer: apiName() || apiRole() || "投标专员", review_note: "批量通过（高/中置信，已定位）",
-          });
-          it.review_status = "approved";
-          if (rev.request_id) rids.add(rev.request_id);
-        }
-        await loadData(true);
-        apiShowError(null);
-        const hint = document.getElementById("rr-batch-hint");
-        if (hint) hint.textContent = `✓ 已批量通过 ${targets.length} 项；写入请求 request_id：${[...rids].join("、") || "—"}`;
-      } catch (err) {
-        apiShowError(err);
-        alert("批量通过失败：" + err.message);
-      } finally { btn.disabled = false; }
-    }
+    /* ---------- 批量通过：review.js 共享工具栏（与 queue.html 同源，仅高/中置信且已定位） ---------- */
+    const batchBar = REVIEW.mountBatchToolbar(document.getElementById("rr-review-actions"), {
+      getGroups: () => (curData && curData.groups) || [],
+      reload: () => loadData(true),
+    });
 
     /* ---------- 数据加载 / 渲染 ---------- */
     async function loadData(forceReload) {
@@ -132,7 +109,7 @@
         if (err.status !== 401) apiShowError(err);
         badgeEl.className = "badge error";
         badgeEl.textContent = "加载失败";
-        box.innerHTML = `<div class="notice error"><b>加载解析结果失败</b>：${esc(err.message)}${err.requestId ? `（request_id：<code>${esc(err.requestId)}</code>）` : ""}<br>
+        box.innerHTML = `<div class="notice error"><b>加载解析结果失败</b>：${esc(err.message)}${err.requestId ? `（请求编号：<code>${esc(err.requestId)}</code>）` : ""}<br>
           <span class="hint">常见原因：① runtime 未启动——项目终端运行 <code>bash scripts/setup_local_env.sh start</code>；
           ② 页面不是从 <code>http://127.0.0.1:8080</code> 打开（直接双击 HTML 或经已关闭的预览端口打开会跨域失败）；
           ③ 系统代理拦截 127.0.0.1。登录失效请用右上角重新登录后刷新。</span></div>`;
@@ -187,12 +164,8 @@
       }
       const reviewable = curView === "candidates";
       pendingReview = reviewable ? REVIEW.pendingItems(groups) : [];
-      const batch = document.getElementById("rr-batch-approve");
-      if (reviewable) {
-        const n = REVIEW.batchable(pendingReview).length;
-        document.getElementById("rr-batch-hint").textContent = `未定位到原文 / 低置信 / 需重新决策的条目不参与批量（${n} 项可批量）`;
-        batch.style.display = "";
-      } else { batch.style.display = "none"; }
+      // 工具栏容器显隐由 loadData 按视图/角色控制；这里只刷新可批量计数
+      if (reviewable) batchBar.refresh();
 
       box.innerHTML = "";
       groups.forEach((g) => {
@@ -228,7 +201,6 @@
       if (curView === CONFIRMED) loadData(true);
       else renderGroups();
     });
-    document.getElementById("rr-batch-approve").addEventListener("click", batchApprove);
 
     // 无项目参数：提示回搜索（经典 script 顶层 return 是语法错误，必须用 if/else）
     if (!projectId) {

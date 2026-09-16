@@ -19,7 +19,7 @@
         <div class="forbidden">
           <div class="code">403</div>
           <h2>权限不足</h2>
-          <p style="color:var(--ink-2)">审批层数据仅对 <b>经营负责人（business_head）</b> 开放，后端已拒绝访问并追加审计。<br>
+          <p style="color:var(--ink-2)">审批层数据仅对 <b>经营负责人</b> 开放，后端已拒绝访问并追加审计。<br>
             当前登录：<b id="cur-role"></b> —— 请用右上角登录框切换账号体验权限差异。</p>
         </div>
       </section>
@@ -28,7 +28,7 @@
         <!-- 准入状态与待审批列表 -->
         <section class="card">
           <div class="card-title-row">
-            <h2>人工审核（项目 <span id="ap-proj">ND-2025</span>）</h2>
+            <h2>人工审核 — <span id="ap-proj">加载中…</span></h2>
             <span class="hint" id="ap-status"></span>
           </div>
           <div id="admission-box"></div>
@@ -45,7 +45,7 @@
             <div class="form-item"><label>豁免原因 <span class="req">*</span></label><input type="text" id="w-reason" class="inp" value="审计报告在途（已受理）"></div>
             <div class="form-item"><label>证据引用（逗号分隔）<span class="req">*</span></label><input type="text" id="w-ev" class="inp" value="E-ND-2025-01"></div>
             <div class="form-item"><label>有效期至 <span class="req">*</span></label><input type="date" id="w-until" class="inp"></div>
-            <div class="form-item full"><label>覆盖项（逗号分隔 requirement_id）<span class="req">*</span></label>
+            <div class="form-item full"><label>覆盖的要求（填要求的系统编号，多个用逗号分隔）<span class="req">*</span></label>
               <input type="text" id="w-covered" class="inp" value="NQ-H-007">
             </div>
           </div>
@@ -58,6 +58,7 @@
         <!-- 审计时间线 -->
         <section class="card">
           <h2>审计时间线（谁 / 何时 / 依据什么 / 结论）</h2>
+          <p class="sub" style="margin-top:4px">「依据」「结论」两列是系统落库的原始审计记录（键=值形式），为保证可核对不做改写；动作名已转为中文。</p>
           <div id="audit-list" class="hint">加载中…</div>
         </section>
       </div>
@@ -74,7 +75,9 @@
   <script src="common.js"></script>
   <script>
     initPage("approval.html", "approval");
-    const PJ = () => demoProjectId();
+    const PJ0 = apiProjectId();
+    const PJ = () => PJ0.id;
+    const escA = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const errBox = document.getElementById("api-error");
     const actionBox = document.getElementById("action-result");
     const showErr = (m) => { errBox.innerHTML = `<div class="notice error">${m}</div>`; errBox.style.display = "block"; };
@@ -86,20 +89,25 @@
       try {
         const adm = await apiGet(`/projects/${PJ()}/admission`);
         const a = (adm.admission || {});
-        document.getElementById("ap-status").textContent =
-          `准入状态：${a.state || "collecting"} · eligible=${!!a.eligible}`;
+        apiGet(`/projects/${PJ()}`).then((p) => {
+          document.getElementById("ap-proj").innerHTML = escA(p.project_name || PJ()) + apiProjectChip(PJ0);
+        }).catch(() => { document.getElementById("ap-proj").textContent = PJ(); });
+        document.getElementById("ap-status").innerHTML =
+          `准入状态：${apiAdmissionStateBadge(a.eligible ? "qualified_full_score" : (a.state || "collecting"))} · ${a.eligible ? "可进入审批" : "不可进入审批"}`;
         if (a.eligible) {
           box.innerHTML = `<div class="notice" style="border-color:#b7e4c0;background:#f0fdf4;color:#14532d">
             <b>内部满分</b>：硬性 ${a.hard_satisfied}/${a.hard_total} · 客观 ${a.objective_score ?? 0}/${a.objective_max ?? 0} · 动作 ${a.action_done ?? 0}/${a.action_total ?? 0}。
             可创建审批进入人工审核。满分 ≠ 自动投标：最终由经营负责人决定（ADR-001 §2.3）。</div>
-            <div style="margin-top:10px"><button class="btn" id="btn-create-approval">创建审批（POST /approval/create）</button></div>`;
+            <div style="margin-top:10px"><button class="btn" id="btn-create-approval">创建审批</button></div>`;
           document.getElementById("btn-create-approval").addEventListener("click", createApproval);
         } else {
-          const reason = (a.missing || []).length
-            ? `缺证阻断 ${(a.missing || []).length} 项（${(a.missing || []).map((m) => m.req || m.requirement_id || "").join("、")}）`
-            : ((a.review || []).length ? `人工复核 ${(a.review || []).length} 项` : `状态 ${a.state || "collecting"}`);
+          const parts = [];
+          if ((a.blocked || []).length) parts.push(`硬性不满足 ${a.blocked.length} 项——${apiQueueBriefList(a.blocked, true)}`);
+          if ((a.missing || []).length) parts.push(`缺证阻断 ${a.missing.length} 项——${apiQueueBriefList(a.missing, true)}`);
+          if ((a.review || []).length) parts.push(`人工复核 ${a.review.length} 项——${apiQueueBriefList(a.review, false)}`);
+          const reason = parts.length ? parts.join("；") : `当前状态「${apiMetaLabel(ADMISSION_STATE_META, a.state || "collecting", "状态待定")}」，尚无满分结果`;
           box.innerHTML = `<div class="notice warn"><b>当前不可进入审批</b>：${reason}。
-            <br><span class="hint">F024 §6：真实农大资料缺 NQ-H-007 等投标文件型证据时输出应为待补/阻断，<b>不得出现审批入口</b>。补齐材料并核验重算后才可能满分。</span></div>`;
+            <br><span class="hint">只有全部要求满足（内部满分）才会出现审批入口；缺证项补录并核验后重算，人工复核项按条款原文核对后处置（详见「风险与缺失」逐条明细）。</span></div>`;
         }
       } catch (err) {
         box.innerHTML = `<div class="notice error">加载准入失败：${err.message}</div>`;
@@ -111,10 +119,10 @@
       btn.disabled = true;
       try {
         const r = await apiPost(`/projects/${PJ()}/approval/create`, {});
-        showMsg(`审批已创建：<code>${r.approval_id || ""}</code> · 引用结果 ${r.admission_result_ref || ""} · request_id <code>${r.request_id || ""}</code>`);
+        showMsg(`审批已创建，进入待审批队列。<span class="hint">审批单 <code>${escA(r.approval_id || "")}</code> · 请求编号 <code>${escA(r.request_id || "")}</code></span>`);
         loadPending();
       } catch (err) {
-        if (err.status === 403) { showErr(`权限不足：创建审批需经营负责人。当前 ${apiRole() || "未登录"}。`); }
+        if (err.status === 403) { showErr(`权限不足：创建审批需经营负责人。当前「${apiRoleLabel()}」。`); }
         else { showErr(`创建审批失败：${err.message}${err.requestId ? `（${err.requestId}）` : ""}`); }
       } finally { btn.disabled = false; }
     }
@@ -135,10 +143,11 @@
           div.className = "queue-card";
           div.innerHTML = `
             <div class="q-body">
-              <div class="q-title">${it.project_name}（${it.project_id}）
-                <span class="badge gold">${it.state}</span></div>
-              <div class="q-desc">审批单 <code>${it.approval_id}</code> · 准入结果引用 <code>${it.admission_result_ref}</code> · 创建 ${it.created_at || "—"}
-                <br><span class="hint">审批动作（通过/驳回/豁免）审计 actor = 当前登录者（R024 正式认证）。</span></div>
+              <div class="q-title">${escA(it.project_name)}
+                ${apiAdmissionStateBadge(it.state)}</div>
+              <div class="q-desc">创建于 ${escA((it.created_at || "—").replace("T", " ").slice(0, 16))}
+                <span class="hint" title="审批单 ${escA(it.approval_id)} · 准入结果 ${escA(it.admission_result_ref)} · 项目 ${escA(it.project_id)}" style="cursor:help">ⓘ 溯源编号</span>
+                <br><span class="hint">通过 / 驳回 / 豁免均以当前登录者名义记入审计。</span></div>
             </div>
             <div class="q-actions">
               <button class="btn sm" data-act="approve">通过</button>
@@ -166,12 +175,12 @@
       try {
         const body = { approver: apiName() || apiRole() || "demo", basis: `admission:${it.admission_result_ref || it.project_id}`, comment: comment || null };
         const r = await apiPost(`/projects/${it.project_id}/approval/${decision}`, body);
-        showMsg(`<b>${decision === "approved" ? "审批通过 → approved_for_bidding" : "驳回 → rejected_by_approver"}</b>：审批单 <code>${r.approval_id || ""}</code>。
-          注意：批准仅代表“决定投标”，系统不自动投标、不自动报价、不自动签章。request_id <code>${r.request_id || ""}</code>`);
+        showMsg(`<b>${decision === "approved" ? "审批通过——项目进入「已批准投标」" : "已驳回——项目进入「已驳回」"}</b>。
+          注意：批准仅代表“决定投标”，系统不自动投标、不自动报价、不自动签章。<span class="hint">审批单 <code>${escA(r.approval_id || "")}</code> · 请求编号 <code>${escA(r.request_id || "")}</code></span>`);
         loadPending();
         loadAudit();
       } catch (err) {
-        if (err.status === 403) { showErr(`权限不足：审批需经营负责人。当前 ${apiRole() || "未登录"}。`); }
+        if (err.status === 403) { showErr(`权限不足：审批需经营负责人。当前「${apiRoleLabel()}」。`); }
         else { showErr(`${decision === "approved" ? "审批" : "驳回"}失败：${err.message}${err.requestId ? `（${err.requestId}）` : ""}`); }
       }
     }
@@ -202,7 +211,7 @@
           authorizer: v("w-auth"), reason: v("w-reason"),
           evidence_refs, valid_until, covered_items,
         });
-        showMsg(`豁免已登记：<code>${r.waiver_id || ""}</code> · 覆盖 ${covered_items.join("、")} · 有效期至 ${valid_until} · request_id <code>${r.request_id || ""}</code>`);
+        showMsg(`豁免已登记：覆盖 ${covered_items.map(escA).join("、")} · 有效期至 ${escA(valid_until)}。<span class="hint">豁免单 <code>${escA(r.waiver_id || "")}</code> · 请求编号 <code>${escA(r.request_id || "")}</code></span>`);
         document.getElementById("waiver-form").style.display = "none";
         loadAudit();
       } catch (err) {
@@ -220,7 +229,7 @@
         box.innerHTML = `<table class="tbl"><thead><tr><th>时间</th><th>动作</th><th>执行者</th><th>依据</th><th>结论</th></tr></thead><tbody>` +
           items.map((e) => `<tr>
             <td class="num" style="font-size:12px">${(e.at || "").replace("T", " ").slice(0, 19)}</td>
-            <td><code>${e.action}</code></td><td>${e.actor || "—"}</td>
+            <td title="${escA(e.action)}">${escA(apiAuditActionLabel(e.action))}</td><td>${escA(e.actor || "—")}</td>
             <td class="hint">${e.basis || "—"}</td><td>${e.outcome || "—"}</td></tr>`).join("") +
           `</tbody></table>`;
       } catch (err) {
@@ -233,14 +242,14 @@
     function showForbidden() {
       document.getElementById("approval-main").style.display = "none";
       document.getElementById("forbidden").style.display = "block";
-      document.getElementById("cur-role").textContent = `${apiRoleLabel()}（${apiRole() || "未登录"}）`;
+      document.getElementById("cur-role").textContent = apiRoleLabel();
     }
 
     async function initApproval() {
       if (!apiRole()) {
         // 未登录：仍展示准入状态（只读 result 权限可能 403 → 提示登录）
         showForbidden();
-        document.getElementById("cur-role").textContent = "未登录（请右上角登录 business_head 体验审批）";
+        document.getElementById("cur-role").textContent = "未登录（请右上角以经营负责人登录后审批）";
         return;
       }
       try {

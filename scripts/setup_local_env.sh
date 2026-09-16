@@ -277,7 +277,7 @@ start_services() {
   proto_pid="$(lsof -tiTCP:8080 -sTCP:LISTEN -P 2>/dev/null | head -1 || true)"
   if [[ -n "$proto_pid" ]] && kill -0 "$proto_pid" 2>/dev/null; then
     echo "$proto_pid" > logs/prototype.pid
-    ok "原型静态服务已在运行 (pid $proto_pid，http://127.0.0.1:8080)，跳过启动"
+    ok "原型静态服务已在运行 (pid ${proto_pid}，http://127.0.0.1:8080)，跳过启动"
   else
     log "启动原型静态服务（http.server，127.0.0.1:8080）..."
     nohup .venv/bin/python -m http.server 8080 --bind 127.0.0.1 --directory prototype > logs/prototype.log 2>&1 &

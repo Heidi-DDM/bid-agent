@@ -160,7 +160,9 @@ def test_match_run_writes_snapshot(session):
     run = session.scalar(select(MatchRun).where(MatchRun.project_id == "ND-2025"))
     assert run is not None
     assert run.status == "completed"
-    assert run.coverage == {"executed": 1, "declared": 1, "complete": True}
+    # F023 §2 第 4 步：coverage 同时描述全量执行与门禁短路情况
+    assert run.coverage == {"executed": 1, "declared": 1, "complete": True,
+                            "gate_executed": 1, "gate_complete": True, "short_circuited": []}
     assert run.retrieval_run_id == "rr-1"
     assert run.index_version == "iv-1"
     assert run.candidate_chunk_ids == ["CH-1"]
@@ -175,6 +177,7 @@ def test_match_run_writes_snapshot(session):
     assert item is not None
     assert item.match_result == "satisfied"
     assert item.match_reason["retrieval_run_id"] == "rr-1"
+    assert item.match_reason["gate_executed"] is True
     assert item.evidence_refs == ["MAT-Q-1:v1:p1"]
 
     events = session.scalars(select(AuditEvent)).all()
@@ -578,6 +581,7 @@ def _queue_item_like(entry, req):
         "text": req["assertion"],
         "match_result": entry["match_result"],
         "req_type": entry["req_type"],
+        "gate_executed": entry.get("gate_executed", True),
         "failure_effect": req["failure_effect"],
         "missing_field": None,
         "reason": entry.get("match_reason"),
@@ -761,3 +765,114 @@ def test_default_match_retrieval_injects_query_embedding(session, monkeypatch):
     _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate)
 
     assert captured["embed_query_fn"] is fake_embed
+
+
+# ---------- F023 §2 第 4 步：短路后全量补齐 + 结果页未执行项显式标识（2026-09-15） ----------
+
+def _fake_evaluate_gate_aware(results: dict[str, str]):
+    """按 mode 行为：gate 在首个硬性 not_satisfied 处 break（复刻 scripts.matching.engine）。"""
+
+    def fn(requirements, evidence, *, as_of, mode="gate", lot_id=None):
+        matrix, blocked, pending, review = [], [], [], []
+        for item in requirements:
+            result = results.get(item["requirement_id"], "satisfied")
+            entry = {"requirement_id": item["requirement_id"], "req_type": item["req_type"],
+                     "clause_ref": item["clause_ref"], "match_result": result,
+                     "match_reason": f"{result} 原因", "score": None}
+            matrix.append(entry)
+            if result == "not_satisfied":
+                blocked.append(entry)
+            elif result == "unverifiable":
+                pending.append(entry)
+            elif result == "manual_review":
+                review.append(entry)
+            if mode == "gate" and item["req_type"] == "hard_requirement" and result == "not_satisfied":
+                break
+        hard_ids = {m["requirement_id"] for m in matrix if m["req_type"] == "hard_requirement"}
+        return {
+            "as_of": as_of, "mode": mode, "lot_id": lot_id, "matrix": matrix,
+            "coverage": {"executed": len(matrix), "declared": len(requirements),
+                         "complete": len(matrix) == len(requirements)},
+            "blocked": blocked, "pending": pending, "review": review,
+            "qualification_result": "failed" if any(m["requirement_id"] in hard_ids for m in blocked) else "passed",
+            "scoring_result": "full", "operational_readiness": "ready",
+            "internal_admission_eligible": not blocked and not pending and not review
+            and len(matrix) == len(requirements),
+        }
+
+    return fn
+
+
+def test_match_run_short_circuit_writes_all_items_and_full_queues(session):
+    _project(session)
+    _rule_set(session)
+    _requirement(session, requirement_id="NQ-H-001")   # 硬性失败 → 门禁在此短路
+    _requirement(session, requirement_id="NQ-H-002")   # 缺证
+    _requirement(session, requirement_id="NQ-H-003")   # 满足
+    _qualification(session)
+
+    _execute_match_run(
+        session, "ND-2025",
+        evaluate_fn=_fake_evaluate_gate_aware({"NQ-H-001": "not_satisfied", "NQ-H-002": "unverifiable"}),
+    )
+
+    run = session.scalar(select(MatchRun).where(MatchRun.project_id == "ND-2025"))
+    assert run.mode == "gate"
+    assert run.coverage["executed"] == 3 and run.coverage["complete"] is True
+    assert run.coverage["gate_executed"] == 1 and run.coverage["short_circuited"] == ["NQ-H-002", "NQ-H-003"]
+    items = {i.requirement_id: i for i in session.scalars(select(MatchItem).where(MatchItem.run_id == run.run_id))}
+    assert set(items) == {"NQ-H-001", "NQ-H-002", "NQ-H-003"}   # 每条要求都有结论
+    assert items["NQ-H-001"].match_reason["gate_executed"] is True
+    assert items["NQ-H-002"].match_reason["gate_executed"] is False
+    assert items["NQ-H-003"].match_result == "satisfied"
+
+    ar = _admissions(session)[0]
+    assert ar.internal_admission_result["status"] == "not_qualified"     # 一票否决结论不变
+    assert [b["requirement_id"] for b in ar.blocked_items] == ["NQ-H-001"]
+    assert [p["requirement_id"] for p in ar.pending_items] == ["NQ-H-002"]  # 短路后的缺项也进处置队列
+    assert ar.pending_items[0]["gate_executed"] is False
+    assert ar.qualification_result["total"] == 3 and ar.qualification_result["satisfied"] == 1
+    assert any(s["step"] == "coverage" and "短路" in s["text"] for s in ar.explanation)
+
+    # 结果页：三条都有结论与原因，无 not_evaluated
+    from runtime.db import api_service
+
+    rows = {r["requirement_id"]: r for r in api_service.list_requirements(session, "ND-2025")}
+    assert rows["NQ-H-003"]["match"] == "satisfied" and rows["NQ-H-003"]["gate_executed"] is False
+    assert rows["NQ-H-001"]["match_reason"]["text"] == "not_satisfied 原因"
+    assert all(r["match"] != api_service.NOT_EVALUATED for r in rows.values())
+
+
+def test_list_requirements_marks_legacy_unexecuted_as_not_evaluated(session):
+    """旧版 gate 运行只落了短路前的 MatchItem：其后条目必须显式 not_evaluated，不得伪装 unverifiable。"""
+    from runtime.db import api_service
+
+    _project(session)
+    _rule_set(session)
+    _requirement(session, requirement_id="NQ-H-001")
+    _requirement(session, requirement_id="NQ-H-002")
+    session.add(MatchRun(run_id="MR-OLD", project_id="ND-2025", rule_set_id="RS-1", as_of="2025-10-30",
+                         mode="gate", coverage={"executed": 1, "declared": 2, "complete": False},
+                         status="completed"))
+    session.add(MatchItem(item_id="MI-OLD-1", run_id="MR-OLD", requirement_id="NQ-H-001",
+                          match_result="not_satisfied", match_reason={"text": "等级不足"}))
+    session.commit()
+
+    rows = {r["requirement_id"]: r for r in api_service.list_requirements(session, "ND-2025")}
+    assert rows["NQ-H-001"]["match"] == "not_satisfied"
+    assert rows["NQ-H-001"]["gate_executed"] is True          # 旧数据无标记 → 视为门禁已执行
+    assert rows["NQ-H-002"]["match"] == api_service.NOT_EVALUATED
+    assert rows["NQ-H-002"]["gate_executed"] is False
+    assert "未执行到" in rows["NQ-H-002"]["match_reason"]["text"]
+    assert rows["NQ-H-002"]["page_no"] is None and rows["NQ-H-002"]["evidence"] == []
+
+
+def test_list_requirements_without_run_is_not_evaluated(session):
+    from runtime.db import api_service
+
+    _project(session)
+    _rule_set(session)
+    _requirement(session, requirement_id="NQ-H-001")
+    rows = api_service.list_requirements(session, "ND-2025")
+    assert rows[0]["match"] == api_service.NOT_EVALUATED
+    assert "尚无匹配运行" in rows[0]["match_reason"]["text"]

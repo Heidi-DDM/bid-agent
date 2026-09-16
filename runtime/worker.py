@@ -524,8 +524,16 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
     session.add(run)
     session.flush()
     refs_by_req = candidates["evidence_refs_by_req"]
+    max_score_by_req = {r["requirement_id"]: r.get("max_score") for r in req_dicts}
     for entry in result["matrix"]:
         refs = refs_by_req.get(entry["requirement_id"], {})
+        # gate_executed（F023 §2 第 4 步）：门禁短路后由诊断全量补齐的条目为 False，
+        # 结果页据此标「门禁短路后·诊断结果」，不得展示为门禁通过（F008 覆盖门禁）
+        match_reason = {
+            "text": entry["match_reason"],
+            "retrieval_run_id": refs.get("retrieval_run_id"),
+            "gate_executed": entry.get("gate_executed", True),
+        }
         session.add(
             MatchItem(
                 item_id=f"MI-{_uuid.uuid4().hex[:12]}",
@@ -533,11 +541,9 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
                 requirement_id=entry["requirement_id"],
                 match_result=entry["match_result"],
                 score=entry.get("score"),
-                max_score=entry.get("max_score"),
-                match_reason={
-                    "text": entry["match_reason"],
-                    "retrieval_run_id": refs.get("retrieval_run_id"),
-                },
+                max_score=(entry.get("max_score") if entry.get("max_score") is not None
+                           else max_score_by_req.get(entry["requirement_id"])),
+                match_reason=match_reason,
                 evidence_refs=refs.get("evidence_refs"),
                 evaluated_at=_dt.datetime.now(_dt.timezone.utc),
             )
@@ -547,7 +553,9 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
         basis=f"rule_set={rule_set.rule_set_id} as_of={as_of} "
               f"evidence_snapshot={run.evidence_snapshot_hash[:12]}",
         outcome=f"complete={result['coverage'].get('complete')} "
-                f"executed={result['coverage'].get('executed')}",
+                f"executed={result['coverage'].get('executed')} "
+                f"gate_executed={result['coverage'].get('gate_executed')} "
+                f"short_circuited={len(result['coverage'].get('short_circuited') or [])}",
         object_ref=project_id,
     )
 

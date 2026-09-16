@@ -132,9 +132,9 @@ v1.7 校验与幂等（09-优化方案 §3.2）：① 前后端均校验后缀�
       "max_score": null, "score": null } ] }
 ```
 
-`match` 枚举对齐 `MATCH_META`：`satisfied / not_satisfied / unverifiable / manual_review`；`req_type` 对齐 F008：`hard_requirement / scored_requirement / action_requirement`（原型 tab：hard/scored/action）。
+`match` 枚举对齐 `MATCH_META`：`satisfied / not_satisfied / unverifiable / manual_review`，**v1.18 增 `not_evaluated`**（本次运行未执行到该条：旧版门禁短路遗留 / 尚无运行——禁止默认 `unverifiable` 冒充"已判定缺证"，F023 §2 第 4 步）；`req_type` 对齐 F008：`hard_requirement / scored_requirement / action_requirement`（原型 tab：hard/scored/action）。**v1.18 字段扩展**（matrix/requirements 逐条 DTO）：`match_reason` 为对象 `{text, retrieval_run_id, gate_executed}`（`gate_executed=false` = 门禁短路后由诊断全量补齐判定）；新增 `gate_executed`（bool|null）、`page_no`（规则固化的原文页码）、`evidence_required`（该要求需要的证据类型）、`category`；`scored_requirement` 行带 `score`（可复算得分，无可复算公式时 null）与 `max_score`。
 
-**`GET /api/v1/projects/{project_id}/match-runs/latest`** —— 最近一次匹配运行：`{run_id, rule_set_id, rule_set_version, as_of, mode, coverage, status, created_at}`。**只读，不创建 run**；无 run 时返回 `{run_id: null}`（前端显示"尚未匹配"）。
+**`GET /api/v1/projects/{project_id}/match-runs/latest`** —— 最近一次匹配运行：`{run_id, rule_set_id, rule_set_version, as_of, mode, coverage, status, created_at}`。**只读，不创建 run**；无 run 时返回 `{run_id: null}`（前端显示"尚未匹配"）。`coverage` v1.18 起：`{declared, executed, complete, gate_executed, gate_complete, short_circuited[]}`（F023 §2 第 4 步；旧运行缺 `short_circuited` 字段且 `complete=false` = 旧版门禁短路结果，前端提示重算）。
 
 ### 2.2.4 风险与缺失（`score.html`）
 
@@ -150,6 +150,8 @@ v1.7 校验与幂等（09-优化方案 §3.2）：① 前后端均校验后缀�
     "manager": { "manager_id": "M-ND-01", "role": "主推荐", "check": "passed" },
     "price": { "bid": 121598056.76, "cap": 124715908.89 } } }
 ```
+
+`state` = **项目业务准入状态**（`Project.admission_status`，ADR-001 §2.2：collecting / parsing / manual_review / matching / blocked_missing_data / blocked_hard_requirement / not_qualified / qualified_full_score / pending_bid_approval / approved_for_bidding / rejected_by_approver / blocked_waiver_expired），**不是** AdmissionResult 快照生命周期（final/stale）——v1.19 修正此前误回传后者导致页面显示英文 `final`。v1.19 新增：`result_freshness`（current/stale）、`decision`（结论说明文本）、`blocked[]`（硬性不满足队列，结构同 missing/review 的队列项 DTO）；`missing/review/blocked` 各项的 `clause/clause_ref` 与 matrix/queues 同口径折叠历史「提示（提示）」重复格式。前端一律用中文标签映射展示枚举（`prototype/api.js` ADMISSION_STATE_META / QUALIFICATION_META / SCORING_META / READINESS_META / EVIDENCE_KIND_LABEL / AUDIT_ACTION_LABEL），系统编号只放悬停提示与「系统追溯编号」折叠区。
 
 **`GET /api/v1/projects/{project_id}/matrix`** —— 矩阵页合并视图：requirements + 逐条 match_items（含证据链）；不触发新匹配。
 
@@ -173,7 +175,7 @@ v1.7 校验与幂等（09-优化方案 §3.2）：① 前后端均校验后缀�
 
 **`POST /api/v1/projects/{project_id}/recalculate`** —— 补录核验后重算：以新证据版本创建新匹配 run，旧 `admission_results` 标记 `stale`；幂等（同一证据版本重复调用返回既有 run）。响应 `{job_id, run_id?}`。
 
-**`GET /api/v1/projects/{project_id}/queues`**（v1.7 队列 DTO 扩展）—— 每项在 `{project_id, requirement_id, clause, text}` 基础上增加：`clause_ref`（条款号）、`missing_field`（缺失字段名，来自 match item 的 `missing_items`，无则 `null`）、`reason`（缺因文本：无 active 证据/未核验/待补录，不编造）、`purpose`（“补来做什么”：该要求用途说明或 `null` 待补录人确认）、`recommended_material_types`（仅当规则 `evidence_required` 可如实映射时给出；否则 `null`=由补录人按材料类型选择，禁止推断）、`owner_role`（责任人：投标专员上传/数据管理员核验，测试期口径）、`due_at`（投标截止或动作截止，无则 `null`）。前端“补录材料”按钮把整项上下文（requirement_id/clause_ref/missing_field/reason/purpose）带入补录表单预填。
+**`GET /api/v1/projects/{project_id}/queues`**（v1.7 队列 DTO 扩展；v1.18 每项增 `gate_executed`）—— 每项在 `{project_id, requirement_id, clause, text}` 基础上增加：`clause_ref`（条款号）、`missing_field`（缺失字段名，来自 match item 的 `missing_items`，无则 `null`）、`reason`（缺因文本：无 active 证据/未核验/待补录，不编造）、`purpose`（“补来做什么”：该要求用途说明或 `null` 待补录人确认）、`recommended_material_types`（仅当规则 `evidence_required` 可如实映射时给出；否则 `null`=由补录人按材料类型选择，禁止推断）、`owner_role`（责任人：投标专员上传/数据管理员核验，测试期口径）、`due_at`（投标截止或动作截止，无则 `null`）、`gate_executed`（bool：false = 门禁短路后由诊断全量补齐的缺项，前端标「门禁短路后·诊断结果」）。前端“补录材料”按钮把整项上下文（requirement_id/clause_ref/missing_field/reason/purpose）带入补录表单预填。
 
 **`POST /api/v1/projects/{project_id}/match`** —— 仅任务编排器（`parse.completed` 触发）或重算流程内部调用；**前端不暴露手动匹配按钮**（F020 §2.1）。
 
@@ -272,3 +274,5 @@ worker 领取任务使用数据库锁和租约；超时任务由恢复器重新�
 | 2026-09-10 | v1.15 | ① **B2 推送两周窗口收紧**：`search/{job_id}/candidates` 默认严格「两周内且有日期」——`>14 天`照旧剔除；发布日缺失候选不再默认展示，折叠为 `date_window{days,pending}` 计数（前端「N 条日期待确认，可展开」），逐卡增 `in_date_window`；② **C1 地区三态**：`SourceSpec.parent_region` + `region_coverage()`（direct/broader/none）——省级检索覆盖地市源不标待核实；地市检索覆盖同市源 + 省/全国源（候选卡增 `region_note` 区分文案）；`covers_region` 保留布尔兼容；③ **C4/D1 候选卡**：region 优先级=详情回填/detail_summary（announcement_fact）>标题命中（title_fact）>平台范围（source_scope_only），`missing_fields` 相应收缩；project_type 由标题确定性抽取（施工/EPC总承包/监理/设计/勘察/货物/服务，`project_type_provenance=标题`）；④ **E1** 新增 `GET /announcement/candidates/by-project/{project_id}`（按项目反查最近候选，只读）；⑤ **C3** `announcement/health` 增 `region_options` + `sources[].parent_region`（前端地区下拉由注册表生成，无源城市不出现）。 |
 | 2026-09-11 | v1.16 | §5 权限矩阵变更（用户决策）：**business_head（经营负责人）增加 `announcement:write`**（原只读）——经营负责人可执行搜索提交、候选确认入库、搜索任务删除等公告写操作；与投标专员同过 RBAC 门。契约测试同步（data_admin/legal 仍 403）。演示账号体系同日调整：`toubiao/123456`（投标专员）、`jingying/123456`（经营负责人）、`data_admin/data_admin`、`legal/legal`；`admin` 账号移除（此前被误配为 business_head 造成角色混淆）。 |
 | 2026-09-11 | v1.17 | **新增 `GET /intake/announcement/candidates/{candidate_id}/text`**（docs/10 §5 P1-5 溯源定位）：返回候选公告最新版本的固化净化正文全文 + `content_hash`（直读 material_versions 反查对象库，只读）——前端"在原文中定位"按 detail_summary 的 quote/start/end 高亮，hash 不一致走重定位兜底。权限=announcement:read（与候选读同门）。detail_summary 字段 schema 扩展（quote/start/end/enum/truncated/review/content_hash）见 F004 v1.6。 |
+| 2026-09-15 | v1.18 | **匹配结果逐条全量契约**（用户实测"只看到一项不合格、其余无法核对"整改，实现口径见 F023 v1.4）：① `match` 枚举增 `not_evaluated`（有运行但无 MatchItem=旧版门禁短路未执行 / 尚无运行；禁止默认 `unverifiable` 冒充缺证判定）；② matrix/requirements 逐条 DTO 增 `gate_executed`（false=门禁短路后诊断全量补齐）、`page_no`、`evidence_required`、`category`，`match_reason` 对象含 `gate_executed`；③ `match-runs/latest.coverage` 增 `gate_executed/gate_complete/short_circuited[]`（旧运行 `complete=false` 且无 `short_circuited` 字段=旧版短路结果）；④ 队列 DTO 每项增 `gate_executed`；⑤ 复核页（queue.html）与解析结果页共用「批量通过（高/中置信且已定位）」工具栏（review.js mountBatchToolbar，F021 §2.2 v1.7）。 |
+| 2026-09-16 | v1.19 | **准入摘要 `state` 语义修正**：回传项目业务准入状态（此前误传 AdmissionResult.state=final，页面显示英文）；新增 `result_freshness / decision / blocked[]`；matrix/queues/admission 队列项条款号折叠「提示（提示）」。前端结果页（score/matrix/queue/approval）去英文枚举与系统编号列表：枚举→中文标签映射（api.js 共享），系统编号→悬停/折叠，证据类型/审计动作/负责角色中文化（04-修改日志同日）。 |

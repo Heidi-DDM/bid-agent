@@ -251,3 +251,110 @@ def test_candidate_from_record_kind_specific_fields():
     q = matching.candidate_from_record("qualification_record", {"material_id": "MAT-Q-1", "level": "一级"})
     assert q["level"] == "一级"
     assert "amount" not in q
+
+# ---------- F023 §2 第 4 步：diagnostic 全量 + gate 业务状态（2026-09-15） ----------
+
+def _hard(rid, rule, assertion="要求"):
+    return {"requirement_id": rid, "req_type": "hard_requirement", "category": "资质",
+            "clause_ref": rid, "assertion": assertion, "evidence_required": ["qualification_record"],
+            "rule": rule}
+
+
+def test_run_match_gate_short_circuit_keeps_full_matrix():
+    """门禁在首个硬性失败处短路，但矩阵仍逐条全量（用户可核对每一项），短路项逐条标识。"""
+    requirements = [
+        _hard("R1", {"type": "qualification", "qualification_type": "建筑工程施工总承包", "level": "一级"}),
+        _hard("R2", {"type": "qualification", "qualification_type": "建筑工程施工总承包", "level": "二级"}),
+        _hard("R3", {"type": "qualification", "qualification_type": "市政公用工程施工总承包", "level": "一级"}),
+    ]
+    evidence = {"qualification_record": [_qualification()]}   # 二级：R1 不满足、R2 满足、R3 不满足
+    result = matching.run_match(requirements=requirements, evidence=evidence, as_of="2025-10-30")
+    assert result["mode"] == "gate"
+    assert [e["requirement_id"] for e in result["matrix"]] == ["R1", "R2", "R3"]
+    assert [e["match_result"] for e in result["matrix"]] == ["not_satisfied", "satisfied", "not_satisfied"]
+    assert [e["gate_executed"] for e in result["matrix"]] == [True, False, False]
+    assert result["coverage"] == {"declared": 3, "executed": 3, "complete": True,
+                                  "gate_executed": 1, "gate_complete": False,
+                                  "short_circuited": ["R2", "R3"]}
+    # 处置队列列全量缺项，而不是短路前的第一项
+    assert [e["requirement_id"] for e in result["blocked"]] == ["R1", "R3"]
+    assert result["qualification_result"] == "failed"
+    assert result["internal_admission_eligible"] is False
+
+
+def test_run_match_no_short_circuit_when_all_pass():
+    requirements = [_hard("R1", {"type": "qualification", "qualification_type": "建筑工程施工总承包", "level": "二级"})]
+    result = matching.run_match(requirements=requirements,
+                                evidence={"qualification_record": [_qualification()]}, as_of="2025-10-30")
+    assert result["coverage"]["short_circuited"] == []
+    assert result["coverage"]["gate_complete"] is True
+    assert result["matrix"][0]["gate_executed"] is True
+    assert result["internal_admission_eligible"] is True
+
+
+def test_run_match_diagnostic_mode_passthrough():
+    requirements = [_hard("R1", {"type": "qualification", "qualification_type": "建筑工程施工总承包", "level": "一级"})]
+    result = matching.run_match(requirements=requirements, evidence={}, as_of="2025-10-30", mode="diagnostic")
+    assert result["mode"] == "diagnostic"
+    assert "short_circuited" not in result["coverage"]
+
+
+# ---------- 引擎：未结构化规则不得编造失败/通过（2026-09-15） ----------
+
+def test_engine_unstructured_qualification_is_manual_review_not_failure():
+    """规则只定位到原文（无类别/等级）时，有资质也不得判 not_satisfied（PJ-26 安许证误判复现）。"""
+    requirements = [_hard("R1", {"type": "qualification", "anchor_key": "qualification_grade"})]
+    result = matching.run_match(requirements=requirements,
+                                evidence={"qualification_record": [_qualification()]}, as_of="2025-10-30")
+    entry = result["matrix"][0]
+    assert entry["match_result"] == "manual_review"
+    assert "未结构化" in entry["match_reason"]
+    assert result["blocked"] == []
+
+
+def test_engine_safety_license_uses_dedicated_evidence_kind():
+    active_license = {"material_id": "MAT-SL-1", "category": "安全生产许可证", "level": "不分等级",
+                      "status": "active", "verified_at": "2025-09-15", "valid_until": "2028-11-04"}
+    # 旧规则集（仅 anchor_key）与新规则集（evidence_type）都按安许证判定
+    for rule in ({"type": "qualification", "anchor_key": "safety_license"},
+                 {"type": "qualification", "anchor_key": "safety_license", "evidence_type": "safety_license"}):
+        ok = matching.run_match(
+            requirements=[_hard("R1", rule)],
+            evidence={"qualification_record": [_qualification()], "safety_license": [active_license]},
+            as_of="2025-12-19")
+        assert ok["matrix"][0]["match_result"] == "satisfied", rule
+        assert "安全生产许可证有效" in ok["matrix"][0]["match_reason"]
+        missing = matching.run_match(
+            requirements=[_hard("R1", rule)],
+            evidence={"qualification_record": [_qualification()]}, as_of="2025-12-19")
+        assert missing["matrix"][0]["match_result"] == "unverifiable", rule
+
+
+def test_engine_unstructured_rules_do_not_fabricate_conclusions():
+    from scripts.matching import engine
+
+    ev_perf = {"similar_performance": [{"material_id": "MAT-P-1", "project_name": "某项目", "subject": "bidder",
+                                        "area": 100.0, "completed_at": "2024-06-01", "status": "active",
+                                        "verified_at": "2025-01-01"}]}
+    # 业绩：无任何约束 → manual_review（否则任何一条业绩都"满足"空约束）
+    r, reason = engine._match_similar_performance({"type": "similar_performance"}, ev_perf, "2025-10-30")
+    assert r == "manual_review" and "未结构化" in reason
+    # 业绩：有约束照常判定
+    r, _ = engine._match_similar_performance({"type": "similar_performance", "min_area": 50}, ev_perf, "2025-10-30")
+    assert r == "satisfied"
+    # 技术团队：无专业要求不得判 satisfied
+    r, _ = engine._match_hard({"type": "technical_team"}, {}, "2025-10-30")
+    assert r == "manual_review"
+    # 联合体：接受 → 满足；不接受且无声明 → unverifiable；极性未知 → manual_review
+    assert engine._match_hard({"type": "consortium", "accepts_consortium": True}, {}, "2025-10-30")[0] == "satisfied"
+    assert engine._match_hard({"type": "consortium", "accepts_consortium": False}, {}, "2025-10-30")[0] == "unverifiable"
+    assert engine._match_hard({"type": "consortium"}, {}, "2025-10-30")[0] == "manual_review"
+    # 项目经理：规则无专业/等级/B证/在建约束 → manual_review
+    assert engine._match_hard({"type": "project_manager"}, {}, "2025-10-30")[0] == "manual_review"
+    # 报价限价：无金额不得比较（否则 TypeError / 编造）
+    quotes = {"bid_price_input": [{"type": "quoted_price", "amount": 100, "status": "active", "verified_at": "2025-01-01"}]}
+    assert engine._match_hard({"type": "quote_cap"}, quotes, "2025-10-30")[0] == "manual_review"
+    assert engine._match_hard({"type": "quote_cap", "max_amount": 50}, quotes, "2025-10-30")[0] == "not_satisfied"
+    # 硬性业绩要求路由到业绩判定而非「尚未实现」
+    r, reason = engine._match_hard({"type": "similar_performance", "min_area": 50}, ev_perf, "2025-10-30")
+    assert r == "satisfied"

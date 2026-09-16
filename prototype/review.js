@@ -7,7 +7,8 @@
    - 未定位到原文（missing）的候选：不显示猜测条款号，改显示「检索关键词」；动作三选一——
      本文件无此条款 / 人工定位补录（页码 + 原文摘录，后端逐字校验）/ 无法确认；**没有「通过」**；
    - 已定位候选：通过 / 编辑后确认（摘录须仍为原文逐字，修正说明另填）/ 无法确认；
-   - 「系统追溯编号」折叠区配白话说明，不作为定位手段。
+   - 「系统追溯编号」折叠区配白话说明，不作为定位手段；
+   - 「批量通过（高/中置信且已定位）」工具栏两页共用（mountBatchToolbar，2026-09-15）。
    依赖：api.js（apiBase/apiToken/apiPost/apiRole/apiName/apiShowError）。 */
 
 const REVIEW = (() => {
@@ -141,7 +142,7 @@ const REVIEW = (() => {
     // rejected（无法确认）= 搁置而非终局：找到原文/辨清扫描件后可改判（后端允许重开）。
     if (isDecided(item) && item.review_status !== "rejected") {
       box.innerHTML = `<span class="hint">${decisionLabel(item.review_status)}${item.review_note ? "：" + esc(item.review_note) : ""}</span>
-        ${item.review_request_id ? `<span class="hint" style="display:block;margin-top:4px">写入请求 request_id <code>${esc(item.review_request_id)}</code></span>` : ""}`;
+        ${item.review_request_id ? `<span class="hint" style="display:block;margin-top:4px">请求编号 <code>${esc(item.review_request_id)}</code></span>` : ""}`;
       return;
     }
     const reopenNote = item.review_status === "rejected"
@@ -342,6 +343,58 @@ const REVIEW = (() => {
       && (it.confidence === "high" || it.confidence === "medium"));
   }
 
+  /* ---------- 批量通过工具栏（requirements.html / queue.html 共用，2026-09-15） ----------
+     此前只有解析结果页有「批量通过」；09-15 上午把「去人工复核」主入口改到复核页（queue.html）后，
+     用户在复核页找不到批量按钮（实测反馈）。两页复核语义同源，批量动作也必须同源。
+     mount(containerEl, { getGroups, reload }) → { refresh() }：
+       - refresh()：按当前候选重算可批量数并更新提示；无候选/非复核阶段时由页面控制容器显隐；
+       - 点击：confirm → 逐条 POST approved（review_note 固定「批量通过（高/中置信，已定位）」）→ reload()。 */
+  const BATCH_NOTE = "批量通过（高/中置信，已定位）";
+  function mountBatchToolbar(container, { getGroups, reload }) {
+    container.innerHTML = `
+      <div class="batch-toolbar">
+        <button type="button" class="btn sm" data-batch-approve>批量通过（高/中置信且已定位）</button>
+        <span class="hint" data-batch-hint></span>
+      </div>`;
+    const btn = container.querySelector("[data-batch-approve]");
+    const hint = container.querySelector("[data-batch-hint]");
+    const refresh = () => {
+      const n = batchable(pendingItems(getGroups())).length;
+      btn.disabled = n === 0;
+      hint.textContent = n
+        ? `${n} 项可批量通过；未定位到原文 / 低置信 / 需重新决策的条目不参与批量，仍需逐条处理`
+        : "当前没有可批量通过的候选（未定位到原文 / 低置信 / 需重新决策的条目需人工逐条处理）";
+    };
+    btn.addEventListener("click", async () => {
+      const targets = batchable(pendingItems(getGroups()));
+      if (!targets.length) { alert("当前没有可批量通过的候选（未定位到原文 / 低置信 / 需重新决策的条目需人工逐条处理）"); return; }
+      if (!confirm(`批量通过 ${targets.length} 项（高/中置信且已定位到原文）？\n未定位到原文、低置信与需重新决策的条目仍留待人工逐条处理。`)) return;
+      btn.disabled = true;
+      const rids = new Set();
+      let done = 0;
+      try {
+        for (const it of targets) {
+          const rev = await apiPost(`/parse/candidates/${encodeURIComponent(it.id)}/review`, {
+            decision: "approved", reviewer: apiName() || apiRole() || "投标专员", review_note: BATCH_NOTE,
+          });
+          it.review_status = "approved";
+          it.review_request_id = rev.request_id || "";
+          if (rev.request_id) rids.add(rev.request_id);
+          done++;
+        }
+        apiShowError(null);
+        if (reload) await reload();
+        hint.textContent = `✓ 已批量通过 ${done} 项；请求编号：${[...rids].join("、") || "—"}`;
+      } catch (err) {
+        apiShowError(err);
+        alert(`批量通过失败（已成功 ${done}/${targets.length} 项）：${err.message}`);
+        if (reload) await reload();
+      } finally { btn.disabled = false; }
+    });
+    refresh();
+    return { refresh };
+  }
+
   /* ---------- as_of 确认框（F021 §2.3） ---------- */
   function asOfPanelHtml(suggestion) {
     if (suggestion && suggestion.as_of) {
@@ -386,6 +439,7 @@ const REVIEW = (() => {
   }
 
   return { esc, confLabel, isMissing, isField, isDecided, needsRedecision, statusBadge, cardHtml, bindCard,
-           renderActions, submit, openSource, pendingItems, batchable, asOfPanelHtml, readAsOf, bindAsOfPanel,
+           renderActions, submit, openSource, pendingItems, batchable, mountBatchToolbar,
+           asOfPanelHtml, readAsOf, bindAsOfPanel,
            REJECT_REASONS, REQ_TYPE_LABEL };
 })();

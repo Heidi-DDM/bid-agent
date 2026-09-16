@@ -206,7 +206,7 @@ function apiShowError(err, containerId = "api-error") {
   const box = document.getElementById(containerId);
   if (!box) return;
   if (!err) { box.innerHTML = ""; box.style.display = "none"; return; }  // 清除错误显示（2026-09-03 修复：confirm 成功分支调 apiShowError(null) 曾崩 TypeError → 误导「确认失败」alert）
-  const rid = err.requestId ? `<br><span class="hint">request_id：<code>${err.requestId}</code></span>` : "";
+  const rid = err.requestId ? `<br><span class="hint">请求编号：<code>${err.requestId}</code>（反馈问题时附上）</span>` : "";
   box.innerHTML = `<div class="notice error"><b>${err.message}</b>${rid}</div>`;
   box.style.display = "block";
 }
@@ -259,6 +259,96 @@ function apiFmtMoney(n) {
   if (n === null || n === undefined || n === "") return "—";
   if (typeof n === "number") return n.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
   return String(n);
+}
+
+/* 证据类型（规则 evidence_required / 引擎 evidence kind）→ 中文（页面不出现英文代码；未知类型原样返回） */
+const EVIDENCE_KIND_LABEL = {
+  qualification_record: "资质证书", safety_license: "安全生产许可证", business_license: "营业执照",
+  performance_record: "业绩证明", similar_performance: "类似业绩证明",
+  manager_profile: "项目经理资料", personnel_roster: "人员名册", technical_team_member: "技术团队人员",
+  safety_officer_cert: "专职安全员 C 证", financial_report: "财务审计报告", financial_audit: "财务审计报告",
+  bank_credit: "银行资信证明", credit_check: "信用核查记录", credit_check_report: "信用核查记录",
+  bid_bond_receipt: "保证金到账凭证", bid_bond: "保证金到账凭证", bid_document: "投标文件",
+  tax_social_proof: "纳税与社保证明", social_security_proof: "社保缴纳证明", honor_certificate: "荣誉/奖项证书",
+  equipment_list: "拟投入设备清单", consortium_declaration: "联合体/独立投标声明", response_document: "响应性文件",
+  bid_price_input: "人工录入报价", evidence_file: "证据文件",
+};
+function apiEvidenceKindLabel(kind) { return EVIDENCE_KIND_LABEL[kind] || String(kind || ""); }
+
+/* 证据引用（material_id:vN:pM）→ 可读文本：「资料 MAT-… 第 M 页」 */
+function apiEvidenceRefLabel(ref) {
+  const m = /^(.+?):v(\d+)(?::p(\d+))?$/.exec(String(ref || ""));
+  if (!m) return String(ref || "");
+  return `资料 ${m[1]}${m[3] ? ` 第 ${m[3]} 页` : ""}（版本 ${m[2]}）`;
+}
+
+/* ---------- 准入结果中文化（score / approval 共用，2026-09-16：页面不出现英文枚举与系统编号列表） ---------- */
+/* 项目准入状态（ADR-001 §2.2 状态机） */
+const ADMISSION_STATE_META = {
+  collecting: ["info", "信息收集中"], parsing: ["info", "解析中"], manual_review: ["review", "待人工复核"],
+  matching: ["info", "匹配中 / 待人工复核"], blocked_missing_data: ["warn", "缺证阻断"],
+  blocked_hard_requirement: ["danger", "硬性不满足"], blocked_waiver_expired: ["warn", "豁免过期阻断"],
+  qualified_full_score: ["ok", "内部满分"], not_qualified: ["danger", "资格不满足"],
+  pending_bid_approval: ["info", "待审批"], approved_for_bidding: ["ok", "已批准投标"],
+  rejected_by_approver: ["gray", "已驳回"], archived: ["gray", "已归档"],
+};
+/* 四类结论（F008 §4.6） */
+const QUALIFICATION_META = { passed: ["ok", "通过"], satisfied: ["ok", "通过"], pending: ["warn", "待定（有缺证或待复核）"], failed: ["danger", "未通过（硬性不满足）"] };
+const SCORING_META = { full: ["ok", "满分"], not_full: ["warn", "未满分"] };
+const READINESS_META = { ready: ["ok", "就绪"], not_ready: ["warn", "未就绪"] };
+function apiMetaLabel(meta, value, fallback) { return (meta[value] || ["gray", fallback])[1]; }
+function apiMetaBadge(meta, value, fallback) {
+  const m = meta[value] || ["gray", fallback];
+  return `<span class="badge ${m[0]}" title="${String(value || "")}">${m[1]}</span>`;
+}
+function apiAdmissionStateBadge(state) { return apiMetaBadge(ADMISSION_STATE_META, state, "状态待定"); }
+
+/* 处置项（缺证 / 复核 / 硬性失败）的可读摘要：中文缺因或条款原文短摘 + 条款号；系统编号只放悬停提示 */
+function apiQueueItemBrief(it, preferReason) {
+  const escT = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const clause = it.clause_ref || it.clause || "";
+  const text = String(it.text || "").replace(/\s+/g, "");
+  // 缺因只取主句（括号内的解释、分号后的补充不进摘要），如「投标动作尚未开始（报名…）」→「投标动作尚未开始」
+  const reason = String(it.reason || "").replace(/\s+/g, "").split(/[（(；;]/)[0];
+  let brief = preferReason && reason ? reason : text;
+  if (!brief) brief = reason || "（无摘要）";
+  const cut = preferReason ? 24 : 16;
+  if (brief.length > cut) brief = brief.slice(0, cut) + "…";
+  return `<span title="系统编号 ${escT(it.requirement_id || it.req || "")}">${escT(brief)}${clause ? `（${escT(clause)}）` : ""}</span>`;
+}
+function apiQueueBriefList(items, preferReason, max = 4) {
+  const list = items || [];
+  const parts = list.slice(0, max).map((it) => apiQueueItemBrief(it, preferReason));
+  return parts.join("、") + (list.length > max ? `，等共 ${list.length} 项` : "");
+}
+
+/* 审计动作名 → 中文（审计时间线；未知动作原样显示，不猜） */
+const AUDIT_ACTION_LABEL = {
+  "auth.login": "登录", "project.create": "创建项目",
+  "material.import": "材料入库", "material.duplicate": "材料重复（幂等复用）", "material.hash_mismatch": "文件指纹不一致",
+  "material.metadata_update": "材料元数据更新", "material.supplement.linked": "补录材料回链要求", "material.verify": "材料核验",
+  "ocr.route": "原文路由（文本/OCR）", "ocr.route.completed": "原文路由完成", "ocr.review": "OCR 结果复核",
+  "parse.candidates_stored": "解析候选入库", "parse.candidate.review": "解析候选复核", "parse.confirmed": "确认写入规则集",
+  "knowledge.index_triggered": "触发知识索引", "knowledge.index.completed": "知识索引完成",
+  "knowledge.search": "知识检索", "knowledge.search_denied": "知识检索被拒（权限）",
+  "match.trigger": "触发匹配", "match.auto_trigger": "自动触发首次匹配", "match.recalculate": "重算匹配", "match.completed": "匹配完成",
+  "admission.generated": "生成准入结果", "admission.mark_stale": "旧准入结果标记过期",
+  "blocked_missing_data": "缺证阻断", "blocked_hard_requirement": "硬性不满足阻断",
+  "create_approval": "创建审批", "approval.create_denied": "创建审批被拒", "approve": "审批通过", "reject": "审批驳回",
+  "add_waiver": "登记豁免", "expire_waivers": "豁免到期失效",
+  "qualification.create": "新增资质", "performance.create": "新增业绩", "personnel.create": "新增人员", "evidence.create": "新增证据",
+  "enterprise.ledger.preview": "台账导入预览", "enterprise.ledger.commit": "台账导入入库",
+  "announcement.import.completed": "公告导入完成", "announcement.search.delete": "删除搜索任务",
+};
+function apiAuditActionLabel(action) {
+  if (AUDIT_ACTION_LABEL[action]) return AUDIT_ACTION_LABEL[action];
+  const m = /^enterprise\.(\w+)\.(import|expire|reimport|verify)$/.exec(action || "");
+  if (m) {
+    const kind = { qualification: "资质", performance: "业绩", manager: "项目经理", personnel: "人员" }[m[1]] || m[1];
+    return kind + { import: "导入", expire: "失效", reimport: "重新导入", verify: "核验" }[m[2]];
+  }
+  if (/^rbac\.deny\./.test(action || "")) return "越权访问被拒";
+  return String(action || "");
 }
 
 /* 初始化：页面加载时若已有 token 可静默探测 /auth/me（失败即登出） */

@@ -510,7 +510,7 @@
         }
         pendingUploadKey = ""; // 本文件已登记：幂等键作废，下次上传重新生成
         progress.innerHTML = `<div class="notice info"><b>原文已登记</b>：${data.material_id} v${data.version} · created=${data.created}
-          <br><span class="hint">审计信息：sha256 <code>${(data.content_hash || "").slice(0, 16)}…</code> · job_id <code>${data.job_id || "—"}</code> · request_id <code>${data.request_id || "—"}</code></span></div>`;
+          <br><span class="hint">审计信息：文件指纹 <code>${(data.content_hash || "").slice(0, 16)}…</code> · 任务编号 <code>${data.job_id || "—"}</code> · 请求编号 <code>${data.request_id || "—"}</code></span></div>`;
         if (!data.created && !data.job_id) {
           progress.insertAdjacentHTML("beforeend", `<div class="notice warn">同一原文（sha256）已在此项目登记（幂等返回既有材料）。如需重新解析请用下方「重新解析」。</div>`);
           resetFileSelection();
@@ -520,7 +520,7 @@
         // 轮询解析任务
         const tick = (d) => {
           const st = d.status === "completed" ? (d.parse_status === "parsed" ? "completed(已确认)" : "completed(待人工复核)") : d.status;
-          progress.innerHTML = `<div class="notice info"><b>解析任务</b>：job_id <code>${data.job_id}</code> · ${apiStatusBadge(st)}` +
+          progress.innerHTML = `<div class="notice info"><b>解析任务</b>：任务编号 <code>${data.job_id}</code> · ${apiStatusBadge(st)}` +
             (d.error_code ? ` · ${d.error_code}` : "") + `</div>`;
         };
         const done = await apiPollJob(`/intake/${data.job_id}`, { onTick: tick, label: "解析" });
@@ -539,7 +539,7 @@
         loadMaterials();
       } catch (err) {
         apiShowError(err);
-        progress.innerHTML = `<div class="notice error">上传/解析失败：${uploadErrorHtml(err)}${err.requestId ? `<br><span class="hint">request_id：<code>${err.requestId}</code></span>` : ""}</div>`;
+        progress.innerHTML = `<div class="notice error">上传/解析失败：${uploadErrorHtml(err)}${err.requestId ? `<br><span class="hint">请求编号：<code>${err.requestId}</code></span>` : ""}</div>`;
         btnParse.disabled = !selectedFile; // 允许修正后重试（再次点击生成新幂等键）
       }
     });
@@ -618,7 +618,7 @@
       progress.innerHTML = `<div class="notice info">提交重新解析…</div>`;
       try {
         const rj = await apiPost(`/intake/${m.material_id}/reparse`, {});
-        progress.innerHTML = `<div class="notice info">重新解析任务 request_id <code>${rj.request_id || "—"}</code> · job_id <code>${rj.job_id}</code> 已提交，轮询中…</div>`;
+        progress.innerHTML = `<div class="notice info">重新解析任务已提交（请求编号 <code>${rj.request_id || "—"}</code> · 任务编号 <code>${rj.job_id}</code>），等待执行…</div>`;
         await apiPollJob(`/intake/${rj.job_id}`, { label: "重新解析" });
         progress.innerHTML = `<div class="notice ok"><b>重新解析完成</b>：已定位候选保留、新锚点候选已补充（如有）——请到解析结果核对后人工复核。
           <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">

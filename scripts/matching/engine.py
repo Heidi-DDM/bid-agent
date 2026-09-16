@@ -10,6 +10,9 @@ from typing import Any
 
 
 RESULTS = {"satisfied", "not_satisfied", "unverifiable", "manual_review"}
+# 动作项状态 → 中文（判定原因面向投标专员，不出现英文枚举）
+ACTION_STATUS_LABEL = {"not_started": "尚未开始", "ready": "就绪", "completed": "完成",
+                       "overdue": "已逾期", "not_applicable": "不适用"}
 
 
 def _day(value: Any) -> date | None:
@@ -67,18 +70,34 @@ def validate_requirements(requirements: list[dict[str, Any]], expected_count: in
     return {"valid": not errors, "errors": errors, "count": len(requirements), "counts": counts}
 
 
+UNSTRUCTURED_RULE_NOTE = "规则仅定位到条款原文、未结构化出可比对参数"
+
+
 def _match_hard(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]], as_of: str) -> tuple[str, str]:
     kind = rule.get("type")
     if kind == "qualification":
-        records = _evidence(evidence, rule.get("evidence_type", "qualification_record"), as_of)
+        evidence_type = rule.get("evidence_type") or (
+            "safety_license" if rule.get("anchor_key") == "safety_license" else "qualification_record")
+        records = _evidence(evidence, evidence_type, as_of)
+        if evidence_type == "safety_license":
+            # 安全生产许可证不分等级：存在时点有效且已核验的许可证即满足，不与资质等级比对
+            if records:
+                rec = records[0]
+                return "satisfied", f"安全生产许可证有效（{rec.get('material_id') or rec.get('category')}，有效期至 {rec.get('valid_until') or '未填'}）"
+            return "unverifiable", "缺少在 as_of 时点有效且已核验的安全生产许可证"
         if not records:
             return "unverifiable", "缺少在 as_of 时点有效且已核验的资质证据"
-        acceptable = rule.get("acceptable", [{"category": rule.get("qualification_type"), "level": rule.get("level")}])
-        for wanted in acceptable:
+        acceptable = rule.get("acceptable") or [{"category": rule.get("qualification_type"), "level": rule.get("level")}]
+        comparable = [w for w in acceptable if w.get("category") or w.get("level")]
+        if not comparable:
+            return "manual_review", f"{UNSTRUCTURED_RULE_NOTE}（资质类别/等级），现有 {len(records)} 条有效资质需人工核对"
+        for wanted in comparable:
             for record in records:
                 if record.get("category") == wanted.get("category") and _level(record.get("level")) >= _level(wanted.get("level")):
                     return "satisfied", f"{record.get('category')} {record.get('level')} 满足 {wanted.get('level')}"
-        return "not_satisfied", "存在有效资质，但类别或等级不满足"
+        have = "、".join(f"{r.get('category')} {r.get('level') or ''}".strip() for r in records[:3])
+        want = "、".join(f"{w.get('category') or '?'} {w.get('level') or ''}".strip() for w in comparable)
+        return "not_satisfied", f"存在有效资质（{have}），但类别或等级不满足要求（{want}）"
     if kind == "financial":
         years = set(rule.get("years", []))
         audits = [e for e in _evidence(evidence, "financial_report", as_of) if e.get("year") in years]
@@ -98,18 +117,27 @@ def _match_hard(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]],
         return "satisfied", "信用三查证据完整且无失信记录"
     if kind == "consortium":
         declared = evidence.get("consortium_declaration", [])
-        if rule.get("allowed") is False and any(d.get("declares") == "独立投标，不组成联合体" for d in declared):
-            return "satisfied", "已声明独立投标"
-        return "unverifiable", "缺少联合体/独立投标声明"
+        # 解析器输出极性字段 accepts_consortium（F021），旧规则用 allowed；二者同义
+        allowed = rule.get("allowed", rule.get("accepts_consortium"))
+        if allowed is True:
+            return "satisfied", "招标文件接受联合体投标，独立投标或联合体均可，无额外阻断"
+        if allowed is None:
+            return "manual_review", "联合体条款极性未判定（接受/不接受），需人工核对原文"
+        if any(d.get("declares") == "独立投标，不组成联合体" for d in declared):
+            return "satisfied", "不接受联合体，已声明独立投标"
+        return "unverifiable", "不接受联合体，缺少独立投标声明"
     if kind == "project_manager":
+        if not (rule.get("specialty") or rule.get("cert_level") or rule.get("require_b_cert")
+                or "require_no_active_project" in rule):
+            return "manual_review", f"{UNSTRUCTURED_RULE_NOTE}（专业/等级/B证/在建约束），需人工核对拟派项目经理"
         managers = _evidence(evidence, "manager_profile", as_of)
         if not managers:
             return "unverifiable", "缺少时点有效且已核验的项目经理证据"
         for manager in managers:
             specialty = set(manager.get("specialty", []))
-            if not specialty.intersection(rule.get("specialty", [])):
+            if rule.get("specialty") and not specialty.intersection(rule.get("specialty", [])):
                 continue
-            if _level(manager.get("cert_level")) < _level(rule.get("cert_level")):
+            if rule.get("cert_level") and _level(manager.get("cert_level")) < _level(rule.get("cert_level")):
                 continue
             if rule.get("require_b_cert") and not manager.get("b_cert"):
                 continue
@@ -122,6 +150,8 @@ def _match_hard(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]],
         receipts = _evidence(evidence, "bid_bond", as_of)
         if not receipts:
             return "unverifiable", "缺少保证金到账凭证"
+        if rule.get("amount") is None:
+            return "manual_review", f"{UNSTRUCTURED_RULE_NOTE}（保证金金额/形式），已有凭证需人工核对"
         for receipt in receipts:
             if receipt.get("amount") == rule.get("amount") and receipt.get("form") in rule.get("forms", []):
                 return "satisfied", "保证金金额、形式和到账凭证满足要求"
@@ -133,13 +163,20 @@ def _match_hard(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]],
     if kind == "safety_officer":
         certs = _evidence(evidence, "safety_officer_cert", as_of)
         valid = [c for c in certs if not rule.get("require_c_cert") or c.get("cert_type") == "C"]
-        if len(valid) >= rule.get("count", 1):
+        if rule.get("count") is None:
+            # 人数要求未结构化：不能默认「1 人」判满足（原文可能要求 3 人/5 人）
+            if not valid:
+                return "unverifiable", "缺少时点有效且已核验的专职安全员 C 证证据"
+            return "manual_review", f"{UNSTRUCTURED_RULE_NOTE}（配备人数），现有 {len(valid)} 名有效 C 证专职安全员，需人工核对原文人数要求"
+        if len(valid) >= rule.get("count"):
             return "satisfied", f"专职安全生产管理人员 {len(valid)} 人（≥{rule.get('count')}）且C证有效"
         return "unverifiable", f"安全员C证有效数量 {len(valid)} 不足 {rule.get('count')} 或证据缺失"
     if kind == "technical_team":
+        wanted = set(rule.get("specialties", []))
+        if not wanted:
+            return "manual_review", f"{UNSTRUCTURED_RULE_NOTE}（技术团队专业要求），需人工核对"
         members = _evidence(evidence, "technical_team_member", as_of)
         covered = {m.get("specialty") for m in members if m.get("specialty")}
-        wanted = set(rule.get("specialties", []))
         if wanted.issubset(covered):
             return "satisfied", f"技术团队覆盖专业 {sorted(covered)}（要求 {sorted(wanted)}）"
         return "unverifiable", f"技术团队专业覆盖 {sorted(covered)}，缺 {sorted(wanted - covered)}"
@@ -150,6 +187,8 @@ def _match_hard(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]],
         amount = quotes[0].get("amount")
         if amount is None:
             return "unverifiable", "报价金额字段缺失"
+        if rule.get("max_amount") is None:
+            return "manual_review", f"{UNSTRUCTURED_RULE_NOTE}（最高投标限价金额），需人工核对报价 {amount}"
         if amount > rule.get("max_amount"):
             return "not_satisfied", f"报价 {amount} 超过最高投标限价 {rule.get('max_amount')}"
         return "satisfied", f"报价 {amount} 未超最高投标限价 {rule.get('max_amount')}"
@@ -163,7 +202,10 @@ def _match_hard(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]],
             if p.get("continuous_months", 0) >= rule.get("continuous_months", 1):
                 return "satisfied", f"社保连续缴纳 {p.get('continuous_months')} 个月满足要求"
         return "unverifiable", "社保证明未满足连续月数或主体要求"
-    return "manual_review", f"规则类型 {kind!r} 尚未实现"
+    if kind == "similar_performance":
+        # 资格审查口径的业绩硬性要求（如「自 X 年以来完成过一项 N 万元及以上…业绩」）与评分项共用判定
+        return _match_similar_performance(rule, evidence, as_of)
+    return "manual_review", f"规则类型 {kind!r} 尚未实现自动判定，需人工按条款原文核对"
 
 
 def _match_similar_performance(rule: dict[str, Any], evidence: dict[str, list[dict[str, Any]]], as_of: str) -> tuple[str, str]:
@@ -172,15 +214,19 @@ def _match_similar_performance(rule: dict[str, Any], evidence: dict[str, list[di
     判定口径（农大招标文件 第三章四(5) 备注 c）：
     - 以竣工验收报告中明确的竣工时间或合同中的计划竣工日期为准（completed_at / planned_end）；
     - 投标人业绩与项目经理业绩不可通用（subject 区分 bidder / project_manager）；
-    - 证据存在但无一满足 → unverifiable（不推断满足，不冒充评标得分）。
+    - 证据存在但无一满足 → unverifiable（不推断满足，不冒充评标得分）；
+    - 规则未结构化（无起算期/面积/金额/类型任一约束）→ manual_review：任何一条业绩都能"满足"空约束，属虚假通过。
     """
+    if not any(rule.get(k) is not None for k in ("since", "min_area", "min_amount", "project_type", "date_after")):
+        return "manual_review", f"{UNSTRUCTURED_RULE_NOTE}（业绩起算期/规模/类型），需人工核对企业业绩"
     records = _evidence(evidence, rule.get("evidence_type", "similar_performance"), as_of)
     if not records:
         return "unverifiable", "缺少时点有效且已核验的类似业绩证据"
     subject = rule.get("subject", "bidder")
-    since = _day(rule.get("since"))
+    since = _day(rule.get("since") or rule.get("date_after"))
     point = _day(as_of)
     min_area = rule.get("min_area", 0)
+    min_amount = rule.get("min_amount")
     wanted_type = rule.get("project_type")
     for rec in records:
         if rec.get("subject") != subject:
@@ -190,10 +236,14 @@ def _match_similar_performance(rule: dict[str, Any], evidence: dict[str, list[di
             continue
         if rec.get("area") is not None and rec.get("area") < min_area:
             continue
+        if min_amount is not None:
+            amount = rec.get("contract_amount")
+            if amount is None or float(amount) < float(min_amount):
+                continue
         if wanted_type and rec.get("project_type") != wanted_type:
             continue
         return "satisfied", f"{subject} 类似业绩满足（{rec.get('project_name', '')} 面积 {rec.get('area')}㎡，竣工 {done}）"
-    return "unverifiable", f"已有类似业绩记录但无一满足条件（主体/面积/竣工窗口/类型）"
+    return "unverifiable", f"已有类似业绩记录 {len(records)} 条但无一满足条件（主体/面积/金额/竣工窗口/类型）"
 
 
 def _match_scored(item: dict[str, Any], evidence: dict[str, list[dict[str, Any]]], as_of: str) -> tuple[str, str, int | None, bool]:
@@ -212,12 +262,15 @@ def _match_scored(item: dict[str, Any], evidence: dict[str, list[dict[str, Any]]
         quotes = [q for q in evidence.get("bid_price_input", []) if q.get("type") == "quoted_price" and q.get("entered_by")]
         if not quotes:
             return "unverifiable", "报价未由人员录入，系统不生成或推荐报价", None, False
+    present: list[str] = []
     for kind in item.get("evidence_required", []):
         if not _evidence(evidence, kind, as_of):
-            return "unverifiable", f"缺少时点有效的计分证据: {kind}", None, False
+            return "unverifiable", f"缺少时点有效且已核验的计分证据（{kind}），不计分", None, False
+        present.append(kind)
     score = item.get("max_score") if (item.get("score_formula") or {}).get("kind") == "fixed_max" else None
     if score is None:
-        return "manual_review", "评分公式或输入不完整，需人工复核", None, False
+        have = f"，已有证据 {present}" if present else ""
+        return "manual_review", f"评分项无可复算的评分公式（score_formula 未结构化）{have}；得分需人工按评标办法核对，不计入内部满分", None, False
     return "satisfied", f"客观项可复算 {score}/{item.get('max_score')}", score, score == item.get("max_score")
 
 
@@ -240,9 +293,13 @@ def evaluate(requirements: list[dict[str, Any]], evidence: dict[str, list[dict[s
         elif item["req_type"] == "scored_requirement":
             result, reason, score, full = _match_scored(item, evidence, as_of)
         else:
-            status = item.get("action_status", "not_started")
-            result, reason, score = ("satisfied", f"动作状态={status}", None) if status in ("ready", "completed") else ("unverifiable", f"动作状态={status}，尚未就绪", None)
-        entry = {"requirement_id": item["requirement_id"], "req_type": item["req_type"], "clause_ref": item["clause_ref"], "match_result": result, "match_reason": reason, "score": score}
+            status = item.get("action_status") or "not_started"
+            label = ACTION_STATUS_LABEL.get(status, status)
+            result, reason, score = (
+                ("satisfied", f"投标动作已{label}（由人员登记）", None) if status in ("ready", "completed")
+                else ("unverifiable", f"投标动作{label}（报名/递交/开标等由人员完成后登记，系统不代办）", None))
+        entry = {"requirement_id": item["requirement_id"], "req_type": item["req_type"], "clause_ref": item["clause_ref"],
+                 "match_result": result, "match_reason": reason, "score": score, "max_score": item.get("max_score")}
         matrix.append(entry)
         if result == "not_satisfied": blocked.append(entry)
         elif result == "unverifiable": pending.append(entry)

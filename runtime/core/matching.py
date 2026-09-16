@@ -311,7 +311,13 @@ def run_match(
     lot_id: Optional[str] = None,
     evaluate_fn: Optional[Callable] = None,
 ) -> dict:
-    """执行规则判定（方案 §3.5 第 4 步）：只有核验通过的证据交给规则引擎。
+    """执行规则判定（方案 §3.5 第 4 步 / F023 §2 第 4 步）：只有核验通过的证据交给规则引擎。
+
+    F023 §2 第 4 步分两次执行：先 ``diagnostic`` 全量得到每条要求的判定与原因，再 ``gate``
+    计算业务状态（硬性不满足即短路、一票否决）。返回合并结果：矩阵取全量（每条要求都有
+    结论与原因，用户可逐条核对满足/不满足），短路后门禁未执行到的条目逐条标 ``gate_executed=False``
+    并在 ``coverage.short_circuited`` 点名（F008 覆盖门禁：未执行项必须标识，禁止展示为通过）。
+    ``mode="diagnostic"`` 直接返回全量结果。
 
     evaluate_fn 可注入（测试）；默认 scripts.matching.engine.evaluate（延迟导入，
     引擎不可用 → MatchNotRunnableError，不伪造成功）。
@@ -319,7 +325,58 @@ def run_match(
     if not requirements:
         raise MatchNotRunnableError("规则集为空，匹配不可执行（不伪造成功）")
     fn = evaluate_fn or _load_engine_evaluate()
-    return fn(requirements, evidence, as_of=as_of, mode=mode, lot_id=lot_id)
+    diagnostic = fn(requirements, evidence, as_of=as_of, mode="diagnostic", lot_id=lot_id)
+    if mode == "diagnostic":
+        return diagnostic
+    gate = fn(requirements, evidence, as_of=as_of, mode="gate", lot_id=lot_id)
+    return merge_gate_with_diagnostic(gate=gate, diagnostic=diagnostic)
+
+
+def merge_gate_with_diagnostic(*, gate: dict, diagnostic: dict) -> dict:
+    """门禁结果 + 诊断全量结果 → 单次 gate 运行的完整输出（F023 §2 第 4 步）。
+
+    - matrix/blocked/pending/review 取诊断全量：处置队列列出全部缺项而非短路前的第一项；
+    - 业务结论（qualification_result 等）以诊断全量如实汇总——硬性失败在两种模式下都在
+      blocked 内，一票否决结论不变；门禁在截断矩阵上算出的 scoring/readiness 是空集上的
+      「满分/就绪」，属虚假结论，不采用；
+    - coverage.executed/complete 描述本次运行实际执行（全量），gate_executed/gate_complete/
+      short_circuited 描述门禁短路情况。
+    """
+    gate_ids = {e.get("requirement_id") for e in gate.get("matrix") or []}
+    matrix: list[dict] = []
+    by_id: dict[Any, dict] = {}
+    for entry in diagnostic.get("matrix") or []:
+        item = dict(entry)
+        item["gate_executed"] = item.get("requirement_id") in gate_ids
+        matrix.append(item)
+        by_id[item.get("requirement_id")] = item
+    short_circuited = [e["requirement_id"] for e in matrix if not e["gate_executed"]]
+
+    def _annotated(entries: list[dict] | None) -> list[dict]:
+        # 队列项与矩阵同源同标记（处置队列据此提示「门禁短路后·诊断结果」）
+        return [by_id.get(e.get("requirement_id"), dict(e, gate_executed=True)) for e in entries or []]
+
+    cov_full = dict(diagnostic.get("coverage") or {})
+    cov_gate = gate.get("coverage") or {}
+    coverage = {
+        "declared": cov_full.get("declared"),
+        "executed": cov_full.get("executed"),
+        "complete": cov_full.get("complete"),
+        "gate_executed": cov_gate.get("executed"),
+        "gate_complete": cov_gate.get("complete"),
+        "short_circuited": short_circuited,
+    }
+    merged = dict(diagnostic)
+    merged.update(
+        mode="gate", matrix=matrix, coverage=coverage,
+        blocked=_annotated(diagnostic.get("blocked")),
+        pending=_annotated(diagnostic.get("pending")),
+        review=_annotated(diagnostic.get("review")),
+    )
+    # 门禁若已短路（硬性失败），准入必然不可通过；两种模式在此一致，取交集防御引擎实现差异
+    merged["internal_admission_eligible"] = bool(
+        diagnostic.get("internal_admission_eligible")) and bool(gate.get("internal_admission_eligible"))
+    return merged
 
 
 def _load_engine_evaluate() -> Callable:

@@ -702,6 +702,10 @@ def extract_rule_candidates(
         if key == "consortium":
             # 极性 = f(命中原文)，不由锚点词面决定（「是否接受…：否」→ False；判不出 → None）
             rule["accepts_consortium"] = consortium_match(matched)[0]
+        if key == "safety_license":
+            # 安许证不分等级，证据种类独立（matching.build_enterprise_evidence 归入 safety_license）；
+            # 不带此字段时引擎会拿总承包资质比等级，把有效安许证误判硬性失败（PJ-26a44c8684 实测）
+            rule["evidence_type"] = "safety_license"
         candidates.append(RuleCandidate(
             requirement_id=f"{id_prefix}-{req_type_to_code(req_type)}-{seq:03d}-draft",
             req_type=req_type,

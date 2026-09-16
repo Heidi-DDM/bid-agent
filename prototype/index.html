@@ -229,7 +229,7 @@
         msg.innerHTML = "登记中…";
         try {
           const r = await apiPost("/intake/announcement/candidates/manual", { title, url });
-          msg.innerHTML = `✓ 已登记为候选（request_id <code>${esc(r.request_id || "—")}</code> · job <code>${esc(r.job_id)}</code> · created=${r.created}）——候选列表已打开，点「选择深入」走合规建档。`;
+          msg.innerHTML = `✓ 已登记为候选（${r.created ? "新任务" : "复用已有任务"} · 请求编号 <code>${esc(r.request_id || "—")}</code>）——候选列表已打开，点「选择深入」走合规建档。`;
           await loadJobCandidates(r.job_id);
         } catch (err) {
           msg.innerHTML = `登记失败：${esc(err.message)}`;
@@ -311,7 +311,7 @@
     }
 
     function healthErrHtml(err) {
-      const rid = err.requestId ? `（request_id <code>${esc(err.requestId)}</code>）` : "";
+      const rid = err.requestId ? `（请求编号 <code>${esc(err.requestId)}</code>）` : "";
       if (err.status === 404) {
         // apiHealth() 已先做探测自愈（apiProbeHealth）；走到这里说明探测候选也全部 404 → 后端未启动或挂在别处
         return `<div class="notice error"><b>健康检查地址不存在（HTTP 404）</b>${rid}：已自动尝试修正 API 基地址仍失败。
@@ -558,7 +558,7 @@
         btn.textContent = "抓取详情原文并建档中…";
         const card = btn.closest(".project-card");
         if (card) card.insertAdjacentHTML("beforeend",
-          `<div class="hint" style="margin-top:6px">导入任务：request_id <code>${r.request_id || "—"}</code> · job_id <code>${r.job_id || "—"}</code>——抓取详情原文并建档，成功后自动跳转上传页。</div>`);
+          `<div class="hint" style="margin-top:6px">导入任务：请求编号 <code>${r.request_id || "—"}</code> · 任务编号 <code>${r.job_id || "—"}</code>——抓取详情原文并建档，成功后自动跳转上传页。</div>`);
         for (let i = 0; i < 240; i++) {   // 上限 240×1.5s=6min
           await new Promise((res) => setTimeout(res, 1500));
           const st = await apiGet(`/intake/announcement/candidates/${candidateId}`);
@@ -578,7 +578,7 @@
         }
         btn.disabled = false;
         btn.textContent = original;
-        alert("导入任务等待超时：worker 可能未运行（见健康检查）。任务会继续排队，可稍后从最近任务重新打开。job_id：" + (r.job_id || "") + (r.request_id ? " · request_id：" + r.request_id : ""));
+        alert("导入任务等待超时：worker 可能未运行（见健康检查）。任务会继续排队，可稍后从最近任务重新打开。job_id：" + (r.job_id || "") + (r.request_id ? " · 请求编号：" + r.request_id : ""));
       } catch (err) {
         apiShowError(err);
         btn.disabled = false;
@@ -674,12 +674,12 @@
           { keyword, region, collect_mode: "manual_trigger", sources: checkedSources() });
         // 提交请求的 request_id 是本次动作的审计锚点；轮询端点每次请求另有自己的 request_id，不再覆盖展示
         const searchRid = job.request_id || "";
-        box.innerHTML = `<div class="notice info"><b>搜索任务已提交</b>：request_id <code>${searchRid}</code> · job_id <code>${job.job_id}</code>（${job.created === false ? "幂等复用既有任务" : "新建，排队执行中"}）…</div>`;
+        box.innerHTML = `<div class="notice info"><b>搜索任务已提交</b>：请求编号 <code>${searchRid}</code> · 任务编号 <code>${job.job_id}</code>（${job.created === false ? "幂等复用既有任务" : "新建，排队执行中"}）…</div>`;
         const statusBox = (d) => {
           const tick = d.status === "running"
             ? "worker 正在抓取已启用来源列表页（robots+限频）"
             : "排队中…";
-          box.innerHTML = `<div class="notice info"><b>搜索任务</b>：request_id <code>${searchRid}</code> · job_id <code>${job.job_id}</code> · 状态 ${apiStatusBadge(d.status)} · ${tick}</div>`;
+          box.innerHTML = `<div class="notice info"><b>搜索任务</b>：请求编号 <code>${searchRid}</code> · 任务编号 <code>${job.job_id}</code> · 状态 ${apiStatusBadge(d.status)} · ${tick}</div>`;
         };
         let done;
         try {
@@ -687,7 +687,7 @@
             { onTick: statusBox, label: "公告搜索" });
         } catch (pollErr) {
           if (pollErr.status === 504 && (workerDown || workerUnknown)) {
-            box.innerHTML = `<div class="notice warn"><b>任务仍排队中</b>：job_id <code>${job.job_id}</code> —— 处理服务（worker）未见心跳，任务将等待其接管。请启动 worker 后刷新页面，从「最近搜索任务」重新打开本任务。</div>`;
+            box.innerHTML = `<div class="notice warn"><b>任务仍排队中</b>：任务编号 <code>${job.job_id}</code> —— 处理服务（worker）未见心跳，任务将等待其接管。请启动 worker 后刷新页面，从「最近搜索任务」重新打开本任务。</div>`;
             loadSearchHistory();
             return;
           }
