@@ -103,6 +103,22 @@ a:hover { text-decoration: underline; }
   padding: 2px 8px; border-radius: 999px;
   white-space: nowrap;
 }
+/* 全局服务状态（ADR-004 §2.6 / 优化方案 §10.1）：API / 数据库 / 异步 worker / 模型 分项显示 */
+.svc-strip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 999px; padding: 2px 8px;
+  font-size: 12px; white-space: nowrap; cursor: help;
+}
+.svc-strip .svc { display: inline-flex; align-items: center; gap: 3px; color: #e5e7eb; }
+.svc-strip .svc::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; }
+.svc-strip .svc.ok::before { background: #22c55e; }
+.svc-strip .svc.bad::before { background: #ef4444; }
+.svc-strip .svc.degraded::before { background: #f59e0b; }
+.svc-strip .svc.unknown::before { background: #9ca3af; }
+.svc-banner { max-width: 1280px; margin: 10px auto -6px; padding: 0 24px; }
+.svc-banner .notice { margin: 0; }
 
 /* ---------- 布局 ---------- */
 .layout { display: flex; max-width: 1280px; margin: 0 auto; gap: 20px; padding: 20px 24px 60px; }
@@ -553,3 +569,31 @@ textarea { resize: vertical; min-height: 76px; }
 .tbl tr.row-warn td:first-child { border-left: 3px solid var(--warn); }
 .tbl tr.row-review td:first-child { border-left: 3px solid var(--review); }
 .tbl tr.row-gray td:first-child { border-left: 3px solid var(--line); }
+
+/* ---------- ADR-004 Iteration 1 项目工作台 ---------- */
+.workbench-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:14px 0; }
+.workbench-fact { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; min-height:50px; display:flex; flex-direction:column; gap:5px; }
+.workbench-fact > span { color:var(--ink-2); font-size:12px; }
+.workbench-fact > b { font-size:14px; overflow-wrap:anywhere; }
+.workbench-columns { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin-top:12px; }
+.workbench-columns h3 { margin:0 0 6px; font-size:14px; }
+.workbench-columns p { margin:6px 0; white-space:pre-wrap; }
+.workbench-list { padding-left:19px; margin:4px 0; font-size:13px; color:var(--ink-2); }
+.workbench-list li { margin:6px 0; }
+.workbench-actions { margin-top:14px; max-width:760px; }
+.workbench-actions textarea { margin-bottom:8px; }
+.task-list { display:grid; gap:10px; }
+.task-card { border:1px solid var(--line); border-radius:8px; padding:13px; background:#fff; }
+.task-card h3 { font-size:15px; margin:8px 0 4px; }
+.task-card p { color:var(--ink-2); margin:0 0 7px; white-space:pre-wrap; }
+.task-buttons { display:flex; gap:8px; flex-wrap:wrap; margin-top:11px; }
+.workflow-modal[hidden] { display:none; }
+.workflow-modal { position:fixed; z-index:100; inset:0; display:grid; place-items:center; padding:20px; }
+.workflow-modal__backdrop { position:absolute; inset:0; background:rgba(15, 31, 55, .48); }
+.workflow-modal__panel { position:relative; width:min(100%, 650px); max-height:min(760px, calc(100vh - 40px)); overflow:auto; border:1px solid var(--line); border-radius:var(--radius); background:var(--card); box-shadow:0 20px 60px rgba(15,31,55,.28); padding:20px; }
+.workflow-modal__panel label { display:block; margin:14px 0 7px; color:var(--ink); font-weight:700; }
+.workflow-modal__panel textarea { min-height:130px; resize:vertical; }
+.workflow-modal__actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; }
+.form-error { color:var(--danger); margin-top:8px; font-size:13px; }
+#task-modal-success { margin:12px 0 0; }
+@media (max-width: 760px) { .workbench-grid,.workbench-columns { grid-template-columns:1fr; } .workflow-modal { align-items:end; padding:10px; } .workflow-modal__panel { max-height:calc(100vh - 20px); padding:16px; } }

@@ -21,8 +21,9 @@ import time
 from runtime.core import jobs as job_logic
 from runtime.core.compliance import ComplianceError
 from runtime.core.config import job_running_timeout_seconds, logging_config, worker_poll_interval_seconds
+from runtime.core.matching import GateBlockedError
 from runtime.db.models import AnalysisJob
-from runtime.db.worker_service import claim_job, finish_job, heartbeat_job
+from runtime.db.worker_service import claim_job, finish_job, heartbeat_job, record_heartbeat
 
 logger = logging.getLogger("runtime.worker")
 
@@ -67,6 +68,19 @@ def process_one(session, runner_id: str, stale_seconds: int) -> bool:
             from runtime.db.worker_service import fail_then_retryable as _retryable
 
             _retryable(session, job_id, error_code="rate_limited", error_message=str(exc)[:500])
+    except GateBlockedError as exc:
+        # ADR-004 服务端门禁（项目过期/身份冲突）：确定性阻断，重试必再被拦，直接终态失败留痕；
+        # 纠正数据（延期公告更新截止/修正项目关联）后由人工重新发起任务。
+        logger.warning("任务被门禁拦截 job_id=%s kind=%s gate=%s error=%s", job_id, kind, exc.code, exc)
+        session.rollback()
+        try:
+            finish_job(session, job_id, outcome="failed", error_code=f"gate_{exc.code}",
+                       error_message=str(exc)[:500])
+        except Exception:
+            session.rollback()
+            from runtime.db.worker_service import fail_then_retryable as _retryable
+
+            _retryable(session, job_id, error_code=f"gate_{exc.code}", error_message=str(exc)[:500])
     except Exception as exc:
         # session 可能已处于 PendingRollback（如 store_candidates flush 撞主键），
         # 必须先 rollback 才能继续读写；否则 fail_then_retryable 二次抛错、
@@ -462,10 +476,28 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
         MatchRun,
         Performance,
         Personnel,
+        Project,
         Qualification,
         Requirement,
         RuleSet,
     )
+
+    # 0) ADR-004 服务端门禁（gate 运行驱动准入状态；诊断运行不受限）：
+    #    项目身份未校验则先自动校验一次（不覆盖既有/人工确认结果）→ 过期 / 身份冲突 → 终态失败留痕
+    project = session.get(Project, project_id)
+    if mode == "gate" and project is not None:
+        from runtime.db import identity_service, lifecycle_service
+
+        identity_service.ensure_project_identity(session, project_id=project_id, actor="system:match")
+        blocked = lifecycle_service.gate_reason(session, project, action="match", actor="system:match")
+        if blocked is not None:
+            code, message = blocked
+            api_service.audit(
+                session, actor="system:match", action="match.gate_blocked",
+                basis=f"project_id={project_id} gate=match", outcome=code, object_ref=project_id,
+            )
+            session.commit()
+            raise matching.GateBlockedError(code, message)
 
     # 1) 规则集与判定时点（as_of 不得默认当前时间，F008 §4.1）
     rule_set = session.scalar(
@@ -505,6 +537,11 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
         requirements=req_dicts, evidence=evidence, as_of=as_of,
         mode=mode, lot_id=None, evaluate_fn=evaluate_fn,
     )
+    # 4b) ADR-004 §2.5 证据链最低要求：hard/scored 满足项无企业证据回链 → manual_review，
+    #     不计入正式准入（RAG 索引未就绪导致全部无回链时一律降级，不以"匹配跑完"冒充匹配正确）
+    result = matching.downgrade_satisfied_without_evidence(
+        result, candidates["evidence_refs_by_req"], req_dicts,
+    )
 
     # 5) 快照落库（MatchRun + MatchItem，方案 §3.5 第 5 步 / F024 §2 可回放）
     run = MatchRun(
@@ -533,6 +570,8 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
             "text": entry["match_reason"],
             "retrieval_run_id": refs.get("retrieval_run_id"),
             "gate_executed": entry.get("gate_executed", True),
+            # ADR-004 §2.5：满足项因无证据回链被降级（结果页据此提示「需补证据回链」）
+            "evidence_downgraded": bool(entry.get("evidence_downgraded", False)),
         }
         session.add(
             MatchItem(
@@ -555,7 +594,8 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
         outcome=f"complete={result['coverage'].get('complete')} "
                 f"executed={result['coverage'].get('executed')} "
                 f"gate_executed={result['coverage'].get('gate_executed')} "
-                f"short_circuited={len(result['coverage'].get('short_circuited') or [])}",
+                f"short_circuited={len(result['coverage'].get('short_circuited') or [])} "
+                f"evidence_downgraded={len(result['coverage'].get('evidence_downgraded') or [])}",
         object_ref=project_id,
     )
 
@@ -574,12 +614,36 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
             evidence=evidence,
         )
 
+    # First commit the immutable MatchRun/MatchItem/AdmissionResult snapshot. Task
+    # orchestration is a downstream projection: its failure must neither erase a
+    # factual matching result nor be reported as a successful full workflow.
     session.commit()
+    task_sync: dict | None = None
+    if admission is not None:
+        try:
+            from runtime.db import workflow_service
+
+            task_sync = workflow_service.sync_tasks_from_admission(
+                session, project_id=project_id, match_run_id=run.run_id,
+                admission=admission, commit=False,
+            )
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            # Persist an explicit incident before re-raising. The worker will mark
+            # the job failed/retryable instead of falsely saying the end-to-end
+            # matching-and-remediation workflow completed.
+            api_service.audit(
+                session, actor="system:match", action="remediation_task.sync_failed",
+                outcome=type(exc).__name__, basis=f"run_id={run.run_id}", object_ref=project_id,
+            )
+            session.commit()
+            raise
     logger.info(
-        "匹配完成 project_id=%s run=%s coverage=%s retrieval=%s admission=%s",
+        "匹配完成 project_id=%s run=%s coverage=%s retrieval=%s admission=%s task_sync=%s",
         project_id, run.run_id, result["coverage"], run.retrieval_run_id,
         f"{admission.result_id}:{admission.internal_admission_result.get('status')}"
-        if admission else None,
+        if admission else None, task_sync,
     )
 
 
@@ -761,6 +825,13 @@ def run_forever() -> None:
     SessionLocal = sessionmaker(bind=engine)
 
     logger.info("worker 启动 runner_id=%s poll=%ss stale=%ss", RUNNER_ID, poll_interval, stale_seconds)
+    # ADR-004 §2.6（P0-01）：进程级心跳由独立守护线程写入（与任务执行解耦——长任务期间主循环
+    # 不回到轮询点，若在主循环写心跳会被 /readyz 误判 stale）；心跳失败只记日志不中断任务。
+    hb_thread = threading.Thread(
+        target=_heartbeat_loop, args=(SessionLocal, stop_event, poll_interval),
+        name="worker-heartbeat", daemon=True,
+    )
+    hb_thread.start()
     while not stop:
         session = SessionLocal()
         try:
@@ -772,6 +843,31 @@ def run_forever() -> None:
             session.close()
         if not processed:
             stop_event.wait(poll_interval)
+
+
+def _heartbeat_loop(session_factory, stop_event: threading.Event, poll_interval: float) -> None:
+    """守护线程：每 heartbeat 间隔 upsert worker_heartbeats（阈值 WORKER_HEARTBEAT_STALE_SECONDS 的 1/3 内）。"""
+    import socket
+
+    from runtime.core.config import worker_heartbeat_stale_seconds
+
+    hostname = socket.gethostname()[:128]
+    interval = max(1.0, min(float(poll_interval), worker_heartbeat_stale_seconds() / 3.0))
+    while not stop_event.is_set():
+        session = session_factory()
+        try:
+            record_heartbeat(session, RUNNER_ID, poll_interval_seconds=poll_interval,
+                             pid=os.getpid(), hostname=hostname)
+        except Exception as exc:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            logger.warning("worker 心跳写入失败（/readyz 将报告 worker 不可用）: %s: %s",
+                           type(exc).__name__, exc)
+        finally:
+            session.close()
+        stop_event.wait(interval)
 
 
 def main() -> None:

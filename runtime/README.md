@@ -9,7 +9,7 @@
 | 组件 | 选型 | 状态 |
 |---|---|---|
 | HTTP 服务 | FastAPI + Uvicorn | 依赖安装后可运行 |
-| 数据访问 | SQLAlchemy + Alembic / PostgreSQL | 迁移已就绪（0001-0004），需本机 PostgreSQL |
+| 数据访问 | SQLAlchemy + Alembic / PostgreSQL | 迁移已就绪（0001-0017；0017 为 ADR-004 Iteration 1 工作流）；本机隔离 PostgreSQL 已演练，远端部署仍待验 |
 | 向量索引 | pgvector（`knowledge_embeddings`，可重建） | 迁移已就绪；未启用时索引/检索可解释降级 |
 | 对象存储 | 本地受控目录（内网 MinIO 兼容） | 纯逻辑已实现 |
 | 解析/OCR | pdftotext、tesseract（F017 复用） | 依赖环境 |
@@ -30,6 +30,7 @@ runtime/
     objects.py               对象存储（SHA-256 / 校验 / 原子移动 / 病毒检查钩子）
     model.py                 模型适配器（内网检查 + 结构化 JSON + 用途拆分与 public-only 门禁）
     matching.py              匹配接入纯逻辑（证据快照/候选约束核验/规则引擎接入，方案 §3.5）
+    identity.py              项目身份字段比较与三态冲突判定（ADR-004 P0-02）
     logging_utils.py         日志脱敏（身份证/手机号）
     errors.py                F020 统一错误码与错误响应（11 类 + knowledge_not_ready + request_id）
     rbac.py                  F020 四角色 RBAC（角色→操作→数据权限矩阵，越权审计）
@@ -53,11 +54,13 @@ runtime/
     approvals.py             待审/创建/批准/驳回/豁免/审计
     enterprise.py            企业资料库后台（资质/安许/经理/业绩/人员/证据）
   db/
-    models.py                SQLAlchemy 模型（analysis_jobs + F019 全表 + knowledge_data 三表）
-    worker_service.py        任务领取/心跳/完成/失败（SQLAlchemy 会话层）
+    models.py                SQLAlchemy 模型（analysis_jobs + F019 全表 + RAG + worker_heartbeats/project_identities）
+    worker_service.py        任务领取/进程心跳/完成/失败（SQLAlchemy 会话层）
+    identity_service.py      公告/文件身份事实汇集、落库与人工确认（ADR-004）
+    lifecycle_service.py     截止过期、身份冲突与正式操作门禁（ADR-004）
     material_service.py      材料导入/版本化/元数据更新/哈希复核（F019 §4）
     api_service.py           F020 API 服务层（项目/审批/豁免/审计/准入/队列/矩阵）
-    alembic/                 Alembic 迁移（env.py + 0001-0003 + 0004 R025 knowledge_data）
+    alembic/                 Alembic 迁移（0001-0017；0014-0016 为 ADR-004 P0 门禁/精确截止，0017 为 Iteration 1 工作流）
   core/
     versioning.py            版本决策/有效期状态/不可覆盖保护（纯逻辑，无依赖）
   tests/
@@ -75,6 +78,8 @@ runtime/
     test_rag_verification.py     RAG 结构化核验纯逻辑测试（rag 标记）
     test_matching.py             匹配接入纯逻辑测试（rag 标记）
     test_worker_match.py         worker 匹配执行器链路测试（sqlite 内存库，rag 标记）
+    test_p0_gates.py             ADR-004 身份/截止/心跳/证据降级单元与路由契约
+    test_p0_gates_integration.py ADR-004 PostgreSQL + HTTP + worker 门禁薄切片（integration 标记）
 alembic.ini                  Alembic 配置（连接串从 DATABASE_URL 读取）
 ```
 
@@ -145,10 +150,14 @@ brew install postgresql@17 && brew services start postgresql@17
 
 # 5) 健康检查
 curl http://127.0.0.1:8000/healthz   # 进程存活
-curl http://127.0.0.1:8000/readyz    # 数据库/对象根目录/OCR/模型可用性
+curl http://127.0.0.1:8000/readyz    # 数据库/对象根目录/OCR/模型/知识库/异步 worker 心跳可用性
 ```
 
 `/readyz` 在缺少数据库、OCR 或模型时返回 503 并逐项说明失败原因（F018 §8）。
+**ADR-004 §2.6（2026-09-16）**：新增 `checks.worker`——worker 进程以守护线程周期写入 `worker_heartbeats`，
+最近心跳超过 `WORKER_HEARTBEAT_STALE_SECONDS`（默认 60s）或从未写入即报告不可用并使整体 503
+（API 起了不代表异步采集/解析/匹配/重算可用）；响应另含 `impacts[]` 说明各不可用项的影响范围，
+原型顶栏据此分项显示 API / 数据库 / 异步任务 / 模型 / 检索。**部署必须同时启动 worker**。
 
 ## 4. 任务状态机
 
@@ -161,6 +170,8 @@ pending -> running -> completed
 
 - 幂等键 `kind + input_ref + project_id` 唯一（F019 §3 `analysis_jobs`），重复提交返回既有任务。
 - `running` 超过 `JOB_RUNNING_TIMEOUT_SECONDS` 无心跳 → `retryable`（F018 §4.4），**不直接推进业务状态**。
+- ADR-004 服务端门禁（项目过投标截止 `overdue` / 身份冲突 `identity_conflict`）拦截的 gate 匹配任务
+  **终态失败不重试**（`error_code=gate_overdue / gate_identity_conflict`），纠正数据后由人工重新发起。
 - 终态（completed/failed/cancelled）不可迁移；失败任务不自动重跑。
 - 所有异常携带 `request_id`/`job_id`，日志只记录元数据与错误摘要（F018 §4.5），身份证号/手机号自动脱敏。
 
@@ -228,6 +239,8 @@ match.run / match.recalculate 执行器（worker._execute_match_run）：
 | `export DATABASE_URL="postgresql+psycopg://bid_agent:bid_agent_dev@127.0.0.1:5432/bid_agent" && python -m pytest runtime/tests/test_material_service.py -m integration -v` | 材料持久化集成测试（真实 PostgreSQL，需先 `alembic upgrade head`；`bid_agent_dev` 为一键脚本 `setup_local_env.sh` 创建的本地默认密码，若已改密请替换） |
 | `export DATABASE_URL="postgresql+psycopg://bid_agent:bid_agent_dev@127.0.0.1:5432/bid_agent" && python -m pytest runtime/tests/test_api_integration.py -m integration -v` | R020 集成测试（9 项：首次匹配只触发一次、重算幂等、非满分拒绝审批、驳回 comment 必填、豁免过期回阻断、越权审计留痕） |
 | `export DATABASE_URL="postgresql+psycopg://bid_agent:bid_agent_dev@127.0.0.1:5432/bid_agent" && python -m pytest runtime/tests/test_rag_integration.py -m integration -v` | R025 RAG 真库集成测试（5 项：索引幂等不误标 stale、版本变更旧 chunk 失效、无索引检索 409、L2/L3 缺项目上下文拒绝、项目隔离 + retrieval_runs 复用；需 pgvector 扩展与迁移 0004，`setup_local_env.sh` 自动安装扩展） |
+| `python -m pytest runtime/tests/test_iteration1_workflow.py runtime/tests/test_worker_match.py -q` | ADR-004 Iteration 1 本地回归：快速预核、准备立项、身份 warning 阻断、任务权限/脱敏/自动关闭、worker 自动任务投影及失败审计。 |
+| `export DATABASE_URL=<隔离验证库> && python -m pytest runtime/tests/test_iteration1_workflow_integration.py -m integration -v` | ADR-004 Iteration 1 PostgreSQL HTTP 薄切片：0017 迁移后的快速预核、身份 warning 阻断、准备立项、补证状态和跨角色证据引用脱敏；**不得指向共享演示库或生产库**。 |
 | `python -m pytest runtime/tests -m rag -v` | R025 RAG 测试（32 项，rag 标记）：结构化核验三分、匹配接入纯逻辑、worker 匹配执行器链路（sqlite 内存库）；检索/权限/引用/索引幂等集成项待真库 |
 | `export DATABASE_URL=... && python scripts/verify_rag_e2e.py` | R025 真库端到端回归（插材料→真实索引（bge-m3）→hybrid/vector 检索→断言 cosine 排序/项目隔离/run 复用→TRUNCATE 清理）；需 embedding_serve 运行中（§3） |
 | `.venv/bin/pip install -r requirements-dev.txt` | 安装 `python-multipart`（F020 multipart 上传必需）后，`test_api_contracts.py` 自动恢复执行（越权 403/空文件/非法格式/非法 collect_mode/OpenAPI 路由注册） |

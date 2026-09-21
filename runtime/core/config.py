@@ -157,6 +157,13 @@ def worker_poll_interval_seconds() -> float:
     return float(_env("WORKER_POLL_INTERVAL_SECONDS", "5"))  # type: ignore[return-value]
 
 
+def worker_heartbeat_stale_seconds() -> float:
+    """ADR-004 §2.6：worker 进程心跳超过此秒数视为不可用（/readyz worker 检查项）。
+
+    默认 60s（≥ 3 倍默认轮询间隔 + 数据库抖动余量）；部署可按轮询间隔调整。"""
+    return float(_env("WORKER_HEARTBEAT_STALE_SECONDS", "60"))  # type: ignore[return-value]
+
+
 def readyz_timeout_seconds() -> float:
     """短时健康检查超时；不用于实际 embedding/rerank 推理。"""
     return float(_env("READYZ_TIMEOUT_SECONDS", "3"))  # type: ignore[return-value]

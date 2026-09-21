@@ -8,6 +8,7 @@ const STEPS = [
   { id: "import",    label: "选择与解析", page: "import.html" },
   { id: "matrix",    label: "自动匹配",   page: "matrix.html" },
   { id: "score",     label: "风险与缺失", page: "score.html" },
+  { id: "workbench", label: "项目工作台", page: "workbench.html" },
   { id: "queue",     label: "复核与补录", page: "queue.html" },
   { id: "approval",  label: "人工审核",   page: "approval.html" },
 ];
@@ -18,6 +19,7 @@ const NAV = [
   { label: "自动匹配", page: "matrix.html" },
   { label: "企业资料库（后台）", page: "materials.html" },
   { label: "风险与缺失", page: "score.html" },
+  { label: "项目工作台", page: "workbench.html" },
   { label: "复核与补录", page: "queue.html" },
   { label: "人工审核", page: "approval.html" },
   { label: "异常态演示", page: "exceptions.html" },
@@ -81,7 +83,7 @@ function renderTopbar(activePage) {
   topbar.innerHTML = `
     <div class="brand"><span class="emblem">投</span>投标智能体</div>
     <nav>${navHtml}</nav>
-    <span class="demo-tag" id="api-indicator" title="运行时 API">API…</span>
+    <span class="svc-strip" id="api-indicator" title="运行时服务状态（数据来源 /readyz）"><span class="svc unknown">服务状态…</span></span>
     <div class="role-box">${authHtml}</div>`;
   if (authed) {
     document.getElementById("btn-logout").addEventListener("click", () => {
@@ -118,12 +120,66 @@ function renderTopbar(activePage) {
     document.getElementById("btn-login").addEventListener("click", doLogin);
     pass.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
   }
-  // API 连接指示（仅提示，不阻断页面浏览）
-  const ind = document.getElementById("api-indicator");
+  // 全局服务状态（ADR-004 §2.6 / 优化方案 §10.1）：API / 数据库 / 异步 worker / 模型 / 检索 分项显示，
+  // 与 /readyz 同源；worker 不可用时明示影响范围（历史结果可查看，新建采集/解析/匹配/重算暂不可用）
+  renderServiceStatus(topbar, document.getElementById("api-indicator"));
+}
+
+/* ---------- 全局服务状态（ADR-004 §2.6） ---------- */
+const SERVICE_ITEMS = [
+  { key: "api",       label: "API" },
+  { key: "database",  label: "数据库" },
+  { key: "worker",    label: "异步任务" },
+  { key: "model",     label: "模型" },
+  { key: "knowledge", label: "检索" },
+];
+
+function serviceCheckState(check) {
+  // 与后端 _check_group_ok 同口径：嵌套检查组（knowledge）子项全部可用才算可用
+  if (!check || typeof check !== "object") return "unknown";
+  const subs = Object.values(check).filter(v => v && typeof v === "object" && "available" in v);
+  if (subs.length && !("available" in check)) return subs.every(v => v.available) ? "ok" : "bad";
+  if (check.available === true) {
+    // 模型未配置 = 跳过检查（降级可用），与「已配置且可达」区分显示
+    return check.enabled === false ? "degraded" : "ok";
+  }
+  return check.available === false ? "bad" : "unknown";
+}
+
+function renderServiceStatus(topbar, strip) {
+  if (!strip) return;
+  const stateText = { ok: "正常", bad: "不可用", degraded: "未配置/降级", unknown: "未知" };
+  const paint = (states, impacts, headline) => {
+    strip.innerHTML = SERVICE_ITEMS.map(s =>
+      `<span class="svc ${states[s.key] || "unknown"}">${s.label}</span>`).join("");
+    strip.title = SERVICE_ITEMS.map(s => `${s.label}：${stateText[states[s.key] || "unknown"]}`).join("\n")
+      + (impacts.length ? "\n\n影响范围：\n" + impacts.join("\n") : "");
+    document.querySelectorAll(".svc-banner").forEach(n => n.remove());
+    if (!impacts.length) return;
+    const banner = document.createElement("div");
+    banner.className = "svc-banner";
+    banner.innerHTML = `<div class="notice warn"><b>${headline}</b>：${impacts.map(t => `<span>${t}</span>`).join("；")}
+      <span class="hint">（不以页面历史数据证明异步链路可用；数据来源 /readyz）</span></div>`;
+    topbar.insertAdjacentElement("afterend", banner);
+  };
   fetch(apiBase().replace("/api/v1", "") + "/readyz", { method: "GET" })
     .then((r) => r.json())
-    .then((j) => { ind.textContent = j.ready ? "API 就绪" : "API 未就绪"; ind.className = "demo-tag"; })
-    .catch(() => { ind.textContent = "API 未连接"; ind.className = "demo-tag"; });
+    .then((j) => {
+      const checks = j.checks || {};
+      const states = { api: "ok" };
+      SERVICE_ITEMS.forEach(s => { if (s.key !== "api") states[s.key] = serviceCheckState(checks[s.key]); });
+      const impacts = Array.isArray(j.impacts) ? j.impacts.slice() : [];
+      if (!impacts.length && states.worker === "bad") {
+        impacts.push("异步 worker 不可用：历史结果可查看，新建采集、解析、匹配和重算暂不可用");
+      }
+      const okCore = states.database === "ok" && states.worker === "ok";
+      paint(states, impacts, okCore ? "部分依赖降级" : "部分服务不可用");
+    })
+    .catch(() => {
+      const states = { api: "bad", database: "unknown", worker: "unknown", model: "unknown", knowledge: "unknown" };
+      paint(states, ["API 未连接：无法确认数据库与异步任务状态，全部读写不可用（请先启动 runtime，见 scripts/setup_local_env.sh）"],
+        "API 未连接");
+    });
 }
 
 /* ---------- 用户旅程步骤条 ---------- */

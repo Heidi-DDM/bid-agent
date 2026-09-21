@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from runtime.routers.deps import get_actor, get_db, get_role, get_request_id, require_role
 from runtime.core import orchestration
 from runtime.core.errors import ApiError
-from runtime.db import api_service, worker_service
+from runtime.db import api_service, lifecycle_service, worker_service
 
 router = APIRouter(prefix="/api/v1/projects", tags=["match"])
 
@@ -49,6 +49,11 @@ def trigger_match(
 ) -> dict:
     """任务编排器触发匹配：仅在解析成功后首次触发一次（幂等）；前端不暴露此接口。"""
     require_role(role, "match", "write", session=session, actor=actor, object_ref=project_id)
+    # ADR-004 服务端门禁：项目过期 / 身份冲突 → 409 invalid_state_transition（写审计）
+    project = api_service.get_project_or_404(session, project_id)
+    lifecycle_service.ensure_identity_then_deny(
+        session, project, action="match", actor=actor, audit_action="match.trigger_denied"
+    )
     materials = _project_materials(session, project_id)
     run = api_service.latest_match_run(session, project_id)
     existing_runs = 1 if run is not None else 0
@@ -79,6 +84,11 @@ def recalculate(
     """补录核验后重算：以新证据版本创建新匹配任务，旧结果标记 stale；幂等（F020 §2.2.5）。"""
     require_role(role, "match", "write", session=session, actor=actor, object_ref=project_id)
     actor = body.actor or actor
+    # ADR-004 服务端门禁（P0-03/P0-02）：过期项目不得重算进入后续流程；身份冲突不得重算
+    project = api_service.get_project_or_404(session, project_id)
+    lifecycle_service.ensure_identity_then_deny(
+        session, project, action="recalculate", actor=actor, audit_action="match.recalculate_denied"
+    )
     materials = _project_materials(session, project_id)
     run = api_service.latest_match_run(session, project_id)
     if not orchestration.can_recalculate(materials, run):

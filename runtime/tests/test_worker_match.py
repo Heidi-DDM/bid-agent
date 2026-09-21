@@ -21,8 +21,10 @@ from runtime.db.models import (
     MatchItem,
     MatchRun,
     Project,
+    ProjectIdentity,
     Qualification,
     Requirement,
+    RemediationTask,
     RuleSet,
 )
 from runtime.worker import _execute_match_run
@@ -50,7 +52,14 @@ def session():
 
 
 def _project(session, project_id="ND-2025") -> None:
+    # Formal worker matching is now blocked for an unconfirmed identity. Most
+    # execution-chain tests exercise a project that an operator has already
+    # confirmed; dedicated ADR-004 tests cover warning/conflict blocking.
     session.add(Project(project_id=project_id, project_name="农大项目"))
+    session.add(ProjectIdentity(
+        project_id=project_id, identity_status="identity_confirmed",
+        identity_conflicts=[], identity_warnings=[], compared_fields=[], source_refs=[],
+    ))
     session.commit()
 
 
@@ -824,21 +833,27 @@ def test_match_run_short_circuit_writes_all_items_and_full_queues(session):
     assert set(items) == {"NQ-H-001", "NQ-H-002", "NQ-H-003"}   # 每条要求都有结论
     assert items["NQ-H-001"].match_reason["gate_executed"] is True
     assert items["NQ-H-002"].match_reason["gate_executed"] is False
-    assert items["NQ-H-003"].match_result == "satisfied"
+    # ADR-004 §2.5：引擎判满足但无企业证据回链（本用例无 RAG 召回）→ 降级 manual_review 留痕，
+    # 不得计入正式准入；coverage.evidence_downgraded 点名
+    assert items["NQ-H-003"].match_result == "manual_review"
+    assert items["NQ-H-003"].match_reason["evidence_downgraded"] is True
+    assert "缺少可回链的企业证据" in items["NQ-H-003"].match_reason["text"]
+    assert run.coverage["evidence_downgraded"] == ["NQ-H-003"]
 
     ar = _admissions(session)[0]
     assert ar.internal_admission_result["status"] == "not_qualified"     # 一票否决结论不变
     assert [b["requirement_id"] for b in ar.blocked_items] == ["NQ-H-001"]
     assert [p["requirement_id"] for p in ar.pending_items] == ["NQ-H-002"]  # 短路后的缺项也进处置队列
     assert ar.pending_items[0]["gate_executed"] is False
-    assert ar.qualification_result["total"] == 3 and ar.qualification_result["satisfied"] == 1
+    assert [r["requirement_id"] for r in ar.review_items] == ["NQ-H-003"]  # 降级项进人工复核队列
+    assert ar.qualification_result["total"] == 3 and ar.qualification_result["satisfied"] == 0
     assert any(s["step"] == "coverage" and "短路" in s["text"] for s in ar.explanation)
 
     # 结果页：三条都有结论与原因，无 not_evaluated
     from runtime.db import api_service
 
     rows = {r["requirement_id"]: r for r in api_service.list_requirements(session, "ND-2025")}
-    assert rows["NQ-H-003"]["match"] == "satisfied" and rows["NQ-H-003"]["gate_executed"] is False
+    assert rows["NQ-H-003"]["match"] == "manual_review" and rows["NQ-H-003"]["gate_executed"] is False
     assert rows["NQ-H-001"]["match_reason"]["text"] == "not_satisfied 原因"
     assert all(r["match"] != api_service.NOT_EVALUATED for r in rows.values())
 
@@ -876,3 +891,50 @@ def test_list_requirements_without_run_is_not_evaluated(session):
     rows = api_service.list_requirements(session, "ND-2025")
     assert rows[0]["match"] == api_service.NOT_EVALUATED
     assert "尚无匹配运行" in rows[0]["match_reason"]["text"]
+
+
+# ---------- ADR-004 Iteration 1：worker → 处置任务投影 ----------
+
+def test_match_worker_syncs_typed_remediation_tasks(session):
+    """正式匹配的缺证与明确不满足必须自动投影为不同类型任务。"""
+    _project(session)
+    _rule_set(session)
+    _requirement(session, requirement_id="NQ-MISSING")
+    _requirement(session, requirement_id="NQ-FAILED")
+
+    _execute_match_run(
+        session, "ND-2025",
+        evaluate_fn=_fake_evaluate_factory({
+            "NQ-MISSING": "unverifiable",
+            "NQ-FAILED": "not_satisfied",
+        }),
+    )
+
+    tasks = session.scalars(
+        select(RemediationTask).where(RemediationTask.project_id == "ND-2025")
+    ).all()
+    assert {(task.requirement_id, task.task_type, task.assignee_role) for task in tasks} == {
+        ("NQ-MISSING", "evidence_supplement", "data_admin"),
+        ("NQ-FAILED", "termination_correction", "bid_specialist"),
+    }
+    assert {task.state for task in tasks} == {"open"}
+
+
+def test_match_worker_task_sync_failure_keeps_admission_and_audits(session, monkeypatch):
+    """任务投影故障不可抹掉不可变匹配/准入快照，也不能被报作完整成功。"""
+    from runtime.db import workflow_service
+
+    _project(session)
+    _rule_set(session)
+    _requirement(session)
+
+    def _sync_failure(*args, **kwargs):
+        raise RuntimeError("task projection unavailable")
+
+    monkeypatch.setattr(workflow_service, "sync_tasks_from_admission", _sync_failure)
+    with pytest.raises(RuntimeError, match="task projection unavailable"):
+        _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate)
+
+    assert len(_admissions(session)) == 1
+    events = session.scalars(select(AuditEvent)).all()
+    assert any(event.action == "remediation_task.sync_failed" for event in events)

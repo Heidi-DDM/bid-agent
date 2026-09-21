@@ -1,7 +1,8 @@
 # R018/F018 + R020/F020：HTTP 服务层（FastAPI）
 # 端点：
 #   GET  /healthz                进程存活，不访问业务数据（F018 §5）
-#   GET  /readyz                 数据库、文件根目录、OCR 命令、模型适配器（若启用）可用性检查
+#   GET  /readyz                 数据库、文件根目录、OCR 命令、模型适配器（若启用）、知识库、
+#                                异步 worker 心跳（ADR-004 §2.6）可用性检查；附各项不可用的影响范围
 #   /api/v1/**                   F020 业务 API（材料/搜索推送/入库/解析/匹配/队列/审批/审计/企业资料）
 # 启动时执行数据库迁移检查（F018 §4.1）；不在启动时自动执行迁移（F019 §5.1）。
 #
@@ -20,7 +21,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from runtime.routers import approvals, auth, enterprise, intake, knowledge, materials, match, ocr, parse, projects
+from runtime.routers import approvals, auth, enterprise, intake, knowledge, materials, match, ocr, parse, projects, workflow
 from runtime.routers.deps import request_id
 from runtime.core import db, model
 from runtime.core.config import app_env, object_store_root, readyz_timeout_seconds
@@ -76,6 +77,7 @@ app.include_router(auth.router)
 app.include_router(materials.router)
 app.include_router(intake.router)
 app.include_router(projects.router)
+app.include_router(workflow.router)
 app.include_router(match.router)
 app.include_router(approvals.router)
 app.include_router(enterprise.router)
@@ -220,6 +222,43 @@ def _knowledge_status() -> dict[str, Any]:
     return status
 
 
+def _worker_status(database_available: bool) -> dict[str, Any]:
+    """ADR-004 §2.6（P0-01）：异步 worker 进程心跳检查。
+
+    最近心跳 ≤ WORKER_HEARTBEAT_STALE_SECONDS → 可用；无心跳/超时/表不可读 → 不可用
+    （API 起了不代表异步采集/解析/匹配/重算可用，不以页面历史数据冒充链路可用）。
+    数据库探测已失败时直接短路（避免二次连接挂起）。
+    """
+    from runtime.core.config import database_url, worker_heartbeat_stale_seconds
+    from runtime.db.worker_service import worker_status
+
+    stale = worker_heartbeat_stale_seconds()
+    if not database_available:
+        return {
+            "available": False,
+            "state": "unknown",
+            "error": "数据库不可达，无法读取 worker 心跳",
+            "stale_after_seconds": stale,
+        }
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        engine = create_engine(database_url(), pool_pre_ping=True)
+        try:
+            with Session(engine) as session:
+                return worker_status(session, stale_seconds=stale)
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        return {
+            "available": False,
+            "state": "unknown",
+            "error": f"无法读取 worker 心跳: {type(exc).__name__}: {str(exc)[:200]}",
+            "stale_after_seconds": stale,
+        }
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok", "app_env": app_env()}
@@ -233,17 +272,31 @@ def _check_group_ok(c: dict[str, Any]) -> bool:
     return bool(c.get("available"))
 
 
+# 各检查项不可用时的影响范围（前端全局状态提示同源，优化方案 §10.1）
+_CHECK_IMPACT = {
+    "database": "数据库不可用：全部读写不可用",
+    "object_store": "对象存储不可用：原文上传/入库与解析不可用",
+    "ocr": "OCR 依赖缺失：扫描件解析降级为人工复核",
+    "model": "模型服务不可用：大模型兜底定位不可用（确定性主链不受影响）",
+    "knowledge": "检索索引/向量依赖不可用：RAG 候选召回降级，满足项将因无证据回链降级为人工复核",
+    "worker": "异步 worker 不可用：历史结果可查看，新建采集、解析、匹配和重算暂不可用",
+}
+
+
 @app.get("/readyz")
 def readyz() -> JSONResponse:
+    database = db.check_database(timeout=readyz_timeout_seconds()).as_dict()
     checks: dict[str, dict[str, Any]] = {
-        "database": db.check_database(timeout=readyz_timeout_seconds()).as_dict(),
+        "database": database,
         "object_store": _object_store_status(),
         "ocr": _ocr_status(),
         "model": _model_status(),
         "knowledge": _knowledge_status(),
+        "worker": _worker_status(bool(database.get("available"))),
     }
     ok = all(_check_group_ok(c) for c in checks.values())
+    impacts = [_CHECK_IMPACT[name] for name, c in checks.items() if not _check_group_ok(c)]
     return JSONResponse(
         status_code=200 if ok else 503,
-        content={"ready": ok, "checks": checks, "app_env": app_env()},
+        content={"ready": ok, "checks": checks, "impacts": impacts, "app_env": app_env()},
     )

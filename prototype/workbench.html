@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>项目工作台｜投标智能体</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"></header>
+  <div class="layout"><main class="main">
+    <div class="steps"></div>
+    <div id="api-error" style="display:none"></div>
+
+    <section class="card">
+      <div class="card-title-row"><h2>项目工作台 — <span id="project-name">加载中…</span></h2><button class="btn sm ghost" id="btn-refresh">刷新</button></div>
+      <p class="sub">在此查看项目事实、投入准备立项和问题处置。这里不提供自动投标、报价、签章或递交功能。</p>
+      <div id="readiness" class="workbench-grid"><div class="hint">加载项目就绪事实…</div></div>
+      <div id="readiness-note" class="notice info" style="margin-bottom:0"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-title-row"><h2>快速预核</h2><button class="btn" id="btn-prescreen">执行快速预核</button></div>
+      <p class="sub">仅汇总当前登记的事实、待补和待核实事项；不会创建正式匹配、不会改变准入状态、不会创建审批。</p>
+      <div id="prescreen" class="hint">尚未加载快速预核记录。</div>
+    </section>
+
+    <section class="card" id="preparation-card">
+      <div class="card-title-row"><h2>投标准备立项</h2><span id="preparation-state"></span></div>
+      <p class="sub">“允许投入准备工作”不等于正式同意投标、报价、签章或递交；正式审批仍受满分准入门禁控制。</p>
+      <div id="preparation-detail" class="hint">加载中…</div>
+      <div id="preparation-actions" class="workbench-actions" style="display:none">
+        <textarea id="preparation-reason" placeholder="填写投入准备工作的理由（必填）"></textarea>
+        <button class="btn" id="btn-create-preparation">提交准备立项</button>
+      </div>
+      <div id="preparation-decision" class="workbench-actions" style="display:none">
+        <textarea id="preparation-comment" placeholder="填写负责人决定意见（必填）"></textarea>
+        <button class="btn" id="btn-approve-preparation">允许投入准备工作</button>
+        <button class="btn ghost" id="btn-decline-preparation">不允许投入准备工作</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title-row"><h2>处置任务中心</h2><span class="hint" id="task-summary"></span></div>
+      <p class="sub">补证只会进入“待核验与重算”，不能自行宣布满足；明确不满足项不能用补证洗白。只有新匹配结果不再出现同一问题，系统才会自动关闭相应任务。</p>
+      <div id="tasks" class="task-list"><div class="hint">加载中…</div></div>
+    </section>
+
+    <section class="card">
+      <h2>下一步与正式门禁</h2>
+      <div class="notice info" style="margin-bottom:0">完成补证或人工复核后，请在“复核与补录”中发起受服务端门禁保护的重算。仅最新、完整且满足内部准入条件的结果，才可进入经营负责人正式审批；满分不等于自动投标。</div>
+      <p style="margin-bottom:0"><a class="btn ghost" href="queue.html">前往复核与补录</a> <a class="btn ghost" href="approval.html">查看正式人工审批</a></p>
+    </section>
+  </main></div>
+  <footer class="footer"><span>某建设集团 · 投标智能体</span><span>数据均以系统实际权限与服务端门禁为准</span></footer>
+
+  <div id="task-modal" class="workflow-modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title" hidden>
+    <div class="workflow-modal__backdrop" data-modal-close="true"></div>
+    <section class="workflow-modal__panel" role="document">
+      <div class="card-title-row">
+        <h2 id="task-modal-title">办理处置任务</h2>
+        <button class="btn sm ghost" type="button" id="btn-task-modal-close" aria-label="关闭弹窗">关闭</button>
+      </div>
+      <p class="sub" id="task-modal-description"></p>
+      <form id="task-modal-form" novalidate>
+        <label for="task-modal-input" id="task-modal-label">内容</label>
+        <textarea id="task-modal-input" rows="6" required></textarea>
+        <p class="hint" id="task-modal-help"></p>
+        <div id="task-modal-validation" class="form-error" role="alert" aria-live="polite" hidden></div>
+        <div id="task-modal-success" class="notice ok" role="status" aria-live="polite" hidden></div>
+        <div class="workflow-modal__actions">
+          <button class="btn" type="submit" id="btn-task-modal-submit">提交</button>
+          <button class="btn ghost" type="button" id="btn-task-modal-cancel">取消</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <script src="data.js"></script><script src="api.js"></script><script src="common.js"></script>
+  <script>
+    initPage("workbench.html", "workbench");
+    const PJ0 = apiProjectId(); const PJ = () => PJ0.id;
+    const $ = (id) => document.getElementById(id);
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    let latestPreparation = null;
+    function showError(err) { apiShowError(err); }
+    function itemList(items, empty) {
+      return items && items.length ? `<ul class="workbench-list">${items.map(i => `<li>${esc(i.text || i.code || "待核实")}</li>`).join("")}</ul>` : `<span class="hint">${esc(empty)}</span>`;
+    }
+    function readValue(facts, code) { return (facts || []).find(x => x.code === code)?.value; }
+    async function loadReadiness() {
+      const [r, project] = await Promise.all([apiGet(`/projects/${encodeURIComponent(PJ())}/readiness`), apiGet(`/projects/${encodeURIComponent(PJ())}`)]);
+      $("project-name").innerHTML = esc(project.project_name || PJ()) + apiProjectChip(PJ0);
+      const id = r.identity || {}; const wf = r.workflow || {}; const deadline = r.bid_deadline_at || r.bid_deadline || "待补";
+      $("readiness").innerHTML = [
+        ["当前阶段", apiAdmissionStateBadge(r.stage)],
+        ["项目身份", esc(id.status || "待核验")],
+        ["投标截止", esc(deadline)],
+        ["正式匹配", r.gates?.can_match ? "<span class='badge ok'>当前可发起</span>" : "<span class='badge danger'>当前受阻</span>"],
+        ["开放任务", wf.open_task_count == null ? "待迁移后可用" : `${esc(wf.open_task_count)} 项`],
+        ["准备立项", wf.preparation_state ? apiPreparationBadge(wf.preparation_state) : "尚未立项"],
+      ].map(([k,v]) => `<div class="workbench-fact"><span>${k}</span><b>${v}</b></div>`).join("");
+      const blockers = (r.blocking_reasons || []).map(x => esc(x.text)).join("；") || "当前未登记阻断原因；仍须以服务端正式动作门禁为准。";
+      $("readiness-note").innerHTML = `<b>当前事实与门禁：</b>${blockers}<br><span class="hint">${esc(r.caveat || "")}</span>`;
+    }
+    async function loadPrescreen() {
+      try {
+        const d = await apiGet(`/projects/${encodeURIComponent(PJ())}/quick-prescreens/latest`); const x = d.item;
+        if (!x) { $("prescreen").innerHTML = "尚未执行快速预核。"; return; }
+        $("prescreen").innerHTML = `<div class="notice info"><b>预核时间：</b>${esc(x.created_at || "—")}<br>${esc(x.disclaimer || "")}</div>
+          <div class="workbench-columns"><div><h3>已登记事实</h3>${itemList(x.facts, "暂无")}</div><div><h3>待补</h3>${itemList(x.missing, "暂无")}</div><div><h3>待核实</h3>${itemList(x.review, "暂无")}</div></div>`;
+      } catch (e) { if (e.status === 403) { $("prescreen").innerHTML = "当前角色无快速预核查看权限。"; } else throw e; }
+    }
+    function renderPreparation(x) {
+      latestPreparation = x; const isHead = apiRole() === "business_head";
+      $("preparation-actions").style.display = isHead && !x ? "" : "none";
+      $("preparation-decision").style.display = isHead && x?.state === "preparation_pending" ? "" : "none";
+      $("preparation-state").innerHTML = x ? apiPreparationBadge(x.state) : "<span class='badge gray'>尚未登记</span>";
+      $("preparation-detail").innerHTML = x ? `<div class="workbench-columns"><div><b>立项理由</b><p>${esc(x.reason)}</p></div><div><b>负责人决定</b><p>${esc(x.decision_comment || "待决定")}</p><span class="hint">${esc(x.decided_at || "")}</span></div></div><div class="hint">${esc(x.meaning || "")}</div>` : "尚未登记准备立项。仅经营负责人可以创建并作出决定。";
+    }
+    async function loadPreparation() { const d = await apiGet(`/projects/${encodeURIComponent(PJ())}/preparations/latest`); renderPreparation(d.item); }
+    function taskActions(t) {
+      const role = apiRole(); if (["closed","rejected","cancelled"].includes(t.state)) return "";
+      if (role === "business_head" || role === t.assignee_role) {
+        let out = !t.assignee || t.assignee === (localStorage.getItem("api_name") || "") ? `<button class="btn sm ghost" data-act="claim" data-id="${esc(t.task_id)}">领取</button>` : "";
+        if (t.task_type === "evidence_supplement") out += `<button class="btn sm" data-act="evidence" data-id="${esc(t.task_id)}">提交证据引用</button>`;
+        else out += `<button class="btn sm" data-act="resolve" data-id="${esc(t.task_id)}">提交处置结论</button>`;
+        return out;
+      } return "<span class='hint'>由责任角色办理</span>";
+    }
+    function renderTasks(items) {
+      $("task-summary").textContent = `共 ${items.length} 项（仅显示当前项目）`;
+      $("tasks").innerHTML = items.length ? items.map(t => `<article class="task-card"><div class="card-title-row"><div>${apiTaskTypeBadge(t.task_type)} ${apiTaskStateBadge(t.state)}</div><span class="hint">责任角色：${esc(apiRoleLabelFor(t.assignee_role))}${t.assignee ? `；责任人：${esc(t.assignee)}` : ""}</span></div><h3>${esc(t.title)}</h3><p>${esc(t.description || "")}</p><div class="hint">证据：${t.evidence_submitted ? `已提交 ${esc(t.evidence_count)} 条，待核验与重算` : "尚未提交"}；关闭条件：${esc(taskClosingText(t.closing_condition))}</div><div class="task-buttons">${taskActions(t)}</div></article>`).join("") : '<div class="notice ok">当前没有处置任务。请仍以最新正式匹配和服务端门禁为准。</div>';
+    }
+    function apiRoleLabelFor(role) { return (ROLE_META[role] || {label:"待分配"}).label; }
+    function taskClosingText(c) { return c === "verified_evidence_and_new_match" ? "证据核验后新匹配不再出现同一问题" : c === "resolved_by_new_match" ? "新匹配结果不再出现同一问题" : "人工处理记录完整"; }
+    async function loadTasks() { const d = await apiGet(`/projects/${encodeURIComponent(PJ())}/tasks`); renderTasks(d.items || []); }
+    async function refreshAll() { apiShowError(null); try { await Promise.all([loadReadiness(), loadPrescreen(), loadPreparation(), loadTasks()]); } catch(e) { showError(e); } }
+    $("btn-refresh").onclick = refreshAll;
+    $("btn-prescreen").onclick = async () => { try { const d = await apiPost(`/projects/${encodeURIComponent(PJ())}/quick-prescreen`, {}); await loadPrescreen(); alert(`已完成快速预核。请求编号：${d.request_id || "—"}`); } catch(e) { showError(e); } };
+    $("btn-create-preparation").onclick = async () => { const reason=$("preparation-reason").value.trim(); if(!reason) return alert("请填写投入准备工作的理由。"); try { await apiPost(`/projects/${encodeURIComponent(PJ())}/preparations`, {reason}); $("preparation-reason").value=""; await refreshAll(); } catch(e) { showError(e); } };
+    async function decidePreparation(action) { if (!latestPreparation) return; const comment=$("preparation-comment").value.trim(); if(!comment) return alert("请填写负责人决定意见。"); try { await apiPost(`/projects/${encodeURIComponent(PJ())}/preparations/${encodeURIComponent(latestPreparation.preparation_id)}/${action}`, {comment}); $("preparation-comment").value=""; await refreshAll(); } catch(e) { showError(e); } }
+    $("btn-approve-preparation").onclick=()=>decidePreparation("approve"); $("btn-decline-preparation").onclick=()=>decidePreparation("decline");
+
+    let taskModalState = null;
+    let taskModalReturnFocus = null;
+    function setTaskModalValidation(message = "") {
+      const box = $("task-modal-validation");
+      box.textContent = message; box.hidden = !message;
+    }
+    function closeTaskModal({restoreFocus = true} = {}) {
+      const modal = $("task-modal");
+      if (modal.hidden) return;
+      modal.hidden = true;
+      taskModalState = null;
+      setTaskModalValidation();
+      $("task-modal-success").hidden = true;
+      if (restoreFocus && taskModalReturnFocus?.isConnected) taskModalReturnFocus.focus();
+      taskModalReturnFocus = null;
+    }
+    function openTaskModal(action, taskId, trigger) {
+      taskModalState = {action, taskId}; taskModalReturnFocus = trigger;
+      const evidence = action === "evidence";
+      $("task-modal-title").textContent = evidence ? "提交证据引用" : "提交处置结论";
+      $("task-modal-description").textContent = evidence
+        ? "仅填写已经在企业资料库中登记的证据引用，不粘贴企业私有材料正文。"
+        : "处理结论会保留为待核验与重算，不能代替正式匹配结论。";
+      $("task-modal-label").textContent = evidence ? "已登记的证据引用" : "处理结论";
+      $("task-modal-input").placeholder = evidence
+        ? "每行一条，也可用逗号分隔；例如：EV-001, EV-002"
+        : "请如实记录已完成的核对或处置事实（必填）";
+      $("task-modal-help").textContent = evidence
+        ? "提交证据不代表满足；仍须由有权人员核验，并在新的正式匹配中重算。重复引用会自动合并。"
+        : "提交后任务仅进入“待核验与重算”，不会被人工直接关闭为“满足”。";
+      $("btn-task-modal-submit").textContent = evidence ? "提交证据引用" : "提交处置结论";
+      $("btn-task-modal-submit").disabled = false;
+      $("btn-task-modal-cancel").textContent = "取消";
+      $("task-modal-input").value = ""; $("task-modal-success").hidden = true;
+      setTaskModalValidation();
+      $("task-modal").hidden = false;
+      window.setTimeout(() => $("task-modal-input").focus(), 0);
+    }
+    function evidenceRefsFrom(value) {
+      return [...new Set(value.split(/[\n,，]/).map(x => x.trim()).filter(Boolean))];
+    }
+    $("btn-task-modal-close").onclick = () => closeTaskModal();
+    $("btn-task-modal-cancel").onclick = () => closeTaskModal();
+    $("task-modal").onclick = (e) => { if (e.target.dataset.modalClose === "true") closeTaskModal(); };
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("task-modal").hidden) { e.preventDefault(); closeTaskModal(); } });
+    $("task-modal-form").onsubmit = async (e) => {
+      e.preventDefault(); if (!taskModalState) return;
+      const {action, taskId} = taskModalState; const value = $("task-modal-input").value.trim();
+      const payload = action === "evidence" ? {evidence_refs: evidenceRefsFrom(value)} : {resolution: value};
+      if ((action === "evidence" && !payload.evidence_refs.length) || (action === "resolve" && !payload.resolution)) {
+        setTaskModalValidation(action === "evidence" ? "请至少填写一条已登记的证据引用。" : "请填写处理结论。"); return;
+      }
+      const submit = $("btn-task-modal-submit"); submit.disabled = true;
+      try {
+        const endpoint = action === "evidence" ? "evidence" : "resolve";
+        const d = await apiPost(`/projects/${encodeURIComponent(PJ())}/tasks/${encodeURIComponent(taskId)}/${endpoint}`, payload);
+        $("task-modal-success").textContent = `已提交，任务仍待核验与重算。请求编号：${d.request_id || "—"}`;
+        $("task-modal-success").hidden = false;
+        setTaskModalValidation();
+        submit.disabled = true;
+        $("btn-task-modal-cancel").textContent = "关闭";
+        await refreshAll();
+      } catch (err) {
+        setTaskModalValidation(err.message || "提交失败，请检查输入后重试。"); showError(err);
+      } finally { submit.disabled = false; }
+    };
+    $("tasks").onclick = async (e) => {
+      const b=e.target.closest("button[data-act]"); if(!b) return; const id=b.dataset.id, act=b.dataset.act;
+      try {
+        if(act === "claim") { await apiPost(`/projects/${encodeURIComponent(PJ())}/tasks/${encodeURIComponent(id)}/claim`, {}); await refreshAll(); }
+        if(act === "evidence" || act === "resolve") openTaskModal(act, id, b);
+      } catch(err) { showError(err); }
+    };
+    refreshAll();
+  </script>
+</body></html>

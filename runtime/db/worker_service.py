@@ -170,3 +170,67 @@ def fail_then_retryable(session: Session, job_id: str, error_code: str, error_me
     job.error_message = error_message
     job.updated_at = _dt.datetime.now(_dt.timezone.utc)
     session.commit()
+
+
+# ---------- ADR-004 §2.6：worker 进程级心跳（P0-01） ----------
+
+def record_heartbeat(
+    session: Session,
+    runner_id: str,
+    *,
+    poll_interval_seconds: float | None = None,
+    pid: int | None = None,
+    hostname: str | None = None,
+) -> None:
+    """worker 每轮轮询（含空闲）upsert 一行进程心跳；/readyz 据此判定异步能力是否可用。"""
+    from runtime.db.models import WorkerHeartbeat
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    row = session.get(WorkerHeartbeat, runner_id)
+    if row is None:
+        row = WorkerHeartbeat(runner_id=runner_id, heartbeat_at=now, started_at=now)
+        session.add(row)
+    row.heartbeat_at = now
+    row.poll_interval_seconds = poll_interval_seconds
+    row.pid = pid
+    row.hostname = hostname
+    row.updated_at = now
+    session.commit()
+
+
+def worker_status(session: Session, *, stale_seconds: float, now: _dt.datetime | None = None) -> dict:
+    """最近一次 worker 心跳 → /readyz 检查项 dict（available / heartbeat_at / age_seconds / runner_id）。
+
+    无任何心跳行 = worker 从未启动 → available=False（不以「API 起了」冒充异步链路可用）。
+    """
+    from runtime.db.models import WorkerHeartbeat
+
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_dt.timezone.utc)
+    row = session.scalar(
+        select(WorkerHeartbeat).order_by(WorkerHeartbeat.heartbeat_at.desc()).limit(1)
+    )
+    if row is None:
+        return {
+            "available": False,
+            "state": "unavailable",
+            "error": "无 worker 心跳记录（worker 未启动或从未连接数据库）",
+            "stale_after_seconds": stale_seconds,
+        }
+    hb = row.heartbeat_at
+    if hb.tzinfo is None:
+        hb = hb.replace(tzinfo=_dt.timezone.utc)
+    age = (now - hb).total_seconds()
+    available = age <= stale_seconds
+    out = {
+        "available": available,
+        "state": "ok" if available else "stale",
+        "runner_id": row.runner_id,
+        "heartbeat_at": hb.isoformat(),
+        "age_seconds": round(age, 1),
+        "stale_after_seconds": stale_seconds,
+    }
+    if not available:
+        out["error"] = f"worker 心跳超时 {round(age)}s（阈值 {stale_seconds}s），异步任务暂不可用"
+    return out

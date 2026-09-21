@@ -1,6 +1,6 @@
 # F020-后端 API、任务编排与权限实现
 
-- **需求来源**：R020 ｜ **状态**：定稿草案 v1.13（2026-09-08）
+- **需求来源**：R020 ｜ **状态**：定稿草案 v1.21（2026-09-17）
 - **关联**：F003-F010、F017-F019、F021-F025、ADR-001、ADR-002
 
 ## 1. 目标
@@ -20,6 +20,7 @@
 | 匹配 | `POST /projects/{id}/match`、`GET /projects/{id}/match-runs/{run_id}`、`GET /projects/{id}/match-runs/latest`（`POST match` 仅由任务编排器或重算流程调用） |
 | 结果/队列 | `GET /api/v1/projects/{id}/matrix`、`GET /api/v1/projects/{id}/admission`、`GET /api/v1/projects/{id}/queues` |
 | 审批 | `GET /api/v1/approvals/pending`、`POST /api/v1/projects/{id}/approval/approve`、`/reject`、`/waivers`、`GET /api/v1/projects/{id}/audit` |
+| Iteration 1 工作流 | `POST /api/v1/projects/{id}/quick-prescreen`、`GET .../quick-prescreens/latest`、`POST .../preparations`、`/approve`、`/decline`、`GET .../tasks`、`POST .../tasks`、`/claim`、`/assign`、`/evidence`、`/resolve` |
 
 所有响应包含 `request_id`；异步接口返回 `job_id`，通过 `GET` 查询结果，不长连接等待大文件处理。
 
@@ -209,6 +210,19 @@ v1.7 校验与幂等（09-优化方案 §3.2）：① 前后端均校验后缀�
 
 角色过滤再按 F003 `permission_scope` 收紧；`enterprise_data` 明细不对投标专员/法务开放。
 
+
+### 2.2.9 Iteration 1 工作流与任务中心（ADR-004 §2.7，2026-09-17 冻结）
+
+**快速预核**：`POST /api/v1/projects/{project_id}/quick-prescreen` 创建一条只读事实快照；`GET /api/v1/projects/{project_id}/quick-prescreens/latest` 获取最新快照。响应含 `facts[] / missing[] / review[] / disclaimer`，其中 `disclaimer` 必须声明“不是投标建议、不是正式匹配、不能替代正式审批”。该接口不得创建 MatchRun、不得改变 `Project.admission_status`、不得创建审批。投标专员和经营负责人可调用。
+
+**投标准备立项**：`POST /api/v1/projects/{project_id}/preparations`（`reason` 必填）创建 `preparation_pending`；`POST .../preparations/{preparation_id}/approve`（`comment` 必填）和 `/decline`（`comment` 必填）仅经营负责人可调用。响应只能表述“允许投入准备工作/未允许投入准备工作”，不得出现“同意投标”“可递交”等文案。截止已过返回 `409 overdue`；该流程不触发或替代正式审批。
+
+**任务中心**：`GET /api/v1/projects/{project_id}/tasks?state=&assignee=&mine=` 只返回当前角色可见/可办理任务；`POST .../tasks` 可人工登记分流任务；`POST .../{task_id}/claim` 领取；`POST .../{task_id}/assign` 转派；`POST .../{task_id}/evidence` 仅资料补证任务提交非空 `evidence_refs[]`，状态变为 `evidence_submitted`；`POST .../{task_id}/resolve` 对文件/规则/资源/身份等任务提交必填处理结论并变为 `resolved_pending_recalculation`。所有动作写审计。
+
+`termination_correction`（明确不满足）不接受 `/evidence`，不得以补证“洗白”；其关闭只能由后续纠正后的匹配结果不再出现相同来源问题，或由经营负责人取消项目/任务并保留理由。所有自动任务按 `project_id + source_kind + source_ref + task_type` 形成来源指纹幂等；新 MatchRun 结果不再存在该来源问题时才由系统关闭开放任务。缺失字段仍为 `null/待补/待核实`，不得由前端或任务状态推断满足。
+
+**身份门禁（v1.21）**：正式 `POST /match` 与 `/recalculate` 在 P0 的 `identity_conflict` 基础上，新增 `identity_warning` 同步 `409` 阻断；投标专员/经营负责人必须用 `POST /identity-confirm` 提交依据后重新发起。快速预核/准备立项仅显示该事实，不将其默认确认。
+
 ## 3. 请求校验与幂等
 
 - 上传必须声明 `material_type`、`owner_type`、`classification`、`data_owner` 和 `collect_mode`。
@@ -276,3 +290,6 @@ worker 领取任务使用数据库锁和租约；超时任务由恢复器重新�
 | 2026-09-11 | v1.17 | **新增 `GET /intake/announcement/candidates/{candidate_id}/text`**（docs/10 §5 P1-5 溯源定位）：返回候选公告最新版本的固化净化正文全文 + `content_hash`（直读 material_versions 反查对象库，只读）——前端"在原文中定位"按 detail_summary 的 quote/start/end 高亮，hash 不一致走重定位兜底。权限=announcement:read（与候选读同门）。detail_summary 字段 schema 扩展（quote/start/end/enum/truncated/review/content_hash）见 F004 v1.6。 |
 | 2026-09-15 | v1.18 | **匹配结果逐条全量契约**（用户实测"只看到一项不合格、其余无法核对"整改，实现口径见 F023 v1.4）：① `match` 枚举增 `not_evaluated`（有运行但无 MatchItem=旧版门禁短路未执行 / 尚无运行；禁止默认 `unverifiable` 冒充缺证判定）；② matrix/requirements 逐条 DTO 增 `gate_executed`（false=门禁短路后诊断全量补齐）、`page_no`、`evidence_required`、`category`，`match_reason` 对象含 `gate_executed`；③ `match-runs/latest.coverage` 增 `gate_executed/gate_complete/short_circuited[]`（旧运行 `complete=false` 且无 `short_circuited` 字段=旧版短路结果）；④ 队列 DTO 每项增 `gate_executed`；⑤ 复核页（queue.html）与解析结果页共用「批量通过（高/中置信且已定位）」工具栏（review.js mountBatchToolbar，F021 §2.2 v1.7）。 |
 | 2026-09-16 | v1.19 | **准入摘要 `state` 语义修正**：回传项目业务准入状态（此前误传 AdmissionResult.state=final，页面显示英文）；新增 `result_freshness / decision / blocked[]`；matrix/queues/admission 队列项条款号折叠「提示（提示）」。前端结果页（score/matrix/queue/approval）去英文枚举与系统编号列表：枚举→中文标签映射（api.js 共享），系统编号→悬停/折叠，证据类型/审计动作/负责角色中文化（04-修改日志同日）。 |
+| 2026-09-16 | v1.20 | **ADR-004 对齐（优化方案 §11）**。① **Iteration 0 已落地**：`/readyz` 新增 `worker` 检查项（最近心跳 ≤ `WORKER_HEARTBEAT_STALE_SECONDS` 视为可用；无心跳/超时 → `available=false` 整体 503）；新增 `GET /api/v1/projects/{id}/readiness`（阶段/截止/过期/身份校验/最新结果新鲜度/阻断原因）与 `POST /api/v1/projects/{id}/identity-check`（投标专员/经营负责人；比较公告侧与招标文件侧字段，返回 `identity_confirmed / identity_warning / identity_conflict` 与冲突明细）；`POST .../match`、`.../recalculate`、`.../approval/create` 增服务端门禁：`overdue` → `invalid_state_transition`，`identity_conflict` → `invalid_state_transition`，均写审计；② 草案（Iteration 1）：任务中心 API `GET /projects/{id}/tasks`、`POST /tasks/{id}/claim|submit|reject|complete`、`POST /projects/{id}/precheck`、`POST /projects/{id}/preparation-decisions`、`POST /projects/{id}/rulesets/{id}/confirm`、`GET /projects/{id}/approval-package`、`POST /projects/{id}/stale-recheck`、`GET /jobs/{job_id}`；所有写接口校验角色/项目状态/输入版本、幂等、审计、返回 request_id/job_id/新版本 ID，禁止仅靠前端隐藏按钮实现门禁；③ 权限草案：资料管理员不得发起/批准审批，经营负责人不得修改企业资料原始版本。 |
+| 2026-09-16 | v1.14 | **ADR-004 P0 查漏补缺**：`POST /projects/{id}/match`、`/recalculate` 与审批创建均须先自动执行/复用身份校验，再作项目门禁；首次发现 `identity_conflict` 必须同步返回 409 并审计，不得先创建后由 worker 失败。截止登记接口兼容 `bid_deadline`（YYYY-MM-DD）与 `bid_deadline_at`（含时区 ISO 8601）；精确时点与日期不一致、无时区或格式错误一律 422/业务错误；readiness 返回 `bid_deadline_at`、`deadline_precision`、`deadline_accuracy_note`。 |
+| 2026-09-17 | v1.21 | **ADR-004 Iteration 1 实现契约**：冻结快速预核、投标准备立项和 RemediationTask API/状态/权限/审计；正式 match/recalculate 新增 `identity_warning` 同步阻断，资料补证不得自行关闭明确不满足任务。 |

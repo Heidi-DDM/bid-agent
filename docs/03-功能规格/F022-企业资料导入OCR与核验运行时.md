@@ -57,3 +57,4 @@
 | 2026-08-31 | v1.1 | 对齐原型联通：企业资料页定位为数据管理员后台，匹配自动读取有效资料；补录以新版本核验后触发重算，不再提供项目内资料选择。 |
 | 2026-09-01 | v1.2 | 接入 F025 L3 企业能力与证据索引；明确本地 embedding、active/as_of 过滤、权限零泄漏和证据 Recall@10 验收。 |
 | 2026-09-04 | v1.3 | 按 09-优化方案 §3.5 冻结：§5.1 Excel/CSV 受控导入契约（入口分离、preview 安全嗅探与预览、commit 映射导入+原文不可变落库+行回链、风险文件拒绝无残留；.jpg 图片证据待 OCR 方案确认后开放）。 |
+| 2026-09-16 | v1.4 | **ADR-004 对齐（优化方案 §7.1/§8.4）**。草案（Iteration 2）：① EvidenceReference 最低字段（evidence_id / enterprise_snapshot_id / source_document_id / source_version / file_hash / page_no / section_no / field_path / valid_from / valid_to / verified_by / verified_at / verification_status）；② EnterpriseSnapshot（snapshot_at / source_versions / validity_policy）——快速预核与匹配只读指定时点快照，不允许挑选有利资料；③ 人员匹配至少校验身份/证书类型等级/专业/有效期/注册状态/B 证/在施/时间窗口/资源冲突/区域授权，「候选项目经理」≠「已确认可用」；④ 权限：任何人不得删除已被历史 MatchRun 或审批引用的证据版本。Iteration 0 无代码变更。 |

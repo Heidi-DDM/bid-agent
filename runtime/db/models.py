@@ -77,6 +77,26 @@ class AnalysisJob(Base):
         return f"<AnalysisJob {self.job_id} {self.kind} {self.status}>"
 
 
+class WorkerHeartbeat(Base):
+    """ADR-004 §2.6 / 优化方案 §11.1：worker 进程级心跳（与任务级 heartbeat_at 分离）。
+
+    worker 每轮轮询（含空闲）upsert 一行；/readyz 以最近心跳是否在
+    WORKER_HEARTBEAT_STALE_SECONDS 内判定「异步 worker 可用」。无行 = 从未启动。
+    """
+
+    __tablename__ = "worker_heartbeats"
+
+    runner_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    poll_interval_seconds: Mapped[float | None] = mapped_column(Float)
+    pid: Mapped[int | None] = mapped_column(Integer)
+    hostname: Mapped[str | None] = mapped_column(String(128))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 # ============================================================
 # F019 §2/§3：数据库逻辑分层（public_data / enterprise_data /
 # admission_data / audit_data）与核心表。
@@ -131,6 +151,54 @@ class Project(Base):
     project_name: Mapped[str] = mapped_column(String(256), nullable=False)
     tender_document_ref: Mapped[str | None] = mapped_column(String(64))  # 当前招标文件 material_id
     admission_status: Mapped[str | None] = mapped_column(String(32), index=True)
+    # ADR-004 §2.4：投标截止的日期级原文事实（仅有日期时保留日期级不确定性；缺失=NULL=待补，不得由 as_of 推断）；
+    # 已过 → 项目 overdue，禁止新建匹配/重算/审批，旧结果只可查看。
+    bid_deadline: Mapped[date | None] = mapped_column(Date)
+    # 有原文明确时分秒时保存带时区精确截止；仅日期时保持 NULL，禁止臆造时刻。
+    bid_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class ProjectIdentity(Base):
+    """ADR-004 §2.3 / 优化方案 §7.1 ProjectIdentity：项目身份校验结果（P0-02 防串档）。
+
+    每项目一行（最近一次校验）；identity_status = identity_confirmed / identity_warning /
+    identity_conflict；conflict 阻断正式匹配与审批（服务端门禁）。字段只记录双方明确给出的
+    值，缺失=NULL，不推断。
+    """
+
+    __tablename__ = "project_identities"
+    __table_args__ = (
+        Index("ix_project_identities_status", "identity_status"),
+        {"schema": "public_data"},
+    )
+
+    project_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    normalized_project_name: Mapped[str | None] = mapped_column(String(256))
+    purchaser: Mapped[str | None] = mapped_column(String(256))
+    location: Mapped[str | None] = mapped_column(String(128))
+    project_type: Mapped[str | None] = mapped_column(String(64))
+    announcement_no: Mapped[str | None] = mapped_column(String(128))
+    procurement_no: Mapped[str | None] = mapped_column(String(128))
+    lot_id: Mapped[str | None] = mapped_column(String(64))
+    budget_amount: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    bid_deadline: Mapped[date | None] = mapped_column(Date)
+    # 同 projects.bid_deadline_at；用于身份核对与截止门禁的可追溯精度。
+    bid_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    identity_status: Mapped[str] = mapped_column(String(24), nullable=False, default="identity_warning")
+    identity_conflicts: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    identity_warnings: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    compared_fields: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    expected_snapshot: Mapped[dict | None] = mapped_column(JSONB)  # 公告侧输入
+    actual_snapshot: Mapped[dict | None] = mapped_column(JSONB)    # 招标文件侧输入
+    source_refs: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    checked_by: Mapped[str | None] = mapped_column(String(128))
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    confirmed_by: Mapped[str | None] = mapped_column(String(128))  # 人工确认为同一项目（warning → confirmed）
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
@@ -480,6 +548,93 @@ class Requirement(Base):
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     owner: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class QuickPrescreenRun(Base):
+    """ADR-004 §2.7 / F020 v1.21：快速预核的不可变事实快照。
+
+    它不是正式匹配结果，不产生准入结论，也不改变项目状态；仅保存当时可确证的
+    项目身份、截止、文件/解析存在性和既有匹配问题，供是否投入准备工作时人工查看。
+    """
+
+    __tablename__ = "quick_prescreen_runs"
+    __table_args__ = (
+        Index("ix_quick_prescreen_runs_project", "project_id"),
+        {"schema": "admission_data"},
+    )
+
+    prescreen_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    disclaimer: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class PreparationRecord(Base):
+    """ADR-004 §2.7：投入投标准备工作的负责人决定，独立于正式投标审批。"""
+
+    __tablename__ = "preparation_records"
+    __table_args__ = (
+        Index("ix_preparation_records_project_state", "project_id", "state"),
+        {"schema": "admission_data"},
+    )
+
+    preparation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="preparation_pending")
+    # preparation_pending / preparation_approved / preparation_declined
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    decided_by: Mapped[str | None] = mapped_column(String(128))
+    decision_comment: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class RemediationTask(Base):
+    """ADR-004 §2.7：按问题类型分流、可审计且不可由补证自我放行的处置任务。"""
+
+    __tablename__ = "remediation_tasks"
+    __table_args__ = (
+        UniqueConstraint("source_fingerprint", name="uq_remediation_tasks_source_fingerprint"),
+        Index("ix_remediation_tasks_project_state", "project_id", "state"),
+        Index("ix_remediation_tasks_assignee_state", "assignee_role", "state"),
+        {"schema": "admission_data"},
+    )
+
+    task_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    # document_check / evidence_supplement / rule_review / resource_confirmation /
+    # identity_confirmation / termination_correction / stale_review
+    state: Mapped[str] = mapped_column(String(40), nullable=False, default="open")
+    # open / in_progress / evidence_submitted / resolved_pending_recalculation /
+    # closed / rejected / cancelled / overdue
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_match_run_id: Mapped[str | None] = mapped_column(String(64))
+    requirement_id: Mapped[str | None] = mapped_column(String(64))
+    assignee_role: Mapped[str] = mapped_column(String(32), nullable=False)
+    assignee: Mapped[str | None] = mapped_column(String(128))
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    evidence_required: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    evidence_refs: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    resolution: Mapped[str | None] = mapped_column(Text)
+    closing_condition: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    closed_by: Mapped[str | None] = mapped_column(String(128))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
 
 
 class MatchRun(Base):

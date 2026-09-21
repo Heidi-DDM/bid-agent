@@ -24,6 +24,14 @@ class MatchNotRunnableError(Exception):
     """匹配不可执行（缺规则集/无 as_of/引擎不可用）→ 任务 retryable/manual_review。"""
 
 
+class GateBlockedError(MatchNotRunnableError):
+    """ADR-004 服务端门禁拦截（项目过期 / 身份冲突）：确定性阻断，任务终态失败不重试。"""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 def _get(record: Any, key: str, default: Any = None) -> Any:
     """dict 或 ORM 对象统一取值（纯逻辑不绑定 ORM 类型）。"""
     if isinstance(record, dict):
@@ -377,6 +385,59 @@ def merge_gate_with_diagnostic(*, gate: dict, diagnostic: dict) -> dict:
     merged["internal_admission_eligible"] = bool(
         diagnostic.get("internal_admission_eligible")) and bool(gate.get("internal_admission_eligible"))
     return merged
+
+
+EVIDENCE_DOWNGRADE_NOTE = (
+    "满足结论缺少可回链的企业证据引用（evidence_refs 为空），"
+    "按 ADR-004 §2.5 / 优化方案 §7.2 降级为人工复核，不计入正式准入"
+)
+
+
+def _document_fact_exempt(req: dict) -> bool:
+    """仅依赖招标文件事实、无需企业证据的规则：联合体「接受联合体」极性（条款本身即依据）。"""
+    rule = (req or {}).get("rule") or {}
+    if rule.get("type") == "consortium":
+        return rule.get("allowed", rule.get("accepts_consortium")) is True
+    return False
+
+
+def downgrade_satisfied_without_evidence(
+    result: dict, evidence_refs_by_req: dict[str, dict], requirements: list[dict]
+) -> dict:
+    """ADR-004 §2.5 证据链最低要求：hard/scored 的 satisfied 无企业证据回链 → manual_review。
+
+    就地修改 engine 结果（matrix 条目、review 队列、准入布尔、评分/资格汇总），并在
+    ``coverage.evidence_downgraded`` 点名被降级条目；动作类要求由人员登记、不需企业证据，
+    不在此降级。RAG 索引未就绪导致全部无回链时，所有满足项一律降级——不以"匹配跑完"冒充匹配正确。
+    """
+    req_by_id = {r.get("requirement_id"): r for r in requirements if r.get("requirement_id")}
+    downgraded: list[str] = []
+    matrix = result.get("matrix") or []
+    for entry in matrix:
+        if entry.get("match_result") != "satisfied":
+            continue
+        if entry.get("req_type") not in ("hard_requirement", "scored_requirement"):
+            continue
+        rid = entry.get("requirement_id")
+        refs = (evidence_refs_by_req.get(rid) or {}).get("evidence_refs") or []
+        if refs or _document_fact_exempt(req_by_id.get(rid) or {}):
+            continue
+        entry["match_result"] = "manual_review"
+        entry["match_reason"] = f"{entry.get('match_reason') or ''}；{EVIDENCE_DOWNGRADE_NOTE}".lstrip("；")
+        entry["score"] = None
+        entry["evidence_downgraded"] = True
+        result.setdefault("review", []).append(entry)
+        downgraded.append(rid)
+    if downgraded:
+        result["internal_admission_eligible"] = False
+        hard_ids = {e.get("requirement_id") for e in matrix if e.get("req_type") == "hard_requirement"}
+        scored_ids = {e.get("requirement_id") for e in matrix if e.get("req_type") == "scored_requirement"}
+        if any(r in scored_ids for r in downgraded):
+            result["scoring_result"] = "not_full"
+        if any(r in hard_ids for r in downgraded) and result.get("qualification_result") == "passed":
+            result["qualification_result"] = "pending"
+        result.setdefault("coverage", {})["evidence_downgraded"] = list(downgraded)
+    return result
 
 
 def _load_engine_evaluate() -> Callable:

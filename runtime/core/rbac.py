@@ -24,6 +24,8 @@ RES_ENTERPRISE = "enterprise"        # 企业资料
 RES_MATCH = "match"                  # 匹配/准入
 RES_RESULT = "result"                # 结果/队列
 RES_APPROVAL = "approval"            # 审批/豁免/审计
+RES_PREPARATION = "preparation"      # 投标准备立项（独立于正式审批）
+RES_TASK = "task"                    # 分类型处置任务
 
 # 动作：read / write / verify / approve / review
 READ = "read"
@@ -38,25 +40,30 @@ _ROLE_PERMISSIONS: dict[str, set[tuple[str, str]]] = {
         (RES_ANNOUNCEMENT, READ), (RES_ANNOUNCEMENT, WRITE),   # 搜索/查看公开事实
         (RES_TENDER_DOC, WRITE), (RES_TENDER_DOC, READ),       # 上传完整招标文件、查看解析
         (RES_MATERIAL, READ),                                  # 查看公开材料
-        (RES_MATCH, READ), (RES_RESULT, READ),                 # 查看匹配结果/队列
+        (RES_MATCH, READ), (RES_MATCH, WRITE), (RES_RESULT, READ),  # 复核后可发起受门禁重算
+        (RES_TASK, READ), (RES_TASK, WRITE),                    # 规则/文件/身份等任务办理
     },
     DATA_ADMIN: {
         (RES_ENTERPRISE, READ), (RES_ENTERPRISE, WRITE),       # 导入/核验
         (RES_ENTERPRISE, VERIFY),                              # 核验
         (RES_OCR, READ), (RES_OCR, WRITE), (RES_OCR, REVIEW),  # OCR 复核
         (RES_MATERIAL, READ), (RES_MATERIAL, WRITE),
+        (RES_TASK, READ), (RES_TASK, WRITE),                    # 资料补证任务办理
     },
     BUSINESS_HEAD: {
         (RES_ANNOUNCEMENT, READ), (RES_ANNOUNCEMENT, WRITE),   # 2026-09-11 用户决策：经营负责人可搜索/登记公告（原只读）
         (RES_TENDER_DOC, READ),
         (RES_MATERIAL, READ),
+        (RES_TASK, READ), (RES_TASK, WRITE),                    # 任务协调/资源确认
         (RES_MATCH, READ), (RES_MATCH, WRITE),                 # 查看完整匹配结果/准入
         (RES_RESULT, READ),
         (RES_APPROVAL, READ), (RES_APPROVAL, WRITE), (RES_APPROVAL, APPROVE),  # 审批/驳回/豁免/审计
+        (RES_PREPARATION, READ), (RES_PREPARATION, WRITE), (RES_PREPARATION, APPROVE),
     },
     LEGAL: {
         (RES_ANNOUNCEMENT, READ), (RES_TENDER_DOC, READ),      # 数据源与合规记录只读/审核
         (RES_MATERIAL, READ),
+        (RES_TASK, READ), (RES_TASK, WRITE),                    # 法律/合规类人工任务
     },
 }
 

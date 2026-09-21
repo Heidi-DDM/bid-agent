@@ -303,6 +303,30 @@ function apiMetaBadge(meta, value, fallback) {
 }
 function apiAdmissionStateBadge(state) { return apiMetaBadge(ADMISSION_STATE_META, state, "状态待定"); }
 
+/* ADR-004 Iteration 1：工作台中展示的准备立项/处置任务状态。页面只显示中文业务含义，
+   最终权限和状态机仍由服务端执行。 */
+const PREPARATION_STATE_META = {
+  preparation_pending: ["warn", "待负责人决定是否投入准备"],
+  preparation_approved: ["info", "已允许投入准备工作"],
+  preparation_declined: ["gray", "未允许投入准备工作"],
+};
+const REMEDIATION_TASK_TYPE_META = {
+  document_check: ["info", "文件核对"], evidence_supplement: ["warn", "资料补证"],
+  rule_review: ["review", "条款/规则复核"], resource_confirmation: ["info", "资源确认"],
+  identity_confirmation: ["review", "项目身份确认"], termination_correction: ["danger", "明确不满足处置"],
+  stale_review: ["review", "结果时效复核"],
+};
+const REMEDIATION_TASK_STATE_META = {
+  open: ["warn", "待领取"], in_progress: ["info", "处理中"],
+  evidence_submitted: ["review", "已提交证据，待核验与重算"],
+  resolved_pending_recalculation: ["review", "已提交处置结论，待重新核验"],
+  closed: ["ok", "已由新匹配结果关闭"], rejected: ["gray", "已拒绝"],
+  cancelled: ["gray", "已取消"], overdue: ["danger", "已逾期"],
+};
+function apiPreparationBadge(state) { return apiMetaBadge(PREPARATION_STATE_META, state, "准备立项状态待定"); }
+function apiTaskTypeBadge(type) { return apiMetaBadge(REMEDIATION_TASK_TYPE_META, type, "处置任务"); }
+function apiTaskStateBadge(state) { return apiMetaBadge(REMEDIATION_TASK_STATE_META, state, "任务状态待定"); }
+
 /* 处置项（缺证 / 复核 / 硬性失败）的可读摘要：中文缺因或条款原文短摘 + 条款号；系统编号只放悬停提示 */
 function apiQueueItemBrief(it, preferReason) {
   const escT = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

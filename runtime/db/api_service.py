@@ -208,6 +208,11 @@ def project_card(session: Session, project: Project) -> dict[str, Any]:
         .order_by(Material.version.desc())
     ).all()
     tender = next((m for m in materials if m.material_type == "tender_document"), None)
+    # ADR-004：截止/过期/身份校验为项目卡事实字段（只读视图不改状态，计算标志如实给出）
+    from runtime.db import lifecycle_service
+    from runtime.db.models import ProjectIdentity
+
+    identity = session.get(ProjectIdentity, project.project_id)
     return {
         "project_id": project.project_id,
         "project_name": project.project_name,
@@ -215,6 +220,9 @@ def project_card(session: Session, project: Project) -> dict[str, Any]:
         "parse_status": (tender.parse_status if tender else "pending"),
         "tender_file": f"v{tender.version}" if tender else None,
         "updated": project.updated_at.date().isoformat() if project.updated_at else None,
+        "bid_deadline": project.bid_deadline.isoformat() if project.bid_deadline else None,
+        "overdue": lifecycle_service.is_overdue(project),
+        "identity_status": identity.identity_status if identity else None,
         "materials": [
             {
                 "material_id": m.material_id,
@@ -365,6 +373,13 @@ def create_approval(session: Session, *, project_id: str, role: str, actor: str,
     且未过期（result_freshness=current）；缺快照或 stale 不得创建审批。
     """
     require_approval_role(role)
+    # ADR-004 §2.3/§2.4 服务端门禁（P0-02/P0-03）：过期项目、身份冲突项目禁止创建正式审批
+    from runtime.db import lifecycle_service
+
+    project_row = get_project_or_404(session, project_id)
+    lifecycle_service.ensure_identity_then_deny(
+        session, project_row, action="approval", actor=actor, audit_action="approval.create_denied"
+    )
     result = latest_admission(session, project_id)
     if result is None or not result.internal_admission_eligible:
         audit(session, actor=actor, action="approval.create_denied",

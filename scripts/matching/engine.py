@@ -251,7 +251,8 @@ def _match_scored(item: dict[str, Any], evidence: dict[str, list[dict[str, Any]]
         review = item.get("internal_review") or {}
         if review.get("status") == "passed":
             return "satisfied", "内部质量评审已通过（不代表评标委员会得分）", item.get("max_score"), True
-        return "manual_review", "待内部质量评审，不能计入内部满分", 0, False
+        # 未通过评审的主观项得分不可计算：score 必须为 None，不得写 0 冒充已计分（ADR-004 §2.5）
+        return "manual_review", "待内部质量评审，得分暂不可计算，不能计入内部满分", None, False
     rule = item.get("rule") or {}
     if rule.get("type") == "similar_performance":
         result, reason = _match_similar_performance(rule, evidence, as_of)
