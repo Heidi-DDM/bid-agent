@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel, Field
+from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,7 @@ from runtime.core.config import object_store_root
 from runtime.core.errors import ApiError
 from runtime.db import api_service
 from runtime.db import enterprise_service
+from runtime.db.enterprise_service import wildcard_like
 from runtime.db import excel_service
 from runtime.db import material_service
 from runtime.db.material_service import ValidationError as MaterialValidationError
@@ -49,6 +51,18 @@ class VerifyBody(BaseModel):
 class ReimportBody(BaseModel):
     kind: str = Field(...)
     ids: list[str] = Field(..., min_length=1)
+
+
+class VerifyAndRecalcBody(BaseModel):
+    """F026 §7：核验通过 + 按证据版本重匹配。核验与重算在同一事务/审计链完成。"""
+    project_id: str = Field(...)
+    kind: str = Field(...)
+    ids: list[str] = Field(..., min_length=1)
+    action: str = Field("approve", pattern="^(approve|reject)$")
+    comment: str | None = None
+    evidence_version: str | None = Field(
+        None, description="显式证据版本（重算幂等键一部分）；缺省自动生成"
+    )
 
 
 class QualificationBody(BaseModel):
@@ -103,6 +117,23 @@ def list_qualifications(
     return {"request_id": request_id, "items": items}
 
 
+@router.get("/enterprise/overview")
+def enterprise_overview(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+) -> dict:
+    """F027：企业资料画像——按投标评分维度四分类聚合解析/核验/证据覆盖情况。
+
+    只读事实聚合（计数与覆盖率），不构成资格结论、评分或投标建议；
+    逐项匹配结论以匹配引擎输出为准（F008/F023）。
+    """
+    require_role(role, "enterprise", "read", session=session, actor=role)
+    from runtime.db import enterprise_profile
+
+    return {"request_id": request_id, **enterprise_profile.build_overview(session)}
+
+
 @router.get("/enterprise/safety-license")
 def safety_license(
     request_id: str = Depends(get_request_id),
@@ -132,21 +163,48 @@ def managers(
     request_id: str = Depends(get_request_id),
     role: str = Depends(get_role),
     session: Session = Depends(get_db),
+    limit: int | None = None,
+    offset: int = 0,
+    q: str | None = None,
 ) -> dict:
-    """项目经理名录（对齐 PROTOTYPE.company_data.managers；脱敏展示）。"""
+    """项目经理名录（对齐 PROTOTYPE.company_data.managers；脱敏展示）。
+
+    F027 2026-09-22：载荷补全 b_cert_no/cert_valid_until/reg_cert_no/organization/
+    availability 等台账字段（此前页面有列但接口不返回）；支持分页与按姓名 q 过滤；
+    不带 limit 时保持全量返回（兼容既有调用方）。
+    """
     require_role(role, "enterprise", "read", session=session, actor=role)
     from runtime.db.models import Manager
 
-    rows = session.scalars(select(Manager).order_by(Manager.manager_id)).all()
+    stmt = select(Manager).order_by(Manager.manager_id)
+    count_stmt = select(Manager.manager_id)
+    if q:
+        cond = Manager.display_name.ilike(wildcard_like(q))
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+    total = len(session.scalars(count_stmt).all())
+    if limit is not None:
+        limit, offset = _page(limit, offset)
+        rows = session.scalars(stmt.offset(offset).limit(limit)).all()
+    else:
+        limit, offset = None, 0
+        rows = session.scalars(stmt).all()
     return {
         "request_id": request_id,
+        "total": total, "limit": limit, "offset": offset,
         "items": [
             {
                 "id": m.manager_id,
                 "display_name": m.display_name,
+                "name": m.display_name,
+                "organization": m.organization,
                 "specialty": m.specialty,
                 "reg_cert_type": m.reg_cert_type,
+                "reg_cert_no": m.reg_cert_no,
+                "cert_type": m.reg_cert_type,
                 "cert_level": m.cert_level,
+                "b_cert_no": m.b_cert_no,
+                "cert_valid_until": m.cert_valid_until.isoformat() if m.cert_valid_until else None,
                 "edu_safety_status": m.edu_safety_status,
                 "availability": m.availability,
                 "active_project": (m.active_projects[0] if m.active_projects else None),
@@ -155,6 +213,197 @@ def managers(
             for m in rows
         ],
     }
+
+
+def _page(limit: int, offset: int) -> tuple[int, int]:
+    """分页参数钳制（limit 1-500，offset ≥ 0）。"""
+    return max(1, min(500, limit)), max(0, offset)
+
+
+@router.get("/enterprise/performances")
+def list_performances(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0,
+    q: str | None = None,
+) -> dict:
+    """企业业绩分页列表（F027 2026-09-22；台账字段全量，q 按项目名称模糊过滤）。"""
+    require_role(role, "enterprise", "read", session=session, actor=role)
+    from runtime.db.models import Performance
+
+    limit, offset = _page(limit, offset)
+    stmt = select(Performance).order_by(Performance.performance_id)
+    count_stmt = select(Performance.performance_id)
+    if q:
+        cond = Performance.project_name.ilike(wildcard_like(q))
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+    total = len(session.scalars(count_stmt).all())
+    rows = session.scalars(stmt.offset(offset).limit(limit)).all()
+    return {
+        "request_id": request_id,
+        "total": total, "limit": limit, "offset": offset,
+        "items": [
+            {
+                "performance_id": p.performance_id,
+                "project_name": p.project_name,
+                "project_type": p.project_type,
+                "specialty": p.specialty,
+                "contract_amount": float(p.contract_amount) if p.contract_amount is not None else None,
+                "awarded_at": p.awarded_at.isoformat() if p.awarded_at else None,
+                "completed_at": p.completed_at.isoformat() if p.completed_at else None,
+                "owner_org": p.owner_org,
+                "evidence_refs": p.evidence_refs or [],
+                "status": p.status,
+            }
+            for p in rows
+        ],
+    }
+
+
+@router.get("/enterprise/personnel")
+def list_personnel(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+    category: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    q: str | None = None,
+) -> dict:
+    """企业人员分页列表（F027 2026-09-22；category=registered_builder/technical_title/
+    post_certificate/other，q 按姓名/证书编号模糊过滤，附各类计数）。"""
+    require_role(role, "enterprise", "read", session=session, actor=role)
+    from runtime.db.models import Personnel
+    from sqlalchemy import func
+
+    if category is not None and category not in (
+        "registered_builder", "technical_title", "post_certificate", "other",
+    ):
+        raise ApiError("invalid_request",
+                       "category 允许 registered_builder/technical_title/post_certificate/other")
+    # 2026-09-22 业主决策：企业资料库人名不脱敏，按公司提供的台账原文展示
+    # （本地库、enterprise:read 门禁 + 审计；远程演示环境另行按 docs/11 脱敏口径导入）。
+
+    limit, offset = _page(limit, offset)
+    stmt = select(Personnel).order_by(Personnel.personnel_id)
+    count_stmt = select(Personnel.personnel_id)
+    if category:
+        stmt = stmt.where(Personnel.category == category)
+        count_stmt = count_stmt.where(Personnel.category == category)
+    if q:
+        like = wildcard_like(q)
+        cond = (Personnel.name.ilike(like) | Personnel.cert_no.ilike(like)
+                | Personnel.specialty.ilike(like) | Personnel.organization.ilike(like))
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+    total = len(session.scalars(count_stmt).all())
+    by_category = dict(session.execute(
+        select(Personnel.category, func.count()).group_by(Personnel.category)
+    ).all())
+    rows = session.scalars(stmt.offset(offset).limit(limit)).all()
+    return {
+        "request_id": request_id,
+        "total": total, "limit": limit, "offset": offset,
+        "by_category": by_category,
+        "items": [
+            {
+                "personnel_id": p.personnel_id,
+                "name": p.name,
+                "organization": p.organization,
+                "category": p.category,
+                "specialty": p.specialty,
+                "cert_level": p.cert_level,
+                "cert_no": p.cert_no,
+                "valid_until": p.valid_until.isoformat() if p.valid_until else None,
+                "on_site": p.on_site,
+                "on_site_project": p.on_site_project,
+                "evidence_refs": p.evidence_refs or [],
+                "status": p.status,
+            }
+            for p in rows
+        ],
+    }
+
+
+@router.get("/enterprise/evidence-files")
+def list_evidence_files(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    session: Session = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """企业证据文件分页列表（F027 2026-09-22；附「关联资料」与文档路由/OCR 置信度）。
+
+    linked[]：由 qualifications/performances 的 evidence_refs 反查该证据证明了哪份
+    资质/哪条业绩（refs 中出现 material_id 即视为关联，兼容 material: 前缀格式）；
+    review_note 记录文档路由结论（有文本层/OCR 平均置信度，回填脚本写入）。
+    """
+    require_role(role, "enterprise", "read", session=session, actor=role)
+    from runtime.db.models import EvidenceFile, Performance, Qualification
+
+    limit, offset = _page(limit, offset)
+    total = len(session.scalars(select(EvidenceFile.evidence_id)).all())
+    rows = session.scalars(
+        select(EvidenceFile).order_by(EvidenceFile.evidence_id).offset(offset).limit(limit)
+    ).all()
+
+    # 关联反查：整表载入后按 refs 是否包含 material_id 匹配（量级小，方言无关）
+    quals = session.scalars(select(Qualification)).all()
+    perfs = session.scalars(select(Performance)).all()
+
+    def _linked(material_id: str | None) -> list[dict]:
+        if not material_id:
+            return []
+        out = []
+        for q in quals:
+            if any(material_id in str(r) for r in (q.evidence_refs or [])):
+                out.append({"kind": "qualifications",
+                            "label": f"{q.category}{'（' + q.level + '）' if q.level else ''}"})
+        for pf in perfs:
+            if any(material_id in str(r) for r in (pf.evidence_refs or [])):
+                out.append({"kind": "performances", "label": pf.project_name[:40]})
+        return out[:4]
+
+    return {
+        "request_id": request_id,
+        "total": total, "limit": limit, "offset": offset,
+        "items": [
+            {
+                "evidence_id": e.evidence_id,
+                "file_type": e.file_type,
+                "material_id": e.material_id,
+                "object_uri": e.object_uri,
+                "ocr_confidence": e.ocr_confidence,
+                "review_note": e.review_note,
+                "review_status": e.review_status,
+                "valid_until": e.valid_until.isoformat() if e.valid_until else None,
+                "uploaded_by": e.uploaded_by,
+                "uploaded_at": e.uploaded_at.isoformat() if e.uploaded_at else None,
+                "linked": _linked(e.material_id),
+            }
+            for e in rows
+        ],
+    }
+
+
+@router.post("/enterprise/auto-verify")
+def auto_verify(
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+) -> dict:
+    """自动核验（F027 2026-09-22 业主决策）：台账导入且证据回链非空、有效期未过的
+    待核验记录批量置 active（每条写审计，规则同人工核验门禁，仅免逐条点击）；
+    无证据记录保持待核验并计数返回。"""
+    require_role(role, "enterprise", "verify", session=session, actor=actor)
+    result = enterprise_service.auto_verify_records(session, actor=actor)
+    session.commit()
+    return {"request_id": request_id, **result}
 
 
 @router.post("/qualifications")
@@ -374,6 +623,80 @@ def verify_batch(
         actor=actor, comment=body.comment)
     session.commit()
     return {"request_id": request_id, "verify": result}
+
+
+@router.post("/enterprise/verify-and-recalculate")
+def verify_and_recalculate(
+    body: VerifyAndRecalcBody,
+    request_id: str = Depends(get_request_id),
+    role: str = Depends(get_role),
+    actor: str = Depends(get_actor),
+    session: Session = Depends(get_db),
+) -> dict:
+    """F026 §7：企业资料核验 + 按证据版本重匹配（一次调用、两步审计）。
+
+    - 核验部分复用 verification 链（enterprise:verify）；重算部分复用
+      match.recalculate 语义（match:write；ADR-004 门禁：过期/身份冲突拒绝）。
+    - 只有本次确实有记录核验通过（或已是 active）才创建重算任务；
+      未确证的新证据版本不得触发“满足”（F026 §5/§8.6）。
+    """
+    require_role(role, "enterprise", "verify", session=session, actor=actor)
+    require_role(role, "match", "write", session=session, actor=actor,
+                 object_ref=body.project_id)
+    verify = enterprise_service.verify_records(
+        session, kind=body.kind, ids=body.ids, action=body.action,
+        actor=actor, comment=body.comment,
+    )
+    if body.action == "approve" and verify.get("changed", 0) == 0:
+        raise ApiError(
+            "invalid_request",
+            "本次没有新增核验通过的记录（记录不存在/已 active/已过期），不触发重算——"
+            "补录证据必须先经核验生效，禁止以未核验资料驱动重匹配。",
+        )
+
+    from runtime.core import orchestration
+    from runtime.db import lifecycle_service
+    from runtime.db import worker_service
+    from runtime.routers.match import _project_materials
+
+    project = api_service.get_project_or_404(session, body.project_id)
+    lifecycle_service.ensure_identity_then_deny(
+        session, project, action="recalculate", actor=actor,
+        audit_action="match.recalculate_denied",
+    )
+    materials = _project_materials(session, body.project_id)
+    run = api_service.latest_match_run(session, body.project_id)
+    if not orchestration.can_recalculate(materials, run):
+        raise ApiError(
+            "invalid_state_transition",
+            "重算前置不满足：需存在已解析材料与已有匹配 run（F020 §2.2.5）",
+        )
+    evidence_version = body.evidence_version or (
+        "verify-recalc-" + datetime.now().strftime("%Y%m%d%H%M%S")
+    )
+    idem_key = worker_service.job_logic.build_idempotency_key(
+        "match.recalculate", evidence_version, body.project_id
+    )
+    from runtime.db.models import AnalysisJob
+
+    existing = session.scalar(select(AnalysisJob).where(AnalysisJob.idempotency_key == idem_key))
+    if existing is not None:
+        session.commit()
+        return {"request_id": request_id, "verify": verify,
+                "job_id": existing.job_id, "created": False,
+                "evidence_version": evidence_version}
+    api_service.mark_admission_results_stale(session, body.project_id)
+    job, created = worker_service.create_job(
+        session, kind="match.recalculate", input_ref=evidence_version,
+        project_id=body.project_id,
+    )
+    api_service.audit(session, actor=actor, action="enterprise.verify_and_recalculate",
+                      basis=f"kind={body.kind} ids={len(body.ids)} evidence_version={evidence_version}",
+                      outcome="created", object_ref=body.project_id)
+    session.commit()
+    return {"request_id": request_id, "verify": verify,
+            "job_id": job.job_id, "created": created,
+            "project_id": body.project_id, "evidence_version": evidence_version}
 
 
 @router.post("/enterprise/reimport")

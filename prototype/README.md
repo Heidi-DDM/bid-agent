@@ -57,7 +57,8 @@ cd prototype && python3 -m http.server 8080
 | `index.html` | 搜索招标数据与结构化推送 |
 | `import.html` | 选择深入项目、上传完整文件与解析 |
 | `matrix.html` | 解析结果 + 自动匹配矩阵 + 证据抽屉 |
-| `materials.html` | 企业资料库后台状态（数据管理员维护，不属于项目主流程） |
+| `materials.html` | 企业资料库后台：五类资料全量台账（资质/业绩/项目经理/人员/证据文件，滚动+分页）与 Excel/CSV 受控导入 |
+| `profile.html` | 企业画像：按投标评分维度四分类总览资料解析/核验/证据覆盖情况（F027，只读聚合，不构成资格结论或投标建议） |
 | `score.html` | 风险与缺失结果 |
 | `queue.html` | 风险处置、人工补录与重算 |
 | `approval.html` | 人工审核/驳回/豁免/审计 |

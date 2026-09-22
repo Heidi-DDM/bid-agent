@@ -138,12 +138,12 @@ function apiProjectChip(p) {
   return ` <span class="badge warn" title="尚未选择任何项目，当前展示的是内置演示数据">内置演示 ${p.id}</span> <a class="hint" href="index.html">去搜索结果选择项目 →</a>`;
 }
 
-/* 角色展示元数据（与 data.js ROLES 对齐；权限门禁以后端为准，前端仅显示） */
+/* 角色展示元数据（与 data.js ROLES 对齐；F026/ADR-005 两级角色，data_admin/legal 为兼容别名） */
 const ROLE_META = {
   bid_specialist: { label: "投标专员" },
-  data_admin:     { label: "数据管理员" },
   business_head:  { label: "经营负责人" },
-  legal:          { label: "法务" },
+  data_admin:     { label: "投标专员（原数据管理员）" },
+  legal:          { label: "投标专员（原法务）" },
 };
 
 function apiRoleLabel() {
@@ -247,11 +247,23 @@ function apiStatusBadge(status) {
     pending: ["info", "排队中"], queued: ["info", "排队中"], running: ["info", "执行中"],
     completed: ["ok", "完成"], succeeded: ["ok", "成功"], manual_review: ["review", "待人工复核"],
     failed: ["error", "失败"], cancelled: ["gray", "已取消"], stale: ["warn", "已过期"],
-    parsed: ["ok", "已解析"], confirmed: ["ok", "已确认"], active: ["ok", "生效"],
+    parsed: ["ok", "已解析"], confirmed: ["ok", "已确认"], active: ["ok", "已核验生效"],
+    // F027 2026-09-22：企业资料核验状态中文化（此前整列显示英文枚举 pending_verification）
+    pending_verification: ["review", "待核验"], rejected: ["gray", "已驳回"],
+    archived: ["gray", "已归档"], 未复核: ["review", "未复核"],
     inactive: ["gray", "未生效"], expired: ["warn", "已过期"], blocked: ["error", "已阻断"],
+    not_evaluated: ["gray", "未执行"],
   };
   const m = map[status] || ["gray", status || "未知"];
   return apiBadge(m[0], m[1]);
+}
+
+/* 待补哨兵（导入占位值归一）：资料字段值 "__待补__"/空 → 「待补」徽标，不显示原始占位符 */
+function apiMissingBadge(value) {
+  if (value === null || value === undefined || value === "" || value === "__待补__") {
+    return `<span class="badge warn" title="台账未提供该字段（占位值已归一为待补，不推断）">待补</span>`;
+  }
+  return null;
 }
 
 /* 金额/日期格式化 */

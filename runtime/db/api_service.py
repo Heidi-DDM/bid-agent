@@ -11,7 +11,7 @@ from typing import Any, Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from runtime.core import rbac
+from runtime.core import next_step, rbac
 from runtime.core.errors import ApiError
 from runtime.db.models import (
     AdmissionResult,
@@ -721,6 +721,7 @@ def list_requirements(session: Session, project_id: str) -> list[dict[str, Any]]
     def _row(r: Requirement) -> dict[str, Any]:
         it = items_by_req.get(r.requirement_id, fallback)
         rule = r.rule if isinstance(r.rule, dict) else {}
+        match = it.get("match")
         return {
             "requirement_id": r.requirement_id,
             "req_type": r.req_type,
@@ -731,9 +732,10 @@ def list_requirements(session: Session, project_id: str) -> list[dict[str, Any]]
             "evidence_required": r.evidence_required or [],
             "max_score": r.max_score,
             "score": it.get("score"),
-            "match": it.get("match"),
+            "match": match,
             "match_reason": it.get("match_reason"),
             "gate_executed": it.get("gate_executed"),
+            "next_step": next_step.next_step_of_match(match),
             "evidence": it.get("evidence_refs") or [],
         }
 
@@ -777,6 +779,7 @@ def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
                 "scoring": "not_full", "objective_score": 0, "objective_max": 0,
                 "readiness": "not_ready", "action_done": 0, "action_total": 0,
                 "eligible": False, "state": "collecting",
+                "next_step": next_step.next_step_of_admission("collecting"),
                 "missing": [], "review": [], "manager": None, "price": None,
             }
         }
@@ -796,6 +799,9 @@ def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
             "action_total": result.operational_readiness.get("action_total", 0),
             "eligible": result.internal_admission_eligible,
             "state": business_state,
+            "next_step": next_step.next_step_of_admission(
+                business_state, eligible=bool(result.internal_admission_eligible)
+            ),
             "result_freshness": result.result_freshness,
             "decision": (result.internal_admission_result or {}).get("decision"),
             "missing": [_display_item(it) for it in (result.pending_items or [])],
@@ -858,7 +864,7 @@ def matrix_view(session: Session, project_id: str) -> dict[str, Any]:
 # ---------- 企业资料库后台（F020 §2.2.7，数据管理员） ----------
 
 def list_qualifications(session: Session, role: str) -> list[dict[str, Any]]:
-    """资质列表（对齐 PROTOTYPE.company_data.qualifications）。"""
+    """资质列表（F027 2026-09-22：返回完整台账字段；name 键保留兼容旧页面）。"""
     if not rbac.has_permission(role, "enterprise", "read"):
         raise ApiError("forbidden", "无权访问企业资料明细")
     rows = session.scalars(
@@ -866,11 +872,19 @@ def list_qualifications(session: Session, role: str) -> list[dict[str, Any]]:
     ).all()
     return [
         {
+            "qualification_id": q.qualification_id,
             "name": q.category,
+            "category": q.category,
             "level": q.level,
+            "specialty": q.specialty,
+            "valid_from": q.valid_from.isoformat() if q.valid_from else None,
             "valid_until": q.valid_until.isoformat() if q.valid_until else None,
-            "status": q.status,
+            "issuer": q.issuer,
             "evidence": q.evidence_refs,
+            "evidence_refs": q.evidence_refs,
+            "data_owner": q.data_owner,
+            "verified_at": q.verified_at.isoformat() if q.verified_at else None,
+            "status": q.status,
             "selected": q.status == "active",
         }
         for q in rows

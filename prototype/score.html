@@ -135,9 +135,10 @@
               <div><span class="k">项目经理：</span><span class="v">${a.manager && !a.manager._summary ? escS(a.manager.display_name || a.manager.name || a.manager.manager_id || "") + "（可用候选，规则判定见逐条明细）" : "无可用候选（资料未核验或规则待人工核对）"}</span></div>
               ${a.price ? `<div><span class="k">报价：</span><span class="v">${apiFmtMoney(a.price)}</span></div>` : ""}
               <div><span class="k">准入：</span><span class="v" style="color:${a.eligible ? "var(--ok)" : "var(--warn)"}">${a.eligible ? "内部满分（可提交人工审批）" : "阻断/未满分（不可进入审批）"}</span></div>
+              <div><span class="k">下一步处置（F026）：</span><span class="v" style="font-weight:600">${escS(a.next_step || "等待解析/匹配任务完成")}</span></div>
             </div>
             <div class="notice info" style="margin-top:10px;margin-bottom:0">
-              <b>结果说明</b>：每一项的满足/不满足及原因见下方「逐条匹配明细」；系统不把缺失推断为满足。缺证项补录后由数据管理员核验并重算（「复核与补录」页）；人工复核项按条款原文核对企业资料后处置。<br>
+              <b>结果说明</b>：每一项的满足/不满足及原因见下方「逐条匹配明细」；系统不把缺失推断为满足。缺证项补录并核验后重算（「复核与补录」页，投标专员/经营负责人均可办理）；人工复核项按条款原文核对企业资料后处置。<br>
               <span class="hint">满分 ≠ 自动投标：满分仅进入待审批，最终由经营负责人决定（ADR-001 §2.3）。</span>
             </div>
           </div>`;
@@ -211,7 +212,8 @@
           <td class="num" style="width:96px"><b>第 ${i + 1} 项</b>${r.category ? `<div class="hint">${escS(r.category)}</div>` : ""}</td>
           <td>${escS((r.assertion || "").slice(0, 150))}${(r.assertion || "").length > 150 ? "…" : ""}<br><span class="hint">条款 ${fmtClause(r.clause_ref) || "—"}${r.page_no != null ? ` · 第 ${escS(r.page_no)} 页` : ""}</span></td>
           <td style="width:120px">${matchBadge(r.match)}${gateTag(r)}</td>
-          <td style="width:260px;color:var(--ink-2)">${escS(reason(r))}${(r.evidence || []).length ? `<div class="ev-list">证据：${r.evidence.map((e) => `<span title="${escS(e)}">${escS(apiEvidenceRefLabel(e))}</span>`).join("；")}</div>` : ""}</td>
+          <td style="width:260px;color:var(--ink-2)">${escS(reason(r))}${(r.evidence || []).length ? `<div class="ev-list">证据：${r.evidence.map((e) => `<span title="${escS(e)}">${escS(apiEvidenceRefLabel(e))}</span>`).join("；")}</div>` : ""}
+            ${r.next_step ? `<div class="hint" style="margin-top:3px">下一步处置：<b>${escS(r.next_step)}</b></div>` : ""}</td>
           ${type === "scored_requirement" ? `<td class="num" style="width:90px">${r.max_score ?? "—"}${r.score != null ? `（可复算 ${escS(r.score)}）` : ""}</td>` : ""}
         </tr>`).join("")}
       </tbody></table>`;

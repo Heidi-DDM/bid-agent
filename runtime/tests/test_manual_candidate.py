@@ -53,8 +53,11 @@ def client(monkeypatch):
     app.dependency_overrides.clear()
 
 
-def _headers(role: str = "bid_specialist", actor: str = "tester") -> dict:
-    return {"X-Role": role, "X-Actor": actor}
+def _headers(role: str | None = "bid_specialist", actor: str = "tester") -> dict:
+    h = {"X-Actor": actor}
+    if role:
+        h["X-Role"] = role
+    return h
 
 
 class TestManualCandidateRegister:
@@ -104,12 +107,14 @@ class TestManualCandidateRegister:
                            json={"title": "", "url": URL})
         assert resp.status_code == 422
 
-    def test_rbac_403_data_admin(self, client):
-        # data_admin 无 announcement:write → 403（fail-closed，先于触库）
+    def test_rbac_alias_data_admin_can_register(self, client):
+        # ADR-005：data_admin 归并为投标专员（兼容别名）→ 具备 announcement:write，
+        # 人工登记放行（200）；匿名 403 由 test_no_auth_fail_closed_403 覆盖
         resp = client.post("/api/v1/intake/announcement/candidates/manual",
                            headers=_headers("data_admin"),
                            json={"title": "标题", "url": URL})
-        assert resp.status_code == 403
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["created"] is True
 
     def test_no_auth_fail_closed_403(self, client):
         resp = client.post("/api/v1/intake/announcement/candidates/manual",
@@ -185,11 +190,15 @@ class TestManualCandidateDiscovery:
 
     def test_delete_search_requires_write_permission(self, client):
         body = self._register(client).json()
-        # announcement:write 现含 business_head（2026-09-11 用户决策）→ 拒绝名单只剩 legal/data_admin
-        for role in ("legal", "data_admin"):
+        # F026：两级角色（含兼容别名 data_admin/legal）都具备 announcement:write →
+        # 删除放行（200）；仅匿名 403（test_no_auth_fail_closed_403 另行覆盖）
+        resp = client.delete(f"/api/v1/intake/announcement/search/{body['job_id']}",
+                             headers=_headers(None))
+        assert resp.status_code == 403
+        for role in ("legal", "data_admin", "bid_specialist", "business_head"):
             resp = client.delete(f"/api/v1/intake/announcement/search/{body['job_id']}",
                                  headers=_headers(role))
-            assert resp.status_code == 403, role
+            assert resp.status_code == 200, (role, resp.text)
 
 
 class TestAnnouncementHealthContract:

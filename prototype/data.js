@@ -28,12 +28,12 @@ const MATCH_META = {
   manual_review:{ label: "人工复核",     tone: "review" },
 };
 
-/* 角色（F010 §3 / §9） */
+/* 角色（F010 §3 / §9；F026/ADR-005 收敛为两级，历史 data_admin/legal 归并投标专员） */
 const ROLES = {
   bid_specialist: { label: "投标专员",  canApprove: false },
-  data_admin:     { label: "数据管理员", canApprove: false },
+  data_admin:     { label: "投标专员（原数据管理员）", canApprove: false },
   business_head:  { label: "经营负责人", canApprove: true },
-  legal:          { label: "法务",      canApprove: false },
+  legal:          { label: "投标专员（原法务）", canApprove: false },
 };
 
 const PROTOTYPE = {

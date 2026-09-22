@@ -80,10 +80,11 @@ def _task_payload(task: RemediationTask, *, viewer_role: str | None = None) -> d
     """Serialize a remediation task without leaking private evidence references.
 
     Evidence references may later resolve to enterprise-private material versions.
-    Only data administrators and business heads can receive the exact references;
-    every other permitted task viewer receives aggregate evidence state only.
+    Only the two business roles may receive the exact references (F026 §5：
+    投标专员含资料核验职责；经营负责人全量可见)。其他/未知角色只见聚合证据状态；
+    历史 data_admin/legal 别名在入口已归并为投标专员。
     """
-    can_view_evidence_refs = viewer_role in {rbac.DATA_ADMIN, rbac.BUSINESS_HEAD}
+    can_view_evidence_refs = viewer_role in {rbac.BID_SPECIALIST, rbac.BUSINESS_HEAD}
     payload = {
         "task_id": task.task_id,
         "project_id": task.project_id,

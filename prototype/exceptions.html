@@ -60,7 +60,7 @@
             <tr><td>业绩要求</td><td><span class="badge warn">待补/不可判定</span></td><td>业绩库为空 → 不可判定</td></tr>
           </tbody>
         </table>
-        <div class="notice" style="margin-top:10px">处置：<b>先由数据管理员导入最小资料集</b>（资质/安许证/建造师/业绩），再重跑匹配。</div>`,
+        <div class="notice" style="margin-top:10px">处置：<b>先由投标专员导入最小资料集</b>（资质/安许证/建造师/业绩），核验通过后重跑匹配。</div>`,
 
       /* ② 资料过期：expired 徽标 + 一票否决 */
       expired_demo: `
@@ -104,7 +104,7 @@
           <p style="color:var(--ink-2)">审批层数据仅对 <b>经营负责人</b> 可见。<br>当前角色：<b>${roleLabel(getRole())}</b> —— 请在右上角切换角色体验。</p>
           <p style="font-size:13px;color:var(--ink-3)">对应页面：<a href="approval.html">审批/豁免/审计</a>（非审批角色访问即显示本页）</p>
         </div>
-        <div class="notice info" style="margin-top:10px"><b>权限矩阵（F003 §6.2 契约冻结）</b>：公开情报层全员可读；企业私有资料层仅数据管理员+授权角色；匹配层可写仅匹配执行者；审批层仅经营负责人。实现方案 Iteration 3 冻结。</div>`,
+        <div class="notice info" style="margin-top:10px"><b>权限矩阵（F003 §6.2 + F026 §5）</b>：公开情报层全员可读；企业私有资料层投标专员（含其 Agent）与经营负责人可读写；匹配层写仅匹配执行角色；审批层仅经营负责人。</div>`,
 
       /* ⑤ 无合格项目经理 */
       no_manager_demo: `

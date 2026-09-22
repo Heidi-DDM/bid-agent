@@ -20,7 +20,10 @@ from runtime.db.models import AdmissionResult, Project, RemediationTask
 
 pytestmark = pytest.mark.integration
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-needs_db = pytest.mark.skipif(not DATABASE_URL, reason="需要显式指定隔离 PostgreSQL DATABASE_URL")
+from runtime.tests._dbguard import integration_db_allowed
+_DB_OK, _DB_WHY = integration_db_allowed()
+needs_db = pytest.mark.skipif(not _DB_OK, reason=_DB_WHY)
+
 
 
 @pytest.fixture()
@@ -67,7 +70,7 @@ def _project(session: Session, project_id: str = "I1-PG") -> None:
 
 @needs_db
 def test_iteration1_postgresql_http_workflow_and_task_privacy(api_client, engine):
-    """真实 PG：快速预核、立项、任务状态和证据脱敏均经过 HTTP/RBAC。"""
+    """真实 PG：快速预核、立项、任务状态和两级角色证据可见性均经过 HTTP/RBAC（F026）。"""
     with Session(engine) as session:
         _project(session)
     root = "/api/v1/projects/I1-PG"
@@ -107,10 +110,12 @@ def test_iteration1_postgresql_http_workflow_and_task_privacy(api_client, engine
         "evidence_refs": ["isolated-private-evidence-v1"], "comment": "已提交，待核验重算",
     })
     assert evidence.status_code == 200 and evidence.json()["state"] == workflow_service.TASK_EVIDENCE_SUBMITTED
-    masked = api_client.get(root + "/tasks", headers=bid)
-    assert masked.status_code == 200
-    assert "evidence_refs" not in masked.json()["items"][0]
-    assert masked.json()["items"][0]["evidence_count"] == 1
+    # F026 §5：投标专员承接原 data_admin 职责（含证据核验），任务证据引用可见；
+    # data_admin 兼容别名与投标专员同权，审批层仍仅经营负责人。
+    bid_view = api_client.get(root + "/tasks", headers=bid)
+    assert bid_view.status_code == 200
+    assert bid_view.json()["items"][0]["evidence_refs"] == ["isolated-private-evidence-v1"]
+    assert bid_view.json()["items"][0]["evidence_count"] == 1
 
     with Session(engine) as session:
         assert session.get(Project, "I1-PG").admission_status == "matching"

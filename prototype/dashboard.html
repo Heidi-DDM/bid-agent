@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>进度面板 · 投标智能体</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="topbar"></div>
+  <div class="steps"></div>
+  <main class="wrap">
+    <!-- 经营负责人管理视图（F026 §6）：仅经营负责人可读；投标专员访问由后端 403 -->
+    <section class="card" id="dash-main" style="display:none">
+      <div class="card-title-row">
+        <h2>经营负责人 · 进度面板</h2>
+        <span class="hint">只聚合项目状态、待办与阻塞环节，供督促与管理；<b>不构成投标建议或审批结论</b>。满分仍须经营负责人人工审批，系统不自动投标。</span>
+      </div>
+      <div id="dash-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
+        <div class="card" style="margin:0">
+          <h3>项目准入状态</h3>
+          <div id="dash-projects"></div>
+        </div>
+        <div class="card" style="margin:0">
+          <h3>待选池状态</h3>
+          <div id="dash-pool"></div>
+        </div>
+        <div class="card" style="margin:0">
+          <h3>处置任务</h3>
+          <div id="dash-tasks"></div>
+        </div>
+      </div>
+      <section class="card" style="margin:14px 0 0">
+        <h3>当前阻塞 / 待跟进项目（≤50）</h3>
+        <div id="dash-blocked"></div>
+      </section>
+      <div id="dash-notice" class="hint" style="margin-top:8px"></div>
+    </section>
+    <section class="card" id="dash-denied" style="display:none">
+      <div class="notice" style="margin-bottom:0">
+        <b>进度面板仅经营负责人可查看</b>（F026 §6 / approval:read）。当前登录：<b id="denied-role"></b>——
+        请在右上角切换「经营负责人（jingying）」登录后查看。投标专员在「简报与待选池 / 项目工作台」办理日常事务。
+      </div>
+    </section>
+  </main>
+
+  <script src="api.js"></script>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("dashboard.html", null);
+
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+
+    const STATE_LABELS = {
+      collecting: "采集中", parsed: "已解析", matching: "匹配中",
+      blocked_missing_data: "缺证阻断", blocked_hard_requirement: "硬性不满足",
+      not_qualified: "未通过", qualified_full_score: "内部满分",
+      pending_bid_approval: "待审批", approved_for_bidding: "已批准投标",
+      rejected_by_approver: "已驳回", archived: "已归档", overdue: "已过期",
+    };
+    const POOL_LABELS = {
+      pending: "待处理(简报)", needs_manual_review: "需人工确认", deep_dive: "已选择深入",
+      dismissed: "已删除", superseded: "被替换", expired: "非招标排除",
+    };
+
+    function stateName(k) {
+      if (k === null || k === undefined || k === "None") return "未开始/待定";
+      return STATE_LABELS[k] || k;
+    }
+    function poolName(k) { return POOL_LABELS[k] || k; }
+
+    function kvTable(rows, emptyText) {
+      if (!rows.length) return `<div class="hint">${emptyText || "无数据"}</div>`;
+      return `<table class="tbl"><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td><b>${esc(String(v))}</b></td></tr>`).join("")}</tbody></table>`;
+    }
+
+    function render(d) {
+      const c = d.cards || {};
+      const sortedByState = (obj) => Object.entries(obj || {}).sort((a, b) => b[1] - a[1]);
+      document.getElementById("dash-cards").innerHTML = [
+        ["项目总数", c.projects_total ?? 0],
+        ["待筛选/确认", c.screening_count ?? 0],
+        ["已选择深入", c.deep_dive_count ?? 0],
+        ["未关闭处置任务", c.open_tasks ?? 0],
+      ].map(([k, v]) => `<div class="card" style="margin:0;text-align:center"><div style="font-size:28px;font-weight:700">${esc(String(v))}</div><div class="hint">${k}</div></div>`).join("");
+
+      document.getElementById("dash-projects").innerHTML =
+        kvTable(sortedByState(c.projects_by_state).map(([k, v]) => [stateName(k), v]));
+      document.getElementById("dash-pool").innerHTML =
+        kvTable(sortedByState(c.pool_by_status).map(([k, v]) => [poolName(k), v]));
+      document.getElementById("dash-tasks").innerHTML =
+        kvTable(sortedByState(c.tasks_by_state).map(([k, v]) => [k, v]));
+
+      const blocked = d.blocked_projects || [];
+      const bbox = document.getElementById("dash-blocked");
+      bbox.innerHTML = blocked.length
+        ? `<table class="tbl"><thead><tr><th>项目</th><th>当前环节</th><th>最近更新</th><th></th></tr></thead><tbody>${blocked.map((p) => `
+            <tr>
+              <td><b>${esc(p.project_name || p.project_id)}</b><div class="hint"><code>${esc(p.project_id)}</code></div></td>
+              <td><span class="badge ${p.current_stage && p.current_stage.includes("blocked") ? "warn" : "info"}">${esc(stateName(p.current_stage))}</span></td>
+              <td class="hint">${esc(String(p.updated_at || "").slice(0, 10))}</td>
+              <td><a class="btn sm ghost" href="score.html?project_id=${encodeURIComponent(p.project_id)}">查看结果 →</a></td>
+            </tr>`).join("")}</tbody></table>`
+        : `<div class="hint">无当前阻塞/待跟进项目（或尚未有数据）。</div>`;
+      document.getElementById("dash-notice").textContent = d.notice || "";
+    }
+
+    async function load() {
+      const role = apiRole();
+      if (role !== "business_head") {
+        document.getElementById("dash-denied").style.display = "block";
+        document.getElementById("denied-role").textContent = `${apiRoleLabel()}（${role || "未登录"}）`;
+        return;
+      }
+      try {
+        const d = await apiGet("/manager/dashboard");
+        document.getElementById("dash-main").style.display = "block";
+        render(d);
+      } catch (err) {
+        apiShowError(err);
+        document.getElementById("dash-denied").style.display = "none";
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

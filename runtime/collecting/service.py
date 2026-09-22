@@ -328,7 +328,17 @@ def search_sources(
                     f"{fetch_note}：抓取 {entry['pages_fetched']} 页、去重后 {len(items)} 条，"
                     f"关键词过滤后 {len(hits)} 条{robots_suffix}"
                 )
+            # F026：候选落库后增量汇入统一待选池；预筛仅按标题/类型确定性规则执行。
+            from runtime.discovery.service import sync_search_pool
+            sync_search_pool(session, search_job_id)
             session.commit()
+            # ADR-006 第二层：确定性规则未判定的条目交大模型辅助分类
+            #（封闭词表 + 依据词标题子串校验；失败零副作用回落人工，不阻断搜索主链）。
+            try:
+                from runtime.discovery.llm_prescreen import prescreen_job_pool
+                prescreen_job_pool(session, search_job_id)
+            except Exception as exc:  # noqa: BLE001 — 预筛失败不影响搜索结果落库
+                logger.warning("LLM 辅助预筛失败（不影响搜索结果）：%s", type(exc).__name__)
         except ComplianceError as exc:
             session.rollback()
             retry_note = ""

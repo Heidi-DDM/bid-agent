@@ -5,6 +5,7 @@
 
 const STEPS = [
   { id: "index",     label: "搜索与推送", page: "index.html" },
+  { id: "pool",      label: "简报与待选池", page: "pool.html" },
   { id: "import",    label: "选择与解析", page: "import.html" },
   { id: "matrix",    label: "自动匹配",   page: "matrix.html" },
   { id: "score",     label: "风险与缺失", page: "score.html" },
@@ -15,13 +16,16 @@ const STEPS = [
 
 const NAV = [
   { label: "搜索与推送", page: "index.html" },
+  { label: "简报与待选池", page: "pool.html" },
   { label: "选择与解析", page: "import.html" },
   { label: "自动匹配", page: "matrix.html" },
   { label: "企业资料库（后台）", page: "materials.html" },
+  { label: "企业画像", page: "profile.html" },
   { label: "风险与缺失", page: "score.html" },
   { label: "项目工作台", page: "workbench.html" },
   { label: "复核与补录", page: "queue.html" },
   { label: "人工审核", page: "approval.html" },
+  { label: "进度面板", page: "dashboard.html" },
   { label: "异常态演示", page: "exceptions.html" },
 ];
 
@@ -73,7 +77,7 @@ function renderTopbar(activePage) {
     const remote = typeof SAME_ORIGIN_DEPLOY !== "undefined" && SAME_ORIGIN_DEPLOY;
     const loginHint = remote
       ? "演示账号与口令由项目负责人线下提供"
-      : "演示账号：toubiao / jingying（密码 123456）；data_admin / legal（密码同账号）";
+      : "演示账号：toubiao（投标专员）/ jingying（经营负责人），密码均为 123456";
     authHtml = `
       <span class="hint" title="${loginHint}">未登录</span>
       <input id="login-user" class="inp" placeholder="账号" autocomplete="username" style="width:96px">
@@ -98,7 +102,7 @@ function renderTopbar(activePage) {
         const remoteDeploy = typeof SAME_ORIGIN_DEPLOY !== "undefined" && SAME_ORIGIN_DEPLOY;
         alert(remoteDeploy
           ? "请输入账号（演示账号由项目负责人提供）"
-          : "请输入账号（投标专员 toubiao、经营负责人 jingying，密码均为 123456；数据管理员 data_admin、法务 legal 密码同账号）");
+          : "请输入账号（投标专员 toubiao、经营负责人 jingying，密码均为 123456）");
         return;
       }
       try {

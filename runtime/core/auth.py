@@ -95,7 +95,11 @@ def load_users() -> dict[str, dict[str, str]]:
         if len(parts) != 4:
             continue  # 单条格式错不影响其他账号，但不放行该条
         login, pwd_hash, role, name = (p.strip() for p in parts)
-        if login and pwd_hash and role and name and _parse_hash(pwd_hash) is not None:
+        try:
+            role = rbac.normalize_role(role)
+        except ValueError:
+            continue
+        if login and pwd_hash and name and _parse_hash(pwd_hash) is not None:
             users[login] = {"password_hash": pwd_hash, "role": role, "name": name}
     return users
 

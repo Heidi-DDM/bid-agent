@@ -171,19 +171,24 @@ def test_task_sync_is_idempotent_and_only_new_match_can_close(session):
     assert {t.state for t in session.scalars(select(RemediationTask)).all()} == {workflow_service.TASK_CLOSED}
 
 
-def test_task_evidence_reference_is_masked_for_non_private_roles(session):
+def test_task_evidence_reference_visible_to_responsible_and_head(session):
+    # F026/ADR-005：企业证据引用向责任角色（投标专员=含兼容别名）与经营负责人显示；
+    # 两级角色之外（匿名）在路由层即 403，不触达任务明细
     _project(session)
     row = workflow_service.create_task(
-        session, project_id="I1-P", role=rbac.DATA_ADMIN, actor="ziliao", task_type="evidence_supplement",
-        title="补充脱敏证据", description=None, assignee_role=rbac.DATA_ADMIN, requirement_id="R-P",
+        session, project_id="I1-P", role=rbac.BID_SPECIALIST, actor="toubiao", task_type="evidence_supplement",
+        title="补充脱敏证据", description=None, assignee_role=rbac.BID_SPECIALIST, requirement_id="R-P",
         due_at=None, evidence_required=[]
     )
-    workflow_service.submit_evidence(session, project_id="I1-P", task_id=row["task_id"], role=rbac.DATA_ADMIN,
-                                     actor="ziliao", evidence_refs=["private-material-version-42"])
-    data_view = workflow_service.list_tasks(session, project_id="I1-P", role=rbac.DATA_ADMIN, actor="ziliao")[0]
-    bid_view = workflow_service.list_tasks(session, project_id="I1-P", role=rbac.BID_SPECIALIST, actor="toubiao")[0]
-    assert data_view["evidence_refs"] == ["private-material-version-42"]
-    assert "evidence_refs" not in bid_view and bid_view["evidence_count"] == 1
+    workflow_service.submit_evidence(session, project_id="I1-P", task_id=row["task_id"],
+                                     role=rbac.BID_SPECIALIST, actor="toubiao",
+                                     evidence_refs=["private-material-version-42"])
+    owner_view = workflow_service.list_tasks(session, project_id="I1-P", role=rbac.BID_SPECIALIST, actor="toubiao")[0]
+    alias_view = workflow_service.list_tasks(session, project_id="I1-P", role=rbac.DATA_ADMIN, actor="ziliao")[0]
+    head_view = workflow_service.list_tasks(session, project_id="I1-P", role=rbac.BUSINESS_HEAD, actor="jingying")[0]
+    assert owner_view["evidence_refs"] == ["private-material-version-42"]
+    assert alias_view["evidence_refs"] == ["private-material-version-42"]
+    assert head_view["evidence_refs"] == ["private-material-version-42"]
 
 
 @pytest.fixture()
@@ -221,7 +226,9 @@ def test_workflow_http_role_boundary_and_state_transitions(api_client):
 
     prescreen = api_client.post(p + "/quick-prescreen", headers=bid)
     assert prescreen.status_code == 200 and "不是投标建议" in prescreen.json()["disclaimer"]
-    assert api_client.post(p + "/quick-prescreen", headers=data).status_code == 403
+    # F026：data_admin 兼容别名归并为投标专员 → 快速预核放行（职责收编）
+    assert api_client.post(p + "/quick-prescreen", headers=data).status_code == 200
+    assert api_client.post(p + "/quick-prescreen").status_code == 403
 
     create = api_client.post(p + "/preparations", headers=head, json={"reason": "准备技术标资源"})
     assert create.status_code == 200
@@ -235,11 +242,15 @@ def test_workflow_http_role_boundary_and_state_transitions(api_client):
     })
     assert task.status_code == 200
     task_id = task.json()["task_id"]
-    assert api_client.post(p + f"/tasks/{task_id}/evidence", headers=bid,
+    # F026：data_admin 由 create_task 内部归一为 bid_specialist 责任角色 → 同角色提交放行；
+    # 匿名 403（不触库，fail-closed）
+    assert api_client.post(p + f"/tasks/{task_id}/evidence",
                            json={"evidence_refs": ["private-ref"]}).status_code == 403
-    evidence = api_client.post(p + f"/tasks/{task_id}/evidence", headers=data,
+    evidence = api_client.post(p + f"/tasks/{task_id}/evidence", headers=bid,
                                json={"evidence_refs": ["private-ref"]})
     assert evidence.status_code == 200 and evidence.json()["state"] == "evidence_submitted"
     bid_list = api_client.get(p + "/tasks", headers=bid)
     assert bid_list.status_code == 200
-    assert "evidence_refs" not in bid_list.json()["items"][0]
+    # 责任角色（投标专员）可见证据引用；两级角色之外不触达（路由层 403）
+    assert "evidence_refs" in bid_list.json()["items"][0]
+    assert bid_list.json()["items"][0]["evidence_refs"] == ["private-ref"]

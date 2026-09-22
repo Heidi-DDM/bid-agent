@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>搜索简报与待选池 · 投标智能体</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="topbar"></div>
+  <div class="steps"></div>
+  <main class="wrap">
+    <!-- 每次搜索的即时增量简报（F026 v1.1）：只统计事实，不是投标建议 -->
+    <section class="card" id="briefing-card">
+      <div class="card-title-row">
+        <h2>本次搜索简报</h2>
+        <span class="hint">搜索完成后自动更新；简报只统计入池与预筛状态分布，<b>不是投标建议</b>。</span>
+      </div>
+      <div id="briefing-body"><div class="hint">加载中…</div></div>
+    </section>
+
+    <section class="card">
+      <div class="card-title-row">
+        <h2>待选池（可直接选择深入）</h2>
+        <span class="hint">搜索入池后两层预筛自动分流：<b>① 规则</b>（公告类型/行业词）排除中标、成交、招租、政策等；<b>② AI 按企业业务画像</b>分类——工程相关进「可选深入」，与业务无关（纯设备/IT/办公/服务采购等）自动移出「已排除」（可一键恢复），拿不准的才进「待人工确认」。主列表只剩你可以直接选择深入的工程招标公告。</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0" id="pool-tabs"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="pool-search" type="text" placeholder="搜索标题关键词…"
+               style="flex:1 1 180px;min-width:160px;padding:6px 8px;border:1px solid #ccc;border-radius:6px">
+        <select id="pool-sort" class="inp" style="max-width:180px">
+          <option value="publish_date">排序：发布时间优先</option>
+          <option value="last_seen">排序：最近发现</option>
+        </select>
+        <span id="pool-count" class="hint">—</span>
+        <button class="btn sm ghost" id="btn-pool-refresh">刷新</button>
+      </div>
+      <!-- 批量工具条：勾选待处理条目后出现 -->
+      <div id="batch-bar" style="display:none;margin-top:8px;padding:8px 10px;border:1px solid #d0d0d0;border-radius:10px;
+           display:none;align-items:center;gap:10px;flex-wrap:wrap">
+        <b id="batch-count">已选 0 条</b>
+        <button class="btn sm danger" id="btn-batch-dismiss">批量删除（软删除）</button>
+        <button class="btn sm ghost" id="btn-batch-clear">取消选择</button>
+        <span class="hint">批量删除逐条走状态机：已选择深入的不会被删；删除原因统一填写一次。</span>
+      </div>
+      <div id="pool-list" style="margin-top:8px"></div>
+      <div id="pool-msg"></div>
+      <div class="notice" style="margin-top:10px">
+        <b>统一漏斗（术语）</b>：<b>入池 → 选择深入 → 抓取建档 → 上传招标文件 → 进入匹配</b>。
+        「选择深入」为<b>一键漏斗</b>：二次确认后自动标记并抓取公告详情建档，卡片上可看到当前阶段。
+        预筛只按标题/公告类型等列表页可证实事实执行；未知行业、地区、规模<b>不自动删除</b>（标「需人工确认」）。
+        删除为软删除（保留审计与事实链）；规则命中记录规则版本，更新不回写历史简报。
+      </div>
+    </section>
+
+    <!-- 预筛/排除规则配置（仅经营负责人；后端强制 approval:write） -->
+    <section class="card" id="rules-panel" style="display:none">
+      <div class="card-title-row">
+        <h2>预筛/排除规则（经营负责人配置）</h2>
+        <span class="hint" id="rules-version"></span>
+      </div>
+      <div class="form-grid" style="margin-top:8px">
+        <div class="form-item full">
+          <label>企业业务画像（AI 按此判断「相关」——什么是你们会投的标；留空用内置施工企业默认）</label>
+          <textarea id="rules-profile" rows="4" class="inp" style="width:100%"
+            placeholder="例：房屋建筑、市政、装修、机电安装等工程施工与 EPC；及直接服务工程的勘察设计/监理/工程设备材料采购。不投：纯 IT、办公设备、警务/医疗等专业设备、物业服务、货物采购等。"></textarea>
+        </div>
+        <div class="form-item full">
+          <label>行业关键词（逗号分隔；命中行业词 → 进简报）</label>
+          <textarea id="rules-industry" rows="3" class="inp" style="width:100%"></textarea>
+        </div>
+        <div class="form-item full">
+          <label>排除关键词（逗号分隔；命中 → 标「待人工确认」，不自动删除）</label>
+          <textarea id="rules-exclude" rows="3" class="inp" style="width:100%"></textarea>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn" id="btn-rules-save">保存为新版本并启用</button>
+        <button class="btn ghost" id="btn-rules-preview">试跑（回放最近 200 条，不生效）</button>
+        <span class="hint">保存即生成新版本（版本化、可审计），只影响后续预筛；<b>改画像后需运行回填脚本重判存量</b>。</span>
+      </div>
+      <div id="rules-msg"></div>
+    </section>
+  </main>
+
+  <script src="api.js"></script>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("pool.html", "pool");
+
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+
+    const POOL_STATUS_META = {
+      pending:            ["ok", "可选深入"],
+      needs_manual_review:["review", "AI 未确证·待人工"],
+      deep_dive:          ["ok", "已选择深入"],
+      dismissed:          ["gray", "已删除"],
+      superseded:         ["gray", "已被新公告替换"],
+      expired:            ["gray", "已排除"],
+    };
+    const TABS = [
+      { key: "pending",     label: "可选深入（AI 已筛）", statuses: "pending" },
+      { key: "needs_review", label: "待人工确认", statuses: "needs_manual_review" },
+      { key: "deep_dive",   label: "已深入", statuses: "deep_dive" },
+      { key: "expired",     label: "已排除（可恢复）", statuses: "expired" },
+      { key: "dismissed",   label: "已删除", statuses: "dismissed" },
+      { key: "all",         label: "全部",   statuses: "" },
+    ];
+    const HIGHLIGHT_LABELS = {
+      qualification: "资质要求", budget_amount: "预算金额", purchaser: "采购人", agency: "代理机构",
+      duration: "工期", open_location: "开标地点", joint_venture: "联合体", quality: "质量要求",
+    };
+    let curTab = "pending", poolCache = [], rules = { industry_keywords: [], exclude_keywords: [] };
+    let selectedIds = new Set();
+
+    const box = document.getElementById("pool-list");
+    const msg = document.getElementById("pool-msg");
+    const poolSearch = document.getElementById("pool-search");
+    const tabsWrap = document.getElementById("pool-tabs");
+    const batchBar = document.getElementById("batch-bar");
+
+    function statusBadge(s) {
+      const m = POOL_STATUS_META[s] || POOL_STATUS_META.pending;
+      return `<span class="badge ${m[0]}">${m[1]}</span>`;
+    }
+
+    /* ── 截止时间：解析出日期则附倒计时；未建档候选无截止（不推断） ── */
+    function deadlineHtml(c) {
+      const v = c.deadline_bid;
+      if (!v) {
+        return c.import_status === "imported"
+          ? `<span class="hint">公告未载明截止</span>`
+          : `<span class="hint" title="截止时间在「抓取建档」解析公告详情后可得">截止：建档后可得</span>`;
+      }
+      const m = String(v).match(/(20\d{2})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
+      if (!m) return `<b>${esc(v)}</b>`;
+      const d = new Date(+m[1], +m[2] - 1, +m[3]);
+      const days = Math.ceil((d - new Date()) / 86400000);
+      const text = `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+      if (days < 0) return `<b style="color:var(--ink-3)">${text}</b> <span class="badge gray">已截止</span>`;
+      if (days <= 7) return `<b style="color:#c0392b">${text}</b> <span class="badge warn">仅剩 ${days} 天</span>`;
+      return `<b>${text}</b> <span class="hint">（${days} 天）</span>`;
+    }
+
+    /* ── 公告要点（快速否决在池内完成；仅已建档候选有要点数据） ── */
+    function highlightsHtml(c) {
+      const h = c.highlights;
+      if (c.import_status === "imported" && !h) {
+        return `<details style="margin-top:4px"><summary class="hint" style="cursor:pointer">公告要点</summary>
+          <div class="hint">公告详情未解析出可展示要点（字段缺失已如实标注，不推断）。</div></details>`;
+      }
+      if (!h) {
+        return `<div class="hint" style="margin-top:2px">公告要点与截止时间在「抓取建档」后可得——快速否决需先确认深入。</div>`;
+      }
+      const rows = Object.entries(h).map(([k, v]) =>
+        `<tr><td style="white-space:nowrap;color:var(--ink-2)">${HIGHLIGHT_LABELS[k] || k}</td><td><b>${esc(v)}</b></td></tr>`).join("");
+      return `<details style="margin-top:4px"><summary style="cursor:pointer"><b>公告要点</b> <span class="hint">（展开快速否决，不必跳页）</span></summary>
+        <table class="tbl" style="margin-top:4px"><tbody>${rows}</tbody></table></details>`;
+    }
+
+    function screeningInfo(it) {
+      const sc = it.screening || {};
+      const ai = sc.llm_assist;
+      const parts = [];
+      // 第一层规则徽标：仅在没有 AI 结论或 AI 拿不准时展示"需人工确认"，避免与 AI 结论打架
+      if (sc.screen_state === "excluded_non_tender") {
+        parts.push(`<span class="badge gray">${esc(sc.announcement_type_label || "非招标")} · 自动排除</span>`);
+      } else if (sc.screen_state === "needs_manual_review" && (!ai || ai.relevant === "uncertain")) {
+        parts.push(`<span class="badge review">规则未判定</span>`);
+      } else if (sc.screen_state === "brief") {
+        parts.push(`<span class="badge info">${esc(sc.announcement_type_label || "招标")} · 命中行业</span>`);
+      }
+      /* ADR-006：AI 辅助分类徽标（按企业业务画像的事实性分类，不是投标建议） */
+      if (ai) {
+        const rel = ai.relevant === "yes" ? `<span class="badge ok">AI：业务相关</span>`
+          : ai.relevant === "no" ? `<span class="badge gray">AI：与业务无关</span>`
+          : `<span class="badge review">AI：未确证</span>`;
+        parts.push(`${rel}<span class="hint">AI 分类：${esc(ai.category)}（依据「${esc(ai.reason)}」· ${esc(ai.confidence)}）</span>`);
+      }
+      if (sc.excluded_reason && sc.excluded_by === "llm") parts.push(`<span class="hint warn">${esc(sc.excluded_reason)}</span>`);
+      if (sc.matched_industries && sc.matched_industries.length) parts.push(`<span class="hint">行业：${sc.matched_industries.map((x) => esc(x)).join("、")}</span>`);
+      if (sc.matched_exclusions && sc.matched_exclusions.length) parts.push(`<span class="hint warn">排除词命中：${sc.matched_exclusions.map((x) => esc(x)).join("、")}</span>`);
+      if (sc.missing_fields && sc.missing_fields.length) parts.push(`<span class="hint">待补：${sc.missing_fields.map((f) => ({ publish_date: "发布日期", source_url: "链接", region: "地区", category: "种类" }[f] || f)).join("、")}</span>`);
+      if (sc.rule_version) parts.push(`<span class="hint">规则 ${esc(sc.rule_version)}</span>`);
+      return parts.join(" ");
+    }
+    function candOf(it) { return it.candidate || {}; }
+
+    /* ── 选择深入（一键漏斗 + 内联二次确认防误触发） ──
+       第一次点击：按钮变红色高亮「确认抓取建档（再点一次）」，3 秒内有效，超时还原，不发起任何请求；
+       第二次点击：标记深入 → 抓取详情建档 → 成功后自动进入「上传招标文件」解析页。 */
+    async function deepDive(it, btn) {
+      if (btn.dataset.armed !== "1") {
+        btn.dataset.armed = "1";
+        btn.dataset.prev = btn.textContent;
+        btn.textContent = "确认抓取建档（再点一次）";
+        btn.style.color = "#c0392b";
+        btn.style.border = "2px solid #c0392b";
+        btn.style.background = "#fdf0ee";
+        btn.style.fontWeight = "700";
+        let left = 3;
+        btn.dataset.tick = setInterval(() => {
+          left -= 1;
+          if (left <= 0) {
+            clearInterval(parseInt(btn.dataset.tick));
+            if (btn.dataset.armed === "1") {
+              btn.dataset.armed = "";
+              btn.textContent = btn.dataset.prev || "选择深入";
+              btn.style.color = ""; btn.style.border = "";
+              btn.style.background = ""; btn.style.fontWeight = "";
+            }
+          } else {
+            btn.textContent = `确认抓取建档（再点一次 · ${left}s）`;
+          }
+        }, 1000);
+        return;
+      }
+      clearInterval(parseInt(btn.dataset.tick));
+      btn.dataset.armed = "";
+      btn.style.color = ""; btn.style.border = "";
+      btn.style.background = ""; btn.style.fontWeight = "";
+      await runDeepDive(it, btn);
+    }
+
+    async function runDeepDive(it, btn) {
+      const cid = it.candidate.candidate_id;
+      btn.disabled = true;
+      const startedAt = Date.now();
+      const tick = setInterval(() => {
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        if (btn.textContent !== "抓取详情建档中…") return;
+        btn.textContent = `抓取详情建档中… ${secs}s`;
+      }, 1000);
+      msg.innerHTML = `<div class="notice info" id="deepdive-progress">「${esc((it.candidate.title || "").slice(0, 40))}…」正在抓取公告详情原文并建档（robots/限频合规抓取，通常 10~60 秒）——完成后<b>自动进入「上传招标文件」页</b>，无需手动查找。</div>`;
+      try {
+        try {
+          await apiPost(`/discovery/candidates/${cid}/select`);
+        } catch (err) { if (err.status !== 409 && err.status !== 422) throw err; }
+        const r = await apiPost(`/intake/announcement/candidates/${cid}/import`);
+        const projectId = (r.project_id || "").trim();
+        if (!projectId) {
+          const deadline = Date.now() + 3 * 60 * 1000;
+          while (Date.now() < deadline) {
+            await new Promise((res) => setTimeout(res, 2000));
+            const st = await apiGet(`/intake/announcement/candidates/${cid}`);
+            const cand = st.candidate || st || {};
+            if (cand.import_status === "imported" && cand.project_id) { finish(cid, cand.project_id); return; }
+            if (cand.import_status === "failed") throw new Error(cand.error_message || "建档失败");
+          }
+          throw new Error("建档超时（3 分钟无终态，任务仍在后台排队——可稍后在「已深入」页签重试）");
+        }
+        finish(cid, projectId);
+      } catch (err) {
+        apiShowError(err);
+        msg.innerHTML = `<div class="notice error">抓取建档失败：${esc(err.message)}——卡片上可重试；失败不影响池内其他条目。</div>`;
+        await loadPool(); loadBriefing();
+      } finally { clearInterval(tick); }
+      function finish(candidateId, projectId) {
+        localStorage.setItem("demo_project_id", projectId);
+        msg.innerHTML = `<div class="notice ok">已抓取建档（<code>${esc(projectId)}</code>）——<b>1 秒后自动进入「上传招标文件」页</b>…</div>`;
+        setTimeout(() => {
+          window.location.href = `import.html?project_id=${encodeURIComponent(projectId)}&candidate_id=${encodeURIComponent(candidateId)}`;
+        }, 1200);
+      }
+    }
+
+    /* 软删除（软删除保留审计与事实链） */
+    function dismissItems(ids, batch) {
+      const mask = document.createElement("div");
+      mask.className = "mask";
+      mask.innerHTML = `
+        <div class="dialog">
+          <h3>${batch ? `从待选池删除（${ids.length} 条）` : "从待选池删除（软删除）"}</h3>
+          <p class="hint">删除只移除待选池条目，不删除公告候选、原文或审计记录。已选择深入的项目不能从待选池删除。</p>
+          <textarea id="dismiss-reason" rows="3" class="inp" style="width:100%" placeholder="删除原因（可选，最多 500 字）"></textarea>
+          <div style="display:flex;gap:10px;margin-top:10px;justify-content:flex-end">
+            <button type="button" class="btn sm ghost" id="dismiss-cancel">取消</button>
+            <button type="button" class="btn sm" id="dismiss-ok">确认删除</button>
+          </div>
+        </div>`;
+      document.body.appendChild(mask);
+      const close = () => mask.remove();
+      document.getElementById("dismiss-cancel").addEventListener("click", close);
+      document.getElementById("dismiss-ok").addEventListener("click", async () => {
+        const reason = document.getElementById("dismiss-reason").value.trim();
+        const okBtn = document.getElementById("dismiss-ok");
+        okBtn.disabled = true; okBtn.textContent = "删除中…";
+        try {
+          if (batch) {
+            const r = await apiPost("/discovery/candidates/dismiss-batch", { candidate_ids: ids, reason: reason || null });
+            const failed = (r.failed || []).length;
+            msg.innerHTML = `<div class="notice ${failed ? "warn" : "info"}">批量删除完成：${r.dismissed.length} 条已删${failed ? `，${failed} 条跳过（已选择深入或不存在，见审计）` : ""}（软删除，审计留痕）。</div>`;
+          } else {
+            await apiPost(`/discovery/candidates/${ids[0]}/dismiss`, { reason: reason || null });
+            msg.innerHTML = `<div class="notice info">已从待选池删除（审计留痕）。</div>`;
+          }
+          close(); selectedIds.clear(); loadPool(); loadBriefing();
+        } catch (err) {
+          okBtn.disabled = false; okBtn.textContent = "确认删除";
+          apiShowError(err);
+        }
+      });
+    }
+
+    /* 漏斗阶段徽标：入池 → 选择深入 → 抓取建档 → 上传招标文件（import.html）→ 进入匹配（matrix） */
+    function stageBadge(it) {
+      const c = it.candidate || {};
+      if (c.import_status === "imported" && c.project_id) return `<span class="badge ok">已建档 · 待上传招标文件</span>`;
+      if (it.pool_status === "deep_dive") {
+        if (c.import_status === "failed") return `<span class="badge error">抓取建档失败 · 可重试</span>`;
+        return `<span class="badge warn">已选择深入 · 建档中</span>`;
+      }
+      return "";
+    }
+
+    function cardActions(it) {
+      const c = it.candidate || {};
+      const sc = it.screening || {};
+      if (!c.candidate_id) return `<span class="hint">候选事实缺失（原始记录已清理，保留审计）</span>`;
+      const imported = c.import_status === "imported";
+      const inDeep = it.pool_status === "deep_dive";
+      const parts = [];
+      if (c.source_url) parts.push(`<a class="btn sm ghost" href="${esc(c.source_url)}" target="_blank" rel="noopener">查看公告原页</a>`);
+      /* ADR-006：AI 排除的候选可人工恢复（确定性排除与人工删除不可） */
+      if (it.pool_status === "expired" && sc.excluded_by === "llm") {
+        parts.push(`<button class="btn sm" data-restore>恢复到待处理（AI 误判时）</button>`);
+      }
+      if (it.pool_status === "pending" || it.pool_status === "needs_manual_review") {
+        parts.push(`<button class="btn sm" data-deepdive>选择深入</button>`);
+        parts.push(`<button class="btn sm ghost" data-dismiss>删除</button>`);
+      }
+      if (inDeep && !imported && c.import_status !== "failed") {
+        parts.push(`<button class="btn sm" data-import>抓取建档</button>`);
+      }
+      if (inDeep && c.import_status === "failed") {
+        parts.push(`<button class="btn sm" data-import>重试抓取建档</button>`);
+      }
+      if (imported && c.project_id) {
+        parts.push(`<a class="btn sm ok" href="import.html?project_id=${encodeURIComponent(c.project_id)}&candidate_id=${encodeURIComponent(c.candidate_id)}">上传招标文件 / 进入项目</a>`);
+      }
+      return parts.join(" ");
+    }
+
+    function cardHtml(it) {
+      const c = candOf(it);
+      const dateHtml = c.publish_date ? `<b>${esc(c.publish_date)}</b>` : `<span class="hint">发布日待确认</span>`;
+      const checkable = it.pool_status === "pending" || it.pool_status === "needs_manual_review";
+      const checked = selectedIds.has(c.candidate_id) ? "checked" : "";
+      return `
+        <div class="project-card" style="margin-top:8px" data-idx="${poolCache.indexOf(it)}">
+          <div class="pc-main">
+            ${checkable ? `<label style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+              <input type="checkbox" data-batch-check ${checked ? "checked" : ""} style="transform:scale(1.15)">
+              <span class="hint">加入批量</span></label>` : ""}
+            <div class="pc-title">${c.title ? `<b>${esc(c.title)}</b>` : `<span class="hint">（标题缺失）</span>`} ${statusBadge(it.pool_status)} ${stageBadge(it)}</div>
+            <div class="pc-meta">
+              <span><b>来源</b>：${c.source_name ? esc(c.source_name) : "—"}（${esc(c.source_id || "—")}）</span>
+              <span><b>发布日期</b>：${dateHtml}</span>
+              <span><b>投标截止</b>：${deadlineHtml(c)}</span>
+              <span><b>首次发现</b>：${it.first_seen_at ? esc(String(it.first_seen_at).slice(0, 10)) : "—"}${it.last_seen_at !== it.first_seen_at ? `（最近 ${esc(String(it.last_seen_at).slice(0, 10))} 仍出现）` : ""}</span>
+            </div>
+            <div style="margin-top:4px">${screeningInfo(it)}</div>
+            ${it.screening && it.screening.reason && !it.screening.llm_assist ? `<div class="hint" style="margin-top:2px">预筛：${esc(it.screening.reason)}</div>` : ""}
+            ${highlightsHtml(c)}
+            ${it.dismissed_by ? `<div class="hint">删除人：${esc(it.dismissed_by)}${it.dismissed_reason ? ` · 原因：${esc(it.dismissed_reason)}` : ""}</div>` : ""}
+            ${it.replaced_by_candidate_id ? `<div class="hint">已被新公告替换（<code>${esc(it.replaced_by_candidate_id)}</code>），新候选进池</div>` : ""}
+            <div class="pc-foot">${cardActions(it)}</div>
+          </div>
+        </div>`;
+    }
+
+    function render() {
+      const q = poolSearch.value.trim().toLowerCase();
+      const matched = poolCache.filter((it) => {
+        const title = ((it.candidate && it.candidate.title) || "").toLowerCase();
+        return !q || title.includes(q);
+      });
+      // 主列表（pending）内 AI 相关优先、同组保持服务端发布时间序（LLM 失败回落的条目沉后）
+      const relevant = matched.filter((it) => it.screening && it.screening.llm_assist && it.screening.llm_assist.relevant === "yes");
+      const rest = matched.filter((it) => !(it.screening && it.screening.llm_assist && it.screening.llm_assist.relevant === "yes"));
+      const list = relevant.length ? relevant.concat(rest) : matched;
+      document.getElementById("pool-count").textContent = `${list.length} / ${poolCache.length} 条`;
+      box.innerHTML = list.length
+        ? list.map(cardHtml).join("")
+        : `<div class="notice warn">当前筛选下无条目：调整状态页签或搜索词；新搜索完成后自动汇入待选池。</div>`;
+      box.querySelectorAll("[data-dismiss]").forEach((b) => {
+        const idx = Number(b.closest(".project-card").dataset.idx);
+        b.addEventListener("click", () => dismissItems([poolCache[idx].candidate.candidate_id], false));
+      });
+      box.querySelectorAll("[data-deepdive]").forEach((b) => {
+        const idx = Number(b.closest(".project-card").dataset.idx);
+        b.addEventListener("click", () => deepDive(poolCache[idx], b));
+      });
+      box.querySelectorAll("[data-import]").forEach((b) => {
+        const idx = Number(b.closest(".project-card").dataset.idx);
+        b.addEventListener("click", () => runDeepDive(poolCache[idx], b));
+      });
+      box.querySelectorAll("[data-restore]").forEach((b) => {
+        const idx = Number(b.closest(".project-card").dataset.idx);
+        b.addEventListener("click", async () => {
+          const cid = poolCache[idx].candidate.candidate_id;
+          b.disabled = true; b.textContent = "恢复中…";
+          try {
+            await apiPost(`/discovery/candidates/${cid}/restore`);
+            msg.innerHTML = `<div class="notice ok">已恢复到「需人工确认」（AI 排除被人工撤销，审计留痕）。</div>`;
+            loadPool(); loadBriefing();
+          } catch (err) {
+            apiShowError(err);
+            b.disabled = false; b.textContent = "恢复到待处理（AI 误判时）";
+          }
+        });
+      });
+      box.querySelectorAll("[data-batch-check]").forEach((cb) => {
+        const idx = Number(cb.closest(".project-card").dataset.idx);
+        cb.addEventListener("change", () => {
+          const id = poolCache[idx].candidate.candidate_id;
+          cb.checked ? selectedIds.add(id) : selectedIds.delete(id);
+          renderBatchBar();
+        });
+      });
+      renderBatchBar();
+    }
+
+    function renderBatchBar() {
+      batchBar.style.display = selectedIds.size ? "flex" : "none";
+      document.getElementById("batch-count").textContent = `已选 ${selectedIds.size} 条`;
+    }
+    document.getElementById("btn-batch-dismiss").addEventListener("click", () => {
+      if (!selectedIds.size) return;
+      dismissItems(Array.from(selectedIds), true);
+    });
+    document.getElementById("btn-batch-clear").addEventListener("click", () => {
+      selectedIds.clear(); render();
+    });
+
+    async function loadPool() {
+      const tab = TABS.find((t) => t.key === curTab) || TABS[0];
+      const sort = document.getElementById("pool-sort").value;
+      try {
+        const data = await apiGet(`/discovery/pool?status=${encodeURIComponent(tab.statuses)}&limit=200&sort=${sort}`);
+        poolCache = data.items || [];
+        selectedIds = new Set(Array.from(selectedIds).filter((id) => poolCache.some((it) => it.candidate && it.candidate.candidate_id === id)));
+        render();
+      } catch (err) {
+        if (err.status === 401) {
+          box.innerHTML = `<div class="notice warn"><b>请先登录</b>：待选池需投标专员或经营负责人身份（右上角登录，
+            演示账号 toubiao / jingying，密码 123456）。登录后本页自动可读。</div>`;
+          return;
+        }
+        apiShowError(err);
+        box.innerHTML = `<div class="notice error">加载待选池失败：${esc(err.message)}</div>`;
+      }
+    }
+
+    /* ── 简报条 ── */
+    async function loadBriefing() {
+      const el = document.getElementById("briefing-body");
+      try {
+        const d = await apiGet("/discovery/briefing");
+        const b = d.briefing;
+        const time = b.job.created_at ? b.job.created_at.replace("T", " ").slice(0, 16) : "—";
+        const scope = b.job.manual
+          ? "人工转录线索"
+          : `${b.job.keyword ? `「${esc(b.job.keyword)}」` : "全部公告"}${b.job.region ? ` · ${esc(b.job.region)}` : ""}`;
+        el.innerHTML = `
+          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+            <span><b>${time}</b> · ${scope}</span>
+            <span>新增入池 <b>${b.added}</b> 条</span>
+            <span>可选深入（AI 已筛）<b>${b.by_status.pending || 0}</b></span>
+            <span>待人工确认 <b>${b.by_status.needs_manual_review || 0}</b></span>
+            <span>自动排除（非招标/与业务无关）<b>${b.auto_excluded || 0}</b></span>
+            <span>被替换 <b>${b.by_status.superseded || 0}</b></span>
+            ${b.rule_version ? `<span class="hint">规则 ${esc(b.rule_version)}</span>` : ""}
+            <a class="btn sm" href="#pool-tabs" onclick="document.getElementById('pool-list').scrollIntoView({behavior:'smooth'});return false;">去处理 →</a>
+          </div>`;
+      } catch (err) {
+        el.innerHTML = err.status === 401
+          ? `<div class="hint">登录后可查看最近一次搜索的增量简报。</div>`
+          : `<div class="hint">暂无搜索简报（尚未执行过搜索）。</div>`;
+      }
+    }
+
+    function renderTabs() {
+      tabsWrap.innerHTML = TABS.map((t) =>
+        `<button class="btn sm ${t.key === curTab ? "" : "ghost"}" data-tab="${t.key}">${t.label}</button>`
+      ).join("");
+      tabsWrap.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
+        curTab = b.dataset.tab; selectedIds.clear(); renderTabs(); loadPool();
+      }));
+    }
+
+    /* --- 预筛规则（经营负责人） --- */
+    async function loadRules() {
+      try {
+        const data = await apiGet("/discovery/rules");
+        rules = data.config || rules;
+        document.getElementById("rules-version").textContent = `当前生效版本：${data.version || "builtin-v1"}`;
+        document.getElementById("rules-industry").value = (rules.industry_keywords || []).join("，");
+        document.getElementById("rules-exclude").value = (rules.exclude_keywords || []).join("，");
+        document.getElementById("rules-profile").value = rules.business_profile || "";
+        document.getElementById("rules-panel").style.display = apiRole() === "business_head" ? "block" : "none";
+      } catch (err) {
+        document.getElementById("rules-panel").style.display = "none";
+      }
+    }
+    const splitCfg = (v) => String(v || "").split(/[,，;；\n]/).map((s) => s.trim()).filter(Boolean).slice(0, 200);
+
+    document.getElementById("btn-rules-save").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-rules-save");
+      btn.disabled = true;
+      try {
+        const r = await apiReq("PUT", "/discovery/rules", { json: {
+          industry_keywords: splitCfg(document.getElementById("rules-industry").value),
+          exclude_keywords: splitCfg(document.getElementById("rules-exclude").value),
+          business_profile: document.getElementById("rules-profile").value.trim(),
+        }});
+        document.getElementById("rules-msg").innerHTML =
+          `<div class="notice ok">已保存并启用新版本 <code>${esc(r.version)}</code>——只影响后续预筛，不回写历史简报。请求编号 <code>${esc(r.request_id || "—")}</code></div>`;
+        loadRules();
+      } catch (err) {
+        apiShowError(err);
+        document.getElementById("rules-msg").innerHTML = `<div class="notice error">保存失败：${esc(err.message)}</div>`;
+      } finally { btn.disabled = false; }
+    });
+
+    document.getElementById("btn-rules-preview").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-rules-preview");
+      btn.disabled = true; btn.textContent = "试跑中…";
+      const msgEl = document.getElementById("rules-msg");
+      try {
+        const r = await apiPost("/discovery/rules/preview", {
+          industry_keywords: splitCfg(document.getElementById("rules-industry").value),
+          exclude_keywords: splitCfg(document.getElementById("rules-exclude").value),
+          business_profile: document.getElementById("rules-profile").value.trim(),
+          limit: 200,
+        });
+        const samples = (r.samples && r.samples.needs_manual_review || []).slice(0, 2)
+          .map((t) => `<li class="hint">${esc(t)}</li>`).join("");
+        msgEl.innerHTML = `<div class="notice info"><b>试跑结果（回放最近 ${r.total_sampled} 条，未生效）</b>：
+          进简报 <b>${r.distribution.brief || 0}</b> · 需人工确认 <b>${r.distribution.needs_manual_review || 0}</b> ·
+          非招标排除 <b>${r.distribution.excluded_non_tender || 0}</b>
+          ${samples ? `<br>需人工确认样例：<ul style="margin:4px 0 0 18px">${samples}</ul>` : ""}
+          <br><span class="hint">试跑只验证规则词；AI 业务画像分类需保存后经搜索/回填生效。确认后点「保存为新版本并启用」。</span></div>`;
+      } catch (err) {
+        apiShowError(err);
+        msgEl.innerHTML = `<div class="notice error">试跑失败：${esc(err.message)}</div>`;
+      } finally { btn.disabled = false; btn.textContent = "试跑（回放最近 200 条，不生效）"; }
+    });
+
+    renderTabs();
+    loadPool();
+    loadBriefing();
+    loadRules();
+    poolSearch.addEventListener("input", render);
+    document.getElementById("btn-pool-refresh").addEventListener("click", () => { loadPool(); loadBriefing(); });
+    document.getElementById("pool-sort").addEventListener("change", loadPool);
+    document.addEventListener("api:unauthorized", () => { loadPool(); loadBriefing(); });
+  </script>
+</body>
+</html>

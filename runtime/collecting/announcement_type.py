@@ -19,6 +19,7 @@ PREQUAL = "prequal"      # 资格预审公告（属招标）
 WIN = "win"              # 中标结果公告 / 中标候选人公示 / 中标公告
 PROCURE = "procure"      # 采购 / 询价 / 竞争性磋商 / 谈判 / 比选 / 竞价 / 单一来源
 CHANGE = "change"        # 变更 / 更正 / 澄清 / 答疑 / 延期
+LEASE = "lease"          # 招租 / 出租 / 资产处置 / 产权交易（ADR-006：非投标机会）
 OTHER = "other"          # 规章 / 办法 / 令 / 通知 等非投标机会
 
 TYPE_LABELS: dict[str, str] = {
@@ -27,6 +28,7 @@ TYPE_LABELS: dict[str, str] = {
     WIN: "中标/成交公示",
     PROCURE: "采购/磋商/询价",
     CHANGE: "变更公告",
+    LEASE: "招租/租赁/资产处置",
     OTHER: "其他（非招标）",
 }
 
@@ -36,7 +38,7 @@ DEFAULT_INCLUDE_TYPES: frozenset[str] = frozenset({TENDER, PREQUAL})
 # 同项目去重时类型优先级（越小越优先保留）
 _TYPE_PRIORITY: dict[str, int] = {
     TENDER: 0, PREQUAL: 1, CHANGE: 2,
-    PROCURE: 3, WIN: 4, OTHER: 5,
+    PROCURE: 3, WIN: 4, LEASE: 5, OTHER: 6,
 }
 
 # ── 确定性规则词表 ─────────────────────────────────────
@@ -45,10 +47,11 @@ _LEGAL_RE = re.compile(
     r"(暂行|办法|条例|实施办法|实施细则|征求意见|备案|令\s*\d*号|\d+\s*号令|"
     r"号令|\d+\s*号|规费结?算|招标人须知|资格标准)", re.I
 )
-# ② 中标类
+# ② 中标类（F026/ADR-005：中标公示与成交公示高频形态补齐；采购结果/定标/评标结果一并排除）
 _WIN_RE = re.compile(
-    r"(中标结果|中标候选人|候选中标|候选人公示|成交结果|成交候选人|中标公告|"
-    r"结果公告|中标侯选|资格后审结果)", re.I
+    r"(中标结果|中标候选人|候选中标|候选人公示|中标公示|成交结果|成交候选人|成交公示|成交公告|"
+    r"成交供应商|中标供应商|中标通知书|采购结果|采购成交|采购结果公示|中选结果|中选候选人|中选公告|"
+    r"定标结果|评标结果|评标公示|招标结果|中标公告|结果公告|结果公示|中标侯选|资格后审结果)", re.I
 )
 # ③ 采购/磋商/谈判/比选/询价
 _PROCURE_RE = re.compile(
@@ -59,6 +62,13 @@ _PROCURE_RE = re.compile(
 _PREQUAL_RE = re.compile(r"(资格预审|资审|资格预审)", re.I)
 # ⑤ 变更/更正/澄清/答疑/延期
 _CHANGE_RE = re.compile(r"(变更公告|更正|澄清|答疑|更正通知|延期|补充公告|补遗)", re.I)
+# ⑥ 招租/租赁/资产处置/产权交易（ADR-006：出租方找承租人的公告，不是投标机会）。
+#    注意放在 PROCURE 之后判定：「设备租赁服务采购公告」先命中采购仍按采购处理；
+#    词面避免裸「租赁」以免误伤「租赁服务公开招标」这类真招标。
+_LEASE_RE = re.compile(
+    r"(招租|竞租|出租|房屋租赁|场地租赁|店面租赁|车位租赁|商铺出租|摊位出租|门市出租|"
+    r"资产处置|资产转让|资产出租|产权交易|产权转让|挂牌出让|国有产权)", re.I
+)
 
 # 待剥离的公告阶段/类型后缀（去重键内剥掉，避免"招标公告"(已丢) vs "中标…"被视为不同）
 _STAGE_RE = re.compile(
@@ -73,7 +83,7 @@ _LOT_RE = re.compile(
 
 
 def classify_type(title: str | None) -> str:
-    """确定性标题→公告类型。判定优先级：法规 > 中标 > 采购 > 资格预审 > 变更。
+    """确定性标题→公告类型。判定优先级：法规 > 中标 > 采购 > 资格预审 > 变更 > 招租。
     未命中任何排除词 → TENDER（不能确证非招标，保留）。"""
     t = _normalize_keyword(title or "")
     if not t:
@@ -88,6 +98,8 @@ def classify_type(title: str | None) -> str:
         return PREQUAL
     if _CHANGE_RE.search(t):
         return CHANGE
+    if _LEASE_RE.search(t):
+        return LEASE
     return TENDER
 
 

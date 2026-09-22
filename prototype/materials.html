@@ -5,6 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>企业资料库后台｜投标智能体原型</title>
   <link rel="stylesheet" href="styles.css">
+  <style>
+    /* F027 2026-09-22：长列表滚动区（滑轮向下滚动，不整页铺开）+ 表头吸顶 */
+    .scroll-tbl { max-height: 360px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+    .scroll-tbl table { margin: 0; }
+    .scroll-ttbl thead th, .scroll-tbl thead th { position: sticky; top: 0; background: #f8fafc; z-index: 1; box-shadow: inset 0 -1px 0 var(--line); }
+    .pager { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+    .kind-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 12px 0; }
+    .kind-chip { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+    .cat-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .cat-tabs button { padding: 4px 12px; border: 1px solid var(--line); border-radius: 16px; background: #fff; cursor: pointer; font-size: 13px; }
+    .cat-tabs button.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+  </style>
 </head>
 <body>
   <header class="topbar"></header>
@@ -16,26 +28,73 @@
 
       <section class="card">
         <div class="card-title-row">
-          <h2>企业资料库后台（数据管理员）</h2>
-          <span class="hint">匹配时自动读取「已核验且生效」资料（active + verified_at ≤ as_of）；未核验资料不参与准入。批量导入与逐条维护走 R022 通道。</span>
+          <h2>企业资料库后台（投标专员 / 经营负责人）</h2>
+          <a class="btn sm ghost" href="profile.html">按评分维度看企业画像 →</a>
         </div>
-
-        <h3 style="margin:8px 0 6px">安全生产许可证</h3>
-        <div id="safety-box" class="hint">加载中…</div>
-
-        <h3 style="margin:14px 0 6px">企业资质（qualifications）</h3>
-        <div id="qual-box" class="hint">加载中…</div>
-
-        <h3 style="margin:14px 0 6px">项目经理（managers）</h3>
-        <div id="mgr-box" class="hint">加载中…</div>
-
-        <h3 style="margin:14px 0 6px">核验队列（verification-queue，pending）</h3>
-        <div id="queue-box" class="hint">加载中…</div>
-        <div style="display:flex;gap:10px;margin-top:10px">
-          <button class="btn sm" id="btn-approve-q">批量核验通过（选中）</button>
-          <button class="btn sm ghost" id="btn-reject-q">批量驳回（选中）</button>
-          <span class="hint">无证据记录核验通过会被后端拒绝（400）——F022：无证据不可 active。</span>
+        <p class="sub" style="margin-top:4px">
+          已入库企业资料全量台账：资质、业绩、项目经理、人员、证据文件五类。未核验（待核验）记录
+          不参与匹配；逐维度的解析/证据覆盖情况见「企业画像」页。批量导入走下方 Excel/CSV 台账受控导入。
+        </p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
+          <button class="btn sm" id="btn-auto-verify">一键自动核验（台账证据齐备记录）</button>
+          <span class="hint" id="auto-verify-hint">规则：台账导入 + 证据回链非空 + 有效期未过 → 自动核验生效（每条留审计）；无证据或已过期记录保持待核验/过期。</span>
         </div>
+        <div id="kind-summary" class="kind-summary">加载中…</div>
+      </section>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>① 企业资质（<span id="qual-count">—</span> 项）</h2>
+          <span class="hint">含施工总承包/专业承包/设计资质、安全生产许可证、信用评级、CA 证书；字段来自资质台账+扫描件回链。</span>
+        </div>
+        <div class="scroll-tbl" id="qual-box">加载中…</div>
+      </section>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>② 企业业绩（<span id="perf-count">—</span> 条）</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="perf-q" class="inp" placeholder="按项目名称搜索，支持 * 通配…" style="width:220px">
+            <button class="btn sm" id="perf-search">搜索</button>
+          </div>
+        </div>
+        <div class="scroll-tbl" id="perf-box">加载中…</div>
+        <div class="pager" id="perf-pager"></div>
+        <div class="hint" style="margin-top:6px">「证明文件」列为该条业绩挂接的单项证明材料（中标通知书/合同/验收）；仅有台账行回链（ledger:）不算单项证明。</div>
+      </section>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>③ 项目经理名录（<span id="mgr-count">—</span> 人）</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="mgr-q" class="inp" placeholder="按姓名搜索，支持 * 通配（如 技*）…" style="width:180px">
+            <button class="btn sm" id="mgr-search">搜索</button>
+          </div>
+        </div>
+        <div class="scroll-tbl" id="mgr-box">加载中…</div>
+        <div class="pager" id="mgr-pager"></div>
+        <div class="hint" style="margin-top:6px">
+          B 证编号/证书有效期/注册编号为「待补」＝公司提供的《注册建造师清单》中没有这些列（联系电话/注册编号多为「后续补充」占位）——
+          <b>资料里没有的字段不推断</b>；补录需公司提供补充台账后经导入/核验生效。
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>④ 人员资料（<span id="pnl-count">—</span> 人）</h2>
+          <div class="cat-tabs" id="pnl-tabs"></div>
+        </div>
+        <div class="scroll-tbl" id="pnl-box">加载中…</div>
+        <div class="pager" id="pnl-pager"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>⑤ 证据文件（<span id="ev-count">—</span> 份）</h2>
+          <span class="hint">资质/安许/信用扫描件与典型项目证明原件（OCR 置信度低于 0.9 需人工复核）。</span>
+        </div>
+        <div class="scroll-tbl" id="ev-box">加载中…</div>
+        <div class="pager" id="ev-pager"></div>
       </section>
 
       <!-- Excel/CSV 台账受控导入（09-优化方案 §3.5 / F022 §5.1 v1.3） -->
@@ -92,7 +151,7 @@
   </div>
 
   <footer class="footer">
-    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R012 / F022 v1.3 真实 API 版）</span>
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R012 / F022 v1.3 / F027 真实 API 版）</span>
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
@@ -103,86 +162,219 @@
     initPage("materials.html", "");
     const errBox = document.getElementById("api-error");
     const showErr = (m) => { errBox.innerHTML = `<div class="notice error">${m}</div>`; errBox.style.display = "block"; };
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    // 待补哨兵：值存在则原样转义，缺失/占位 → 「待补」徽标（不推断）
+    const cell = (v, title) => {
+      const badge = apiMissingBadge(v);
+      return badge ? badge : esc(v);
+    };
     const KIND_LABEL = { qualifications: "资质", performances: "业绩", personnel: "人员", managers: "项目经理", evidence_files: "证据文件" };
+
+    /* ---------- 五类总览（复用 /enterprise/overview 汇总） ---------- */
+    async function loadSummary() {
+      try {
+        const d = await apiGet("/enterprise/overview");
+        document.getElementById("kind-summary").innerHTML = (d.summary.kinds || []).map((k) => `
+          <a class="kind-chip" href="#${k.kind}-sec" style="text-decoration:none;color:inherit">
+            <b>${esc(k.label)}</b>
+            <span style="font-size:22px;font-weight:700">${esc(String(k.total ?? 0))}</span>
+            <span class="hint">已核验 ${esc(String((k.by_status || {}).active || 0))} · 待核验 ${esc(String((k.by_status || {}).pending_verification || 0))}${k.kind !== "evidence_files" ? ` · 证据回链 ${esc(String(k.with_evidence ?? 0))}/${esc(String(k.total ?? 0))}` : ""}</span>
+          </a>`).join("");
+      } catch (_) { /* 总览失败不阻断明细加载 */ }
+    }
+
+    /* ---------- ① 资质（全量，滚动） ---------- */
+    async function loadQuals() {
+      const box = document.getElementById("qual-box");
+      try {
+        const q = await apiGet("/enterprise/qualifications");
+        const items = q.items || [];
+        document.getElementById("qual-count").textContent = items.length;
+        box.innerHTML = items.length
+          ? `<table class="tbl"><thead><tr><th>资质类别</th><th>等级</th><th>专业</th><th>有效期至</th><th>发证机关</th><th>状态</th><th>证明文件</th></tr></thead><tbody>` +
+            items.map((x) => `<tr>
+              <td><b>${esc(x.category || x.name)}</b></td>
+              <td>${cell(x.level)}</td>
+              <td>${cell(x.specialty)}</td>
+              <td>${cell(x.valid_until)}</td>
+              <td>${cell(x.issuer)}</td>
+              <td>${apiStatusBadge(x.status)}</td>
+              <td class="hint">${(x.evidence_refs || x.evidence || []).filter((r) => !String(r).startsWith("ledger:") && !String(r).startsWith("cert_no:")).slice(0, 2).map(esc).join("<br>") || "待补"}</td>
+            </tr>`).join("") + `</tbody></table>`
+          : `<div class="hint" style="padding:10px">暂无资质记录。</div>`;
+      } catch (err) { box.innerHTML = `<div class="hint" style="padding:10px">加载失败：${esc(err.message)}</div>`; }
+    }
+
+    /* ---------- 分页列表通用（业绩/项目经理/人员/证据） ---------- */
+    function makePaged({ path, renderRow, head, boxId, pagerId, extraParams, countId }) {
+      const state = { offset: 0, limit: 50, q: "" };
+      const box = document.getElementById(boxId);
+      const pager = document.getElementById(pagerId);
+      async function load() {
+        box.innerHTML = `<div class="hint" style="padding:10px">加载中…</div>`;
+        try {
+          const qs = new URLSearchParams({ limit: state.limit, offset: state.offset });
+          if (state.q) qs.set("q", state.q);
+          if (extraParams) extraParams(qs, state);
+          const d = await apiGet(`${path}?${qs}`);
+          const items = d.items || [];
+          box.innerHTML = items.length
+            ? `<table class="tbl"><thead><tr>${head()}</tr></thead><tbody>${items.map(renderRow).join("")}</tbody></table>`
+            : `<div class="hint" style="padding:10px">无匹配记录。</div>`;
+          if (countId) { const el = document.getElementById(countId); if (el) el.textContent = d.total ?? 0; }
+          const page = Math.floor(state.offset / state.limit) + 1;
+          const pages = Math.max(1, Math.ceil((d.total || 0) / state.limit));
+          pager.innerHTML = `
+            <button class="btn sm ghost" id="${pagerId}-prev" ${state.offset <= 0 ? "disabled" : ""}>上一页</button>
+            <span class="hint">第 ${page} / ${pages} 页 · 共 ${d.total ?? 0} 条</span>
+            <button class="btn sm ghost" id="${pagerId}-next" ${page >= pages ? "disabled" : ""}>下一页</button>`;
+          const prev = document.getElementById(`${pagerId}-prev`);
+          const next = document.getElementById(`${pagerId}-next`);
+          if (prev) prev.onclick = () => { state.offset = Math.max(0, state.offset - state.limit); load(); };
+          if (next) next.onclick = () => { state.offset += state.limit; load(); };
+        } catch (err) {
+          box.innerHTML = `<div class="hint" style="padding:10px">加载失败：${esc(err.message)}</div>`;
+          pager.innerHTML = "";
+        }
+      }
+      return { state, load };
+    }
+
+    /* ---------- ② 业绩 ---------- */
+    const perfList = makePaged({
+      path: "/enterprise/performances", boxId: "perf-box", pagerId: "perf-pager", countId: "perf-count",
+      head: () => `<th>项目名称</th><th>类型</th><th>合同额（万元）</th><th>竣工时间</th><th>业主单位</th><th>状态</th><th>证明文件</th>`,
+      renderRow: (p) => `<tr>
+        <td><b>${esc(p.project_name)}</b></td>
+        <td>${cell(p.project_type)}</td>
+        <td style="text-align:right">${p.contract_amount != null ? (p.contract_amount / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 0 }) : "—"}</td>
+        <td>${cell(p.completed_at)}</td>
+        <td>${cell(p.owner_org)}</td>
+        <td>${apiStatusBadge(p.status)}</td>
+        <td class="hint">${(p.evidence_refs || []).filter((r) => !String(r).startsWith("ledger:")).slice(0, 1).map(esc).join("") || "仅台账"}</td>
+      </tr>`,
+    });
+
+    /* ---------- ③ 项目经理 ---------- */
+    const mgrList = makePaged({
+      path: "/enterprise/managers", boxId: "mgr-box", pagerId: "mgr-pager", countId: "mgr-count",
+      head: () => `<th>姓名</th><th>注册类型 / 等级</th><th>注册专业</th><th>注册编号</th><th>安全 B 证</th><th>证书有效期</th><th>在施状态</th><th>在施项目</th><th>状态</th>`,
+      renderRow: (m) => `<tr>
+        <td><b>${esc(m.display_name || m.name)}</b></td>
+        <td>${esc(m.reg_cert_type || "—")} / ${cell(m.cert_level)}</td>
+        <td>${cell(m.specialty)}</td>
+        <td>${cell(m.reg_cert_no)}</td>
+        <td>${cell(m.b_cert_no)}</td>
+        <td>${cell(m.cert_valid_until)}</td>
+        <td>${m.availability === "available" ? '<span class="badge ok">可用</span>' : m.availability === "occupied" ? '<span class="badge warn">在施</span>' : cell(m.availability)}</td>
+        <td class="hint">${esc((m.active_project || "").slice(0, 24)) || "—"}</td>
+        <td>${apiStatusBadge(m.status)}</td>
+      </tr>`,
+    });
+
+    /* ---------- ④ 人员（类别页签） ---------- */
+    const PNL_CATS = [
+      ["", "全部"], ["registered_builder", "注册建造师"], ["technical_title", "技术职称"], ["post_certificate", "岗位证书"], ["other", "其他"],
+    ];
+    const pnlList = makePaged({
+      path: "/enterprise/personnel", boxId: "pnl-box", pagerId: "pnl-pager",
+      extraParams: (qs, state) => { if (state.category) qs.set("category", state.category); },
+      head: () => `<th>姓名</th><th>类别</th><th>专业</th><th>证书等级</th><th>证书编号</th><th>有效期至</th><th>在施</th><th>状态</th>`,
+      renderRow: (p) => `<tr>
+        <td><b>${esc(p.name)}</b></td>
+        <td>${({ registered_builder: "注册建造师", technical_title: "技术职称", post_certificate: "岗位证书", other: "其他" })[p.category] || esc(p.category)}</td>
+        <td>${cell(p.specialty)}</td>
+        <td>${cell(p.cert_level)}</td>
+        <td>${cell(p.cert_no)}</td>
+        <td>${cell(p.valid_until)}</td>
+        <td>${p.on_site === "是" ? '<span class="badge warn">在施</span>' : p.on_site === "否" ? '<span class="badge ok">未在施</span>' : cell(p.on_site)}</td>
+        <td>${apiStatusBadge(p.status)}</td>
+      </tr>`,
+    });
+
+    async function loadPnlTabs() {
+      const tabs = document.getElementById("pnl-tabs");
+      try {
+        const d = await apiGet("/enterprise/personnel?limit=1");
+        const by = d.by_category || {};
+        const label = (k) => ({ registered_builder: "注册建造师", technical_title: "技术职称", post_certificate: "岗位证书", other: "其他" })[k] || k;
+        tabs.innerHTML = PNL_CATS.map(([key, name]) =>
+          `<button data-cat="${key}" class="${pnlList.state.category === key ? "active" : ""}">${name}${key ? `（${by[key] ?? 0}）` : `（${Object.values(by).reduce((a, b) => a + b, 0)}）`}</button>`).join("");
+        tabs.querySelectorAll("button").forEach((b) => {
+          b.onclick = () => {
+            pnlList.state.category = b.dataset.cat;
+            pnlList.state.offset = 0;
+            tabs.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+            pnlList.load();
+          };
+        });
+        document.getElementById("pnl-count").textContent = Object.values(by).reduce((a, b) => a + b, 0);
+      } catch (_) { tabs.innerHTML = ""; }
+    }
+
+    /* ---------- ⑤ 证据文件 ---------- */
+    const evList = makePaged({
+      path: "/enterprise/evidence-files", boxId: "ev-box", pagerId: "ev-pager", countId: "ev-count",
+      head: () => `<th>证据编号</th><th>类型</th><th>关联的资质 / 业绩</th><th>文档路由 / OCR 置信度</th><th>复核状态</th><th>上传人</th><th>上传时间</th>`,
+      renderRow: (e) => `<tr>
+        <td><code>${esc(e.evidence_id)}</code></td>
+        <td>${esc(e.file_type)}</td>
+        <td>${(e.linked || []).length
+              ? e.linked.map((l) => `<span class="badge ${l.kind === "qualifications" ? "info" : "ok"}" title="${esc(l.kind)}">${esc(l.label)}</span>`).join(" ")
+              : '<span class="hint">未回链（待补台账对应）</span>'}</td>
+        <td>${e.ocr_confidence != null
+              ? (e.ocr_confidence < 0.9
+                  ? `<span class="badge warn">OCR ${e.ocr_confidence}（低于 0.9，需人工复核）</span>`
+                  : `<span class="badge ok">OCR ${e.ocr_confidence}</span>`)
+              : (e.review_note ? `<span class="badge gray">有文本层</span>` : '<span class="hint">未路由</span>')}
+            ${e.review_note ? `<div class="hint">${esc(e.review_note)}</div>` : ""}</td>
+        <td>${e.review_status ? apiStatusBadge(e.review_status) : apiStatusBadge("未复核")}</td>
+        <td>${esc(e.uploaded_by)}</td>
+        <td class="hint">${esc(String(e.uploaded_at || "").slice(0, 10))}</td>
+      </tr>`,
+    });
+
+    document.getElementById("perf-search").onclick = () => {
+      perfList.state.q = document.getElementById("perf-q").value.trim();
+      perfList.state.offset = 0; perfList.load();
+    };
+    document.getElementById("perf-q").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("perf-search").click(); });
+    document.getElementById("mgr-search").onclick = () => {
+      mgrList.state.q = document.getElementById("mgr-q").value.trim();
+      mgrList.state.offset = 0; mgrList.load();
+    };
+    document.getElementById("mgr-q").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("mgr-search").click(); });
+
+    document.getElementById("btn-auto-verify").onclick = async () => {
+      const btn = document.getElementById("btn-auto-verify");
+      if (!confirm("对全部待核验记录执行自动核验？\n规则：台账导入 + 证据回链非空 + 有效期未过 → 核验生效（留审计）；\n无证据记录保持待核验，需人工补证。")) return;
+      btn.disabled = true; btn.textContent = "自动核验执行中…";
+      try {
+        const r = await apiPost("/enterprise/auto-verify", {});
+        const parts = Object.entries(r.results || {}).map(([k, v]) =>
+          `${KIND_LABEL[k] || k}：生效 ${v.changed}、过期 ${v.expired}、待补证据 ${v.pending_no_evidence}`);
+        errBox.innerHTML = `<div class="notice ok"><b>自动核验完成</b>：共生效 ${r.total_changed ?? 0} 条、置过期 ${r.total_expired ?? 0} 条。${parts.join("；")}<br><span class="hint">每条记录均写入审计（enterprise.*.verify），可在审计时间线追溯。</span></div>`;
+        errBox.style.display = "block";
+        await Promise.all([loadSummary(), loadQuals(), perfList.load(), mgrList.load(), loadPnlTabs().then(() => pnlList.load()), evList.load()]);
+      } catch (err) {
+        apiShowError(err);
+      } finally { btn.disabled = false; btn.textContent = "一键自动核验（台账证据齐备记录）"; }
+    };
 
     async function loadAll() {
       try {
-        // safety license
-        const sl = await apiGet("/enterprise/safety-license");
-        const s = sl.safety_license || {};
-        document.getElementById("safety-box").innerHTML = s.name
-          ? `<table class="tbl"><tbody><tr><td>类别：<b>${s.name}</b></td><td>编号：${s.no || "—"}</td><td>有效期至：${s.valid_until || "—"}</td><td>${apiStatusBadge(s.status)}</td></tr></tbody></table>`
-          : `<div class="hint">暂无安全生产许可证记录。</div>`;
-        // qualifications
-        const q = await apiGet("/enterprise/qualifications");
-        const qItems = q.items || [];
-        document.getElementById("qual-box").innerHTML = qItems.length
-          ? `<table class="tbl"><thead><tr><th>类别</th><th>等级</th><th>有效期至</th><th>状态</th></tr></thead><tbody>` +
-            qItems.map((x) => `<tr><td>${x.category || "—"}</td><td>${x.level || "—"}</td><td>${x.valid_until || "—"}</td><td>${apiStatusBadge(x.status)}</td></tr>`).join("") +
-            `</tbody></table>`
-          : `<div class="hint">暂无资质记录。</div>`;
-        // managers
-        const m = await apiGet("/enterprise/managers");
-        const mItems = m.items || [];
-        document.getElementById("mgr-box").innerHTML = mItems.length
-          ? `<table class="tbl"><thead><tr><th>姓名/ID</th><th>资质</th><th>B证</th><th>有效期至</th><th>状态</th></tr></thead><tbody>` +
-            mItems.map((x) => `<tr><td>${x.name || x.manager_id || "—"}</td><td>${x.cert_type || x.qualification || "—"}</td><td>${x.b_cert_no || "—"}</td><td>${x.cert_valid_until || "—"}</td><td>${apiStatusBadge(x.status)}</td></tr>`).join("") +
-            `</tbody></table>`
-          : `<div class="hint">暂无项目经理记录。</div>`;
-        await loadQueue();
+        await Promise.all([loadSummary(), loadQuals(), perfList.load(), mgrList.load(), loadPnlTabs().then(() => pnlList.load()), evList.load()]);
       } catch (err) {
-        if (err.status === 403) { showErr(`权限不足：企业资料后台仅数据管理员（data_admin）可读。当前登录：${apiRoleLabel()}（${apiRole() || "未登录"}）——右上角切换后重试。`); return; }
+        if (err.status === 403) { showErr(`权限不足：企业资料后台页面无法访问（F026：企业资料仅投标专员/经营负责人可读）。当前登录：${apiRoleLabel()}（${apiRole() || "未登录"}）——右上角登录后重试。`); return; }
         showErr("加载企业资料失败：" + err.message);
       }
     }
-
-    async function loadQueue() {
-      const box = document.getElementById("queue-box");
-      try {
-        const data = await apiGet("/enterprise/verification-queue?status=pending_verification");
-        const items = data.items || [];
-        if (!items.length) { box.innerHTML = `<div class="hint">核验队列为空（无 pending_verification 记录）——演示资料已核验 active。</div>`; return; }
-        box.innerHTML = `<table class="tbl"><thead><tr><th></th><th>种类</th><th>记录</th><th>证据</th><th>状态</th></tr></thead><tbody>` +
-          items.map((it, i) => `<tr>
-            <td><input type="checkbox" class="q-chk" data-kind="${it.kind}" data-id="${it.id || it.record_id || ""}"></td>
-            <td>${KIND_LABEL[it.kind] || it.kind}</td>
-            <td>${it.name || it.summary || it.category || it.id || "—"}</td>
-            <td class="hint">${(it.evidence_refs && it.evidence_refs.length) ? it.evidence_refs.join("、") : "无证据"}</td>
-            <td>${apiStatusBadge(it.status)}</td></tr>`).join("") + `</tbody></table>`;
-      } catch (err) {
-        box.innerHTML = `<div class="hint">队列加载失败：${err.message}</div>`;
-      }
-    }
-
-    async function batchVerify(action) {
-      const sel = [...document.querySelectorAll(".q-chk:checked")];
-      if (!sel.length) { showErr("请先勾选要核验的记录。"); return; }
-      const byKind = {};
-      sel.forEach((c) => {
-        (byKind[c.dataset.kind] = byKind[c.dataset.kind] || []).push(c.dataset.id);
-      });
-      const results = [];
-      for (const [kind, ids] of Object.entries(byKind)) {
-        try {
-          const r = await apiPost("/enterprise/verify", { kind, ids, action, comment: action === "reject" ? "演示驳回" : null });
-          results.push(`${KIND_LABEL[kind] || kind} ${ids.length} 条 → ${JSON.stringify(r.verify || "")}（request_id ${r.request_id || "—"}）`);
-        } catch (e) {
-          results.push(`${KIND_LABEL[kind] || kind} 失败：${e.message}`);
-        }
-      }
-      errBox.innerHTML = `<div class="notice info">核验结果：${results.join("；")}</div>`;
-      errBox.style.display = "block";
-      loadQueue();
-    }
-    document.getElementById("btn-approve-q").addEventListener("click", () => batchVerify("approve"));
-    document.getElementById("btn-reject-q").addEventListener("click", () => batchVerify("reject"));
 
     /* ============================================================
        Excel/CSV 台账受控导入向导（09-优化方案 §3.5 / F022 §5.1 v1.3）
        ① kind → ② 上传 preview（嗅探+预览）→ ③ 字段映射 → ④ commit
        ============================================================ */
-    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
     const pvBox = document.getElementById("ledger-preview-box");
     const pvFile = document.getElementById("ledger-file");
     let lastPreview = null;    // {filename, size_bytes, preview:{...}}
@@ -268,7 +460,7 @@
 
       // 映射选择器：每个已知列一个下拉（自动按常见列名建议字段键）
       const mapHtml = (pv.notes && pv.notes.includes("xls-old-format"))
-        ? `<div class="notice info">旧版 .xls 无法自动预览/映射：请转存 .xlsx/.csv 后重试，或作受控证据由数据管理员人工录入。</div>`
+        ? `<div class="notice info">旧版 .xls 无法自动预览/映射：请转存 .xlsx/.csv 后重试，或作受控证据由投标专员人工录入。</div>`
         : headers.map((h) => {
             const isUnmapped = unmapped.indexOf(h) !== -1;
             const guess = defaultFieldFor(kind, h);
@@ -293,7 +485,7 @@
         ${unmapped.length ? `<div class="notice warn" style="margin:8px 0 0">无法自动识别的列需人工确认（选择映射字段或不导入）；确认后「④ 确认导入」才可用——不静默丢弃（F022 §5.1）。</div>` : ""}
         <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
           <button class="btn" id="btn-ledger-commit" ${rowsHtml && !(pv.notes && pv.notes.includes("xls-old-format")) ? "" : "disabled"}>④ 确认导入（结构化记录 + 原文件落库）</button>
-          <span class="hint" id="ledger-commit-hint">导入行默认 <code>pending_verification</code>，数据管理员核验后 active 才参与匹配。</span>
+          <span class="hint" id="ledger-commit-hint">导入行默认 <code>待核验</code>，投标专员核验后已核验生效才参与匹配。</span>
         </div>`;
       // 已知列默认映射到建议字段键；change 同步 mapping
       document.querySelectorAll(".map-sel").forEach((sel) => {
@@ -333,7 +525,7 @@
       });
       const mappingObj = Object.assign({}, mapping, selMappings);
       if (!Object.keys(mappingObj).length) { pvBox.innerHTML += `<div class="notice warn">尚未选择任何字段映射，无法导入。</div>`; return; }
-      if (!confirm(`确认按当前映射导入？（kind=${kind}，映射 ${Object.keys(mappingObj).length} 列）\n原文件将作为企业私有证据不可变落库；结构化记录默认 pending_verification。`)) return;
+      if (!confirm(`确认按当前映射导入？（kind=${kind}，映射 ${Object.keys(mappingObj).length} 列）\n原文件将作为企业私有证据不可变落库；结构化记录默认待核验。`)) return;
       const btn = document.getElementById("btn-ledger-commit");
       btn.disabled = true;
       try {
@@ -351,7 +543,7 @@
             <span class="hint">原文件 <code>${esc(r.material.material_id)}</code> v${r.material.version} 已作为企业私有证据落库（evidence_file / enterprise）；来源 <code>${esc(r.source || "")}</code>；request_id <code>${esc(r.request_id || "—")}</code>。</span>
           </div>`);
         apiShowError(null);
-        await loadQueue();
+        loadSummary();
       } catch (err) {
         apiShowError(err);
         pvBox.insertAdjacentHTML("beforeend", `<div class="notice error" style="margin-top:8px">导入失败：${esc(err.message)}${err.requestId ? `（${esc(err.requestId)}）` : ""}</div>`);

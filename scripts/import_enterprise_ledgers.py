@@ -163,7 +163,7 @@ def build_builder_rows() -> tuple[list[dict], list[dict], dict]:
     except Exception:
         pass
     personnel, managers = [], []
-    no_level = 0
+    no_level = onsite_conflicts = 0
     for i, r in enumerate(rows, start=2):
         name = _get(r, c_name)
         if not name:
@@ -174,7 +174,16 @@ def build_builder_rows() -> tuple[list[dict], list[dict], dict]:
         if re.search(r"后续补充|不用填|待补", level):
             level = ""
         onsite_raw = _get(r, c_onsite)
-        project = _get(r, c_proj) or onsite_map.get(name, "")
+        # 在施状态以主表「在施状态」列为准（2026-09-22 项目经理M实测矛盾修复）：
+        # 主表=否 → 不采纳主表遗留/Sheet1 的项目名（两源冲突以主表为准，计入冲突清单不静默丢弃语义）
+        not_onsite = onsite_raw.startswith("否")
+        project = _get(r, c_proj)
+        if not_onsite:
+            if project or onsite_map.get(name):
+                onsite_conflicts += 1
+            project = ""
+        elif not project:
+            project = onsite_map.get(name, "")
         org = r[18].strip() if len(r) > 18 and r[18] else None
         ref = f"ledger:xlsx:sheet0:row{i}"
         personnel.append({
@@ -183,7 +192,7 @@ def build_builder_rows() -> tuple[list[dict], list[dict], dict]:
             "on_site": onsite_raw or None, "on_site_project": project or None,
             "evidence_refs": [ref] + ([f"ledger:xlsx:Sheet1:onsite"] if name in onsite_map else []),
         })
-        avail = "occupied" if onsite_raw.startswith("是") else ("available" if onsite_raw.startswith("否") else None)
+        avail = "occupied" if onsite_raw.startswith("是") else ("available" if not_onsite else None)
         if project and avail is None:
             avail = "occupied"
         if not level:
@@ -196,8 +205,10 @@ def build_builder_rows() -> tuple[list[dict], list[dict], dict]:
             "availability": avail, "active_projects": [project] if project else [],
             "evidence_refs": [ref],
         })
-    stats = {"rows": len(rows), "personnel": len(personnel), "managers": len(managers), "managers_skipped_no_level": no_level,
-             "onsite_from_sheet1": sum(1 for p in personnel if p["on_site_project"] and "Sheet1" in " ".join(p["evidence_refs"]))}
+    stats = {"rows": len(rows), "personnel": len(personnel), "managers": len(managers),
+             "managers_skipped_no_level": no_level,
+             "onsite_from_sheet1": sum(1 for p in personnel if p["on_site_project"] and "Sheet1" in " ".join(p["evidence_refs"])),
+             "onsite_status_project_conflicts": onsite_conflicts}
     return personnel, managers, stats
 
 

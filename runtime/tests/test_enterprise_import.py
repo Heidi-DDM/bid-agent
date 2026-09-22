@@ -255,3 +255,60 @@ class TestVerify:
         session.commit()
         session.refresh(q)
         assert res["expired"] == [q.category] and q.status == "expired"
+
+
+# ── 自动核验（F027 2026-09-22 业主决策）与通配搜索 ──────────────
+
+
+class TestAutoVerifyAndWildcard:
+    def test_wildcard_like(self):
+        assert enterprise_service.wildcard_like("技*") == "%技%"
+        assert enterprise_service.wildcard_like("张伟") == "%张伟%"
+        assert enterprise_service.wildcard_like("  ") == ""
+        assert enterprise_service.wildcard_like("李*·0002") == "%李%·0002%"
+
+    def test_auto_verify_activates_with_evidence(self, session):
+        session.add(Qualification(
+            qualification_id="Q-AV-1", category="建筑工程施工总承包", level="特级",
+            valid_until=__import__("datetime").date(2029, 12, 9),
+            evidence_refs=["MAT-E:v1"], data_owner="甲", status="pending_verification"))
+        session.add(Qualification(
+            qualification_id="Q-AV-2", category="CA数字证书",
+            evidence_refs=["MAT-E:v2"], data_owner="甲", status="pending_verification"))
+        # 无证据：保持待核验（F022 无证据不可 active 不放松）
+        session.add(Qualification(
+            qualification_id="Q-AV-3", category="待补证资质",
+            evidence_refs=[], data_owner="甲", status="pending_verification"))
+        session.commit()
+        result = enterprise_service.auto_verify_records(session, actor="auto-test")
+        session.commit()
+        q1, q2, q3 = (session.get(Qualification, k) for k in ("Q-AV-1", "Q-AV-2", "Q-AV-3"))
+        assert q1.status == "active" and q1.verified_at is not None
+        assert q2.status == "active"          # valid_until 为空 = 长期有效口径
+        assert q3.status == "pending_verification"  # 无证据不自动通过
+        assert result["results"]["qualifications"] == {
+            "changed": 2, "expired": 0, "pending_no_evidence": 1}
+        assert result["total_changed"] == 2
+
+    def test_auto_verify_expires_overdue(self, session):
+        from datetime import date as _date
+        session.add(Qualification(
+            qualification_id="Q-AV-EXP", category="安全生产许可证",
+            valid_until=_date(2020, 1, 1), evidence_refs=["MAT-E:v1"],
+            data_owner="甲", status="pending_verification"))
+        session.commit()
+        result = enterprise_service.auto_verify_records(session, actor="auto-test")
+        session.commit()
+        q = session.get(Qualification, "Q-AV-EXP")
+        assert q.status == "expired"
+        assert result["results"]["qualifications"]["expired"] == 1
+
+    def test_auto_verify_idempotent_and_skips_active(self, session):
+        session.add(Qualification(
+            qualification_id="Q-AV-ACT", category="已核验资质",
+            evidence_refs=["MAT-E:v1"], data_owner="甲", status="active"))
+        session.commit()
+        result = enterprise_service.auto_verify_records(session, actor="auto-test")
+        session.commit()
+        # 已 active 不在处理集；重复执行 changed=0（幂等）
+        assert result["total_changed"] == 0

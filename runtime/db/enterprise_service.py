@@ -597,6 +597,73 @@ def reimport_records(
     return {"kind": kind, "reimported": changed}
 
 
+def wildcard_like(q: str) -> str:
+    """列表搜索词 → SQL LIKE 模式：* 视作通配符（用户习惯「技*」），其余按子串匹配。
+
+    例：`技*` → `%技%`；`张伟` → `%张伟%`；`李*·0002` → `%李%·0002`。
+    """
+    text = (q or "").strip()
+    if not text:
+        return ""
+    if "*" in text:
+        return f"%{text.replace('*', '%').strip('%')}%"
+    return f"%{text}%"
+
+
+_AUTO_VERIFY_BASIS = (
+    "auto-verify：台账导入记录证据回链非空（台账原件已作企业证据不可变落库）"
+    "且有效期未过 → 自动核验生效（2026-09-22 业主决策，规则登记 04-修改日志）"
+)
+
+
+def auto_verify_records(session: Session, *, actor: str) -> dict:
+    """自动核验（2026-09-22 业主决策）：批量把满足规则的待核验记录置 active。
+
+    规则（与人工核验同一门禁，仅免逐条点击）：
+    - status ∈ {pending_verification, rejected（重导入态）}；
+    - evidence_refs 非空（F022 §2.6 无证据不可 active 不放松）；
+    - valid_until 为空（长期有效口径）或 ≥ 今天；已过期 → expired 并审计。
+    不满足（无证据）的记录保持待核验并计数返回，需人工补证。
+    每条写审计 enterprise.{kind}.verify（outcome=active/expired），可回溯。
+    """
+    now = _now_utc()
+    today = now.date()
+    results: dict[str, dict] = {}
+    total_changed = total_expired = total_pending = 0
+    for kind in _MODEL_BY_KIND:
+        model = _kind_model(kind)
+        pk_col, label_col = _KIND_LABEL[kind]
+        rows = session.scalars(
+            select(model).where(model.status.in_(["pending_verification", "rejected"]))
+        ).all()
+        changed = expired = pending = 0
+        for obj in rows:
+            oid = getattr(obj, pk_col)
+            if not (obj.evidence_refs or []):
+                pending += 1
+                continue
+            valid_until = getattr(obj, "valid_until", None)
+            if valid_until is not None and valid_until < today:
+                obj.status = "expired"
+                obj.verified_at = now
+                audit(session, actor=actor, action=f"enterprise.{kind}.verify",
+                      basis=_AUTO_VERIFY_BASIS, outcome="expired", object_ref=oid)
+                expired += 1
+                continue
+            obj.status = "active"
+            obj.verified_at = now
+            audit(session, actor=actor, action=f"enterprise.{kind}.verify",
+                  basis=_AUTO_VERIFY_BASIS, outcome="active", object_ref=oid)
+            changed += 1
+        results[kind] = {"changed": changed, "expired": expired,
+                         "pending_no_evidence": pending}
+        total_changed += changed
+        total_expired += expired
+        total_pending += pending
+    return {"results": results, "total_changed": total_changed,
+            "total_expired": total_expired, "total_pending_no_evidence": total_pending}
+
+
 def expire_overdue(session: Session) -> int:
     """把 active 且 valid_until < today 的记录置 expired（F006 §6.2 自动过期）。
 

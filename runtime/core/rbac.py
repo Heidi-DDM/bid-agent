@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from typing import Iterable
 
-# 角色（F010 ROLES / F020 §5）
-BID_SPECIALIST = "bid_specialist"   # 投标专员
-DATA_ADMIN = "data_admin"           # 数据管理员
+# F026 / ADR-005：系统业务角色收敛为两级。历史 data_admin/legal 只作认证与
+# 链路兼容别名，归并为投标专员，不再作为可配置业务角色或展示角色。
+BID_SPECIALIST = "bid_specialist"   # 投标专员（含其 Agent）
 BUSINESS_HEAD = "business_head"     # 经营负责人
-LEGAL = "legal"                     # 法务
-ROLES = frozenset({BID_SPECIALIST, DATA_ADMIN, BUSINESS_HEAD, LEGAL})
+ROLES = frozenset({BID_SPECIALIST, BUSINESS_HEAD})
+LEGACY_ROLE_ALIASES = {"data_admin": BID_SPECIALIST, "legal": BID_SPECIALIST}
+# Deprecated compatibility names. Do not use for new policy/configuration.
+DATA_ADMIN = BID_SPECIALIST
+LEGAL = BID_SPECIALIST
 
 # 操作资源命名空间（F020 分组）
 RES_ANNOUNCEMENT = "announcement"    # 搜索/推送
@@ -37,38 +40,29 @@ REVIEW = "review"
 # 角色 -> 允许的 (资源, 动作)（F020 §5 角色表）
 _ROLE_PERMISSIONS: dict[str, set[tuple[str, str]]] = {
     BID_SPECIALIST: {
-        (RES_ANNOUNCEMENT, READ), (RES_ANNOUNCEMENT, WRITE),   # 搜索/查看公开事实
-        (RES_TENDER_DOC, WRITE), (RES_TENDER_DOC, READ),       # 上传完整招标文件、查看解析
-        (RES_MATERIAL, READ),                                  # 查看公开材料
-        (RES_MATCH, READ), (RES_MATCH, WRITE), (RES_RESULT, READ),  # 复核后可发起受门禁重算
-        (RES_TASK, READ), (RES_TASK, WRITE),                    # 规则/文件/身份等任务办理
-    },
-    DATA_ADMIN: {
-        (RES_ENTERPRISE, READ), (RES_ENTERPRISE, WRITE),       # 导入/核验
-        (RES_ENTERPRISE, VERIFY),                              # 核验
-        (RES_OCR, READ), (RES_OCR, WRITE), (RES_OCR, REVIEW),  # OCR 复核
+        (RES_ANNOUNCEMENT, READ), (RES_ANNOUNCEMENT, WRITE),
+        (RES_TENDER_DOC, READ), (RES_TENDER_DOC, WRITE),
         (RES_MATERIAL, READ), (RES_MATERIAL, WRITE),
-        (RES_TASK, READ), (RES_TASK, WRITE),                    # 资料补证任务办理
+        (RES_OCR, READ), (RES_OCR, WRITE), (RES_OCR, REVIEW),
+        (RES_ENTERPRISE, READ), (RES_ENTERPRISE, WRITE), (RES_ENTERPRISE, VERIFY),
+        (RES_MATCH, READ), (RES_MATCH, WRITE), (RES_RESULT, READ),
+        (RES_TASK, READ), (RES_TASK, WRITE),
     },
     BUSINESS_HEAD: {
-        (RES_ANNOUNCEMENT, READ), (RES_ANNOUNCEMENT, WRITE),   # 2026-09-11 用户决策：经营负责人可搜索/登记公告（原只读）
-        (RES_TENDER_DOC, READ),
-        (RES_MATERIAL, READ),
-        (RES_TASK, READ), (RES_TASK, WRITE),                    # 任务协调/资源确认
-        (RES_MATCH, READ), (RES_MATCH, WRITE),                 # 查看完整匹配结果/准入
-        (RES_RESULT, READ),
-        (RES_APPROVAL, READ), (RES_APPROVAL, WRITE), (RES_APPROVAL, APPROVE),  # 审批/驳回/豁免/审计
+        (RES_ANNOUNCEMENT, READ), (RES_ANNOUNCEMENT, WRITE),
+        (RES_TENDER_DOC, READ), (RES_TENDER_DOC, WRITE),
+        (RES_MATERIAL, READ), (RES_MATERIAL, WRITE),
+        (RES_OCR, READ), (RES_OCR, WRITE), (RES_OCR, REVIEW),
+        (RES_ENTERPRISE, READ), (RES_ENTERPRISE, WRITE), (RES_ENTERPRISE, VERIFY),
+        (RES_MATCH, READ), (RES_MATCH, WRITE), (RES_RESULT, READ),
+        (RES_APPROVAL, READ), (RES_APPROVAL, WRITE), (RES_APPROVAL, APPROVE),
         (RES_PREPARATION, READ), (RES_PREPARATION, WRITE), (RES_PREPARATION, APPROVE),
-    },
-    LEGAL: {
-        (RES_ANNOUNCEMENT, READ), (RES_TENDER_DOC, READ),      # 数据源与合规记录只读/审核
-        (RES_MATERIAL, READ),
-        (RES_TASK, READ), (RES_TASK, WRITE),                    # 法律/合规类人工任务
+        (RES_TASK, READ), (RES_TASK, WRITE),
     },
 }
 
 # 数据权限：enterprise_data 明细仅数据管理员/经营负责人（匹配结果）可见（F003 §6.2）
-_ENTERPRISE_DATA_READERS = frozenset({DATA_ADMIN, BUSINESS_HEAD})
+_ENTERPRISE_DATA_READERS = frozenset({BID_SPECIALIST, BUSINESS_HEAD})
 # 审批层数据仅经营负责人可见
 _APPROVAL_DATA_READERS = frozenset({BUSINESS_HEAD})
 
@@ -82,6 +76,7 @@ _SCOPE_READERS: dict[str, frozenset[str]] = {
 
 
 def normalize_role(role: str | None) -> str:
+    role = LEGACY_ROLE_ALIASES.get(role or "", role)
     if not role or role not in ROLES:
         raise ValueError(f"未知角色: {role!r}，允许 {sorted(ROLES)}")
     return role
@@ -89,6 +84,7 @@ def normalize_role(role: str | None) -> str:
 
 def has_permission(role: str, resource: str, action: str) -> bool:
     """角色是否允许 (资源, 动作)。未知角色一律拒绝（fail-closed）。"""
+    role = LEGACY_ROLE_ALIASES.get(role, role)
     if role not in ROLES:
         return False
     return (resource, action) in _ROLE_PERMISSIONS[role]
@@ -96,6 +92,7 @@ def has_permission(role: str, resource: str, action: str) -> bool:
 
 def can_read_scope(role: str, permission_scope: str) -> bool:
     """按 F003 §6.2 权限矩阵判断角色能否读取某 permission_scope 的数据。"""
+    role = LEGACY_ROLE_ALIASES.get(role, role)
     if role not in ROLES:
         return False
     readers = _SCOPE_READERS.get(permission_scope)

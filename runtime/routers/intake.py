@@ -86,8 +86,10 @@ async def search_announcement(
     keyword = str(payload.get("keyword") or "").strip()
     region = str(payload.get("region") or "").strip() or None
     collect_mode = str(payload.get("collect_mode") or "manual_trigger")
-    if collect_mode != "manual_trigger":
-        raise ApiError("invalid_request", "测试期仅支持 manual_trigger（F004 红线）")
+    # F026/ADR-005：触发方式由运行时 COLLECTION_POLICY 与调度器控制；API 不再把
+    # scheduled 硬编码为 Schema 红线。无调度器时 scheduled 仍只是可审计任务类型。
+    if collect_mode not in {"manual_trigger", "scheduled"}:
+        raise ApiError("invalid_request", "collect_mode 仅支持 manual_trigger 或 scheduled")
     if not keyword and not region:
         raise ApiError("invalid_request", "keyword 或 region 至少填一个")
     # v1.7（09-优化方案 §3.1）：联网搜索只定义采集范围（关键词/地区/来源）；
@@ -113,7 +115,7 @@ async def search_announcement(
     job, created = worker_service.create_job(
         session,
         kind="announcement.search",
-        input_ref=json.dumps({"keyword": keyword, "region": region,
+        input_ref=json.dumps({"keyword": keyword, "region": region, "collect_mode": collect_mode,
                               "sources": valid},
                              ensure_ascii=False),
         project_id=None,
@@ -648,6 +650,10 @@ def register_manual_candidate(
         requested_by=actor,
     )
     session.add(cand)
+    session.flush()
+    # F026：人工转录线索同样进入待选池，以相同预筛/审计口径展示。
+    from runtime.discovery.service import sync_candidate
+    sync_candidate(session, cand)
     session.commit()
     return {"request_id": request_id, "job_id": job.job_id,
             "candidate_id": cand.candidate_id, "created": True}
@@ -669,6 +675,13 @@ def import_candidate(
     """
     require_role(role, "announcement", "write", session=session, actor=actor,
                  object_ref=candidate_id)
+    # F026：后端入口也同步人工选择深入状态，前端漏调不会造成待选池失真。
+    from runtime.discovery import service as discovery_service
+    try:
+        discovery_service.set_pool_status(session, candidate_id=candidate_id,
+                                          status=discovery_service.POOL_DEEP_DIVE, actor=actor)
+    except (KeyError, ValueError):
+        pass  # 历史候选尚未回填/已处理，继续按导入幂等规则处理
     candidate = session.get(AnnouncementCandidate, candidate_id)
     if candidate is None:
         raise ApiError("not_found", f"候选公告不存在: {candidate_id}")

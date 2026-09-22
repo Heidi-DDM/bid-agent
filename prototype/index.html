@@ -46,31 +46,9 @@
         <div id="search-result" style="margin-top:12px"></div>
       </section>
 
-      <!-- 候选结果：滚动框全量 + 本地搜索/来源/类型筛选 -->
-            <section class="card" id="candidate-panel" style="display:none">
-              <div class="card-title-row">
-                <h2>公告候选<span id="candidate-job" style="font-size:13px;margin-left:6px"></span></h2>
-                <span class="badge info">滚动框内全量 · 本地即时筛选</span>
-              </div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
-                <input id="cand-search" type="text" placeholder="搜索标题关键词…"
-                       style="flex:1 1 180px;min-width:160px;padding:6px 8px;border:1px solid #ccc;border-radius:6px">
-                <select id="cand-source" class="inp" style="max-width:260px"><option value="">来源：全部</option></select>
-                <select id="cand-region" class="inp" style="max-width:150px"><option value="">地区：全部</option></select>
-                <select id="cand-type" class="inp">
-                  <option value="tender">仅招标公告（默认）</option>
-                  <option value="all">全部类型</option>
-                </select>
-                <span id="cand-count" class="hint">—</span>
-              </div>
-              <div id="candidate-list"
-                   style="margin-top:8px;max-height:470px;overflow-y:auto;border:1px solid #d0d0d0;border-radius:10px;padding:4px 8px"></div>
-              <div class="notice" style="margin-top:8px">
-                <b>两种动作</b>：<b>查看公告原页</b>在新窗口打开公告页面核实原文；<b>选择深入</b>确认该候选——系统抓详情原文固化建档并返回 <code>project_id</code>，随后携带该项目进入上传解析。候选不等于已入库项目，只有人工选择后才建档。框内可搜索关键词、按来源/类型筛选，命中即实时刷新。
-              </div>
-            </section>
+      <!-- ADR-006：搜索页不再展示任何候选列表（含只读诊断视图）；候选唯一处理入口 = 待选池 -->
 
-      <!-- 最近搜索任务（候选持久化，可重新打开） -->
+      <!-- 最近搜索任务（仅任务状态记录，可删除；候选在待选池处理） -->
       <section class="card" id="history-panel">
         <div class="card-title-row">
           <h2>最近搜索任务</h2>
@@ -78,7 +56,10 @@
         </div>
         <div id="search-history"><div class="hint">加载中…</div></div>
         <div class="notice" style="margin-top:6px">
-          <b>流程说明</b>：先查看结构化公告事实，再人工选择要深入的项目并上传完整招标文件；未上传完整文件前，不启动资格和人员匹配。
+          <b>统一漏斗</b>：入池 → 选择深入 → 抓取建档 → 上传招标文件 → 进入匹配。
+          本页只负责<b>触发搜索</b>并给出增量简报（入池后由规则 + AI 两层预筛自动分流）；
+          <b>候选的查看、筛选与选择深入统一在「简报与待选池」</b>；
+          未上传完整招标文件前，不启动资格和人员匹配。
         </div>
       </section>
 
@@ -88,10 +69,8 @@
         <table class="tbl">
           <thead><tr><th>角色</th><th>在原型中的动作</th></tr></thead>
           <tbody>
-            <tr><td><b>投标专员</b></td><td>搜索/查看结构化推送 → 选择深入项目 → 上传完整招标文件 → 查看解析与自动匹配 → 处理风险与缺失</td></tr>
-            <tr><td><b>数据管理员</b></td><td>维护并核验企业资质、业绩、人员等基础资料；匹配时自动读取已生效资料</td></tr>
-            <tr><td><b>经营负责人</b></td><td>查看人工补录后的结果 → 人工审核是否进入投标</td></tr>
-            <tr><td><b>法务</b></td><td>查看合规说明页（数据来源分级 L0-L3、红线与审计留存）</td></tr>
+            <tr><td><b>投标专员</b>（含其 Agent）</td><td>搜索/简报/待选池 → 选择深入项目 → 上传完整招标文件 → 解析复核 → 查看匹配结果 → 资料录入/核验/补录 → 处置任务办理</td></tr>
+            <tr><td><b>经营负责人</b></td><td>查看全部进度与结果 → 配置预筛规则 → 管理面板督促 → 人工审核是否进入投标（最终审批/豁免）</td></tr>
           </tbody>
         </table>
         <div class="notice" style="margin-top:10px">
@@ -129,10 +108,8 @@
        候选卡提供“查看公告原页 / 选择深入”→ project_id 跳转解析页；
        搜索状态细分（命中/零命中/合规跳过/抓取失败/worker 未运行），
        不把任一状态泛化为“测试期不联网”。
+       ADR-006：本页不再展示候选列表（含只读诊断视图），候选唯一处理入口 = 待选池。
        ============================================================ */
-
-    let currentJobId = null;   // 当前展示候选所属搜索任务
-    let candidateCache = [];   // 当前任务的候选（用于客户端即时筛选展示）
 
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -140,14 +117,7 @@
     /* ---------- 状态细分文案（§3.1.1：五种状态不同文案与下一步） ---------- */
     const SOURCE_LABEL = { ok: "命中", skipped: "合规跳过", error: "失败" };
 
-    /* 限频倒计时：worker 落账文案为「（限频：约 HH:MM:SS（N 秒后）可重试）」，
-       解析 N 秒驱动按钮到点恢复，不绕过红线（窗口内重试后端仍拒） */
-    function parseRetrySeconds(msg) {
-      if (!msg) return null;
-      const m = String(msg).match(/（限频：约[^（]*（(\d+) 秒后）可重试）/);
-      return m ? Math.max(1, parseInt(m[1], 10)) : null;
-    }
-
+    /* 通用倒计时文案（搜索全源限频等场景：到点自动改文案，不设操作按钮） */
     let _retryTickerStarted = false;
     function startRetryTicker() {
       if (_retryTickerStarted) return;
@@ -229,8 +199,7 @@
         msg.innerHTML = "登记中…";
         try {
           const r = await apiPost("/intake/announcement/candidates/manual", { title, url });
-          msg.innerHTML = `✓ 已登记为候选（${r.created ? "新任务" : "复用已有任务"} · 请求编号 <code>${esc(r.request_id || "—")}</code>）——候选列表已打开，点「选择深入」走合规建档。`;
-          await loadJobCandidates(r.job_id);
+          msg.innerHTML = `✓ 已登记并入池（${r.created ? "新任务" : "复用已有任务"} · 请求编号 <code>${esc(r.request_id || "—")}</code>）——请到<a href="pool.html">简报与待选池</a>对该条执行「选择深入」（二次确认后自动抓取建档）。`;
         } catch (err) {
           msg.innerHTML = `登记失败：${esc(err.message)}`;
           btn.disabled = false;
@@ -321,7 +290,7 @@
       }
       if (err.status === 403) {
         return `<div class="notice warn"><b>健康检查被拒绝（HTTP 403）</b>${rid}：本端点按 F020 契约应匿名可读。
-          <br><span class="hint">403 表示服务端版本未同步（旧版带 RBAC 门禁）或残留了角色请求头。请确认 runtime 为最新代码；如用 data_admin 等角色登录不影响搜索页——此提示仅为诊断。</span></div>`;
+          <br><span class="hint">403 表示服务端版本未同步（旧版带 RBAC 门禁）或残留了角色请求头。请确认 runtime 为最新代码；原 data_admin/legal 账号已归并为投标专员角色，登录后按投标专员权限执行——此提示仅为诊断。</span></div>`;
       }
       if (err.status === 401) {
         return `<div class="notice warn"><b>健康检查未认证（HTTP 401）</b>${rid}：本端点匿名可读，401 说明请求被网关/反向代理拦截——检查是否在 8000 端口直连 runtime。</div>`;
@@ -377,214 +346,6 @@
       err.requestId = (r.data && r.data.request_id) || "";
       box.innerHTML = healthErrHtml(err);
       return null;
-    }
-
-    /* ---------- 候选卡渲染（§3.1.3 DTO + §3.1.6 双动作） ---------- */
-    /* ---------- 滚动框全量 + 本地筛选（2026-09-08 重构） ---------- */
-    let CAND_ALL = [];       // 全量候选（include_all 服务端去重后）
-    let CAND_JOB = "";
-    let CAND_SHOW_PENDING = false;  // B2：无日期候选默认折叠，点击「可展开」后显示
-
-    function rebuildSourceOptions() {
-      const sel = document.getElementById("cand-source");
-      if (!sel) return;
-      const map = {};
-      (CAND_ALL || []).forEach((c) => {
-        const sids = (c.source_id ? [c.source_id] : []).concat(c.source_group || []);
-        sids.forEach((sid) => { if (sid && !map[sid]) map[sid] = c.source_name || sid; });
-      });
-      sel.innerHTML = `<option value="">来源：全部</option>` +
-        Object.entries(map).map(([sid, name]) => `<option value="${sid}">${esc(name)}</option>`).join("");
-    }
-
-    /* C4（2026-09-10）：候选地区筛选——卡片 region 为标题命中市口径（或详情回填），
-       聚合本任务出现过的地区生成下拉；未命中地区的候选归「待确认」组 */
-    function rebuildRegionOptions() {
-      const sel = document.getElementById("cand-region");
-      if (!sel) return;
-      const regions = [];
-      (CAND_ALL || []).forEach((c) => {
-        if (c.region && !regions.includes(c.region)) regions.push(c.region);
-      });
-      const cur = sel.value;
-      sel.innerHTML = `<option value="">地区：全部</option>` +
-        regions.sort().map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join("") +
-        `<option value="__none__">待确认</option>`;
-      if (cur && Array.from(sel.options).some((o) => o.value === cur)) sel.value = cur;
-    }
-
-    function candFiltered() {
-      const q = (document.getElementById("cand-search").value || "").trim().toLowerCase();
-      const src = document.getElementById("cand-source").value;
-      const regionSel = (document.getElementById("cand-region") || {}).value || "";
-      const type = document.getElementById("cand-type").value;
-      return (CAND_ALL || []).filter((c) => {
-        if (type === "tender" && !(c.announcement_type === "tender" || c.announcement_type === "prequal")) return false;
-        if (src) {
-          const sids = (c.source_id ? [c.source_id] : []).concat(c.source_group || []);
-          if (!sids.includes(src)) return false;
-        }
-        if (regionSel === "__none__" && c.region) return false;
-        if (regionSel && regionSel !== "__none__" && c.region !== regionSel) return false;
-        if (q && !((c.title || "").toLowerCase().includes(q))) return false;
-        // B2：默认列表严格「仅两周内且有日期」——发布日缺失的候选折叠（可展开）
-        if (!CAND_SHOW_PENDING && !c.publish_date) return false;
-        return true;
-      });
-    }
-
-    function renderCandBox() {
-      const box = document.getElementById("candidate-list");
-      const cc = document.getElementById("cand-count");
-      const pendingCount = (CAND_ALL || []).filter((c) => !c.publish_date).length;
-      const list = candFiltered();
-      if (cc) cc.textContent = `${list.length} / ${CAND_ALL.length} 条`;
-      if (!list.length && !pendingCount) {
-        box.innerHTML = `<div class="notice warn"><b>当前筛选下无匹配</b>：调整关键词、来源或公告类型即可恢复。</div>`;
-        return;
-      }
-      let html = list.map((c) => candidateCardHtml(c)).join("");
-      // B2：无日期候选折叠为一行（不推断为两周内、不丢数据；点击展开后并入主列表参与筛选）
-      if (pendingCount && !CAND_SHOW_PENDING) {
-        html += `<div class="notice info" style="margin-top:6px;display:flex;gap:10px;align-items:center">
-                   <span><b>${pendingCount} 条日期待确认</b>（列表页未载明发布日期，不推断、不丢弃）</span>
-                   <button type="button" class="btn sm ghost" id="btn-show-pending">可展开</button>
-                 </div>`;
-      }
-      box.innerHTML = html;
-      const btn = document.getElementById("btn-show-pending");
-      if (btn) btn.addEventListener("click", () => {
-        CAND_SHOW_PENDING = true;
-        renderCandBox();
-      });
-    }
-
-    /* 从服务端加载某任务候选：一次取全量（include_all + 去重），本地搜索/来源/地区/类型即时过滤 */
-    async function loadJobCandidates(jobId) {
-      currentJobId = jobId; CAND_JOB = jobId; CAND_SHOW_PENDING = false;
-      const box = document.getElementById("candidate-list");
-      const panel = document.getElementById("candidate-panel");
-      panel.style.display = "block";
-      document.getElementById("candidate-job").innerHTML = `· job <code>${jobId}</code>`;
-      box.innerHTML = `<div class="hint">加载该任务全部候选并去重…</div>`;
-      try {
-        const data = await apiGet(`/intake/announcement/search/${jobId}/candidates?include_all=true&limit=2000`);
-        CAND_ALL = data.items || [];
-        document.getElementById("cand-source").value = "";
-        document.getElementById("cand-search").value = "";
-        if (document.getElementById("cand-region")) document.getElementById("cand-region").value = "";
-        rebuildSourceOptions();
-        rebuildRegionOptions();
-        renderCandBox();
-        panel.scrollIntoView({ behavior: "smooth", block: "start" });
-      } catch (err) {
-        box.innerHTML = `<div class="notice error">加载候选失败：${err.message}</div>`;
-      }
-    }
-
-    /* 工具条实时过滤（搜索=input，下拉=change） */
-    function bindCandidateFilters() {
-      ["cand-search", "cand-source", "cand-region", "cand-type"].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener(id === "cand-search" ? "input" : "change", renderCandBox);
-      });
-    }
-    bindCandidateFilters();
-
-    function candidateCardHtml(c) {
-      const t = (v, fallback) => v ? `<b>${v}</b>` : `<span class="hint">${fallback}</span>`;
-      const missing = (c.missing_fields || []).filter((f) => ["project_type", "scale"].includes(f)).length;
-      const missingNote = missing ? `<div class="hint">列表页未提供：${(c.missing_fields || []).filter((f) => ["project_type", "scale"].includes(f)).map((f) => f === "project_type" ? "种类" : "规模").join("、")} → <b>待详情页确认</b>，禁止推断</div>` : "";
-      /* C1/C2（2026-09-10）：地区待核实文案由服务端 region_note 区分
-         （来源为省/全国平台 vs 超范围放宽召回）；旧 runtime 无该字段时回退通用文案 */
-      const recallNote = c.region_recall
-        ? `<div class="hint warn"><span class="badge warn">地区待核实</span>${esc(c.region_note || "检索地区超出本候选来源覆盖范围 → 放宽二次召回所得，地区不推断（详情页回源确认）")}</div>`
-        : "";
-      const typeBadge = c.type_label ? `<span class="badge info">${c.type_label}</span>` : "";
-      /* C2/C4：region 有值 → 显示（title_fact 带「标题命中」徽标）；无值 → 显示平台覆盖范围
-         （明确标注是平台范围而非公告事实），不再笼统「待详情页确认」 */
-      const regionHtml = c.region
-        ? `<b>${esc(c.region)}</b>${c.region_provenance === "title_fact" ? ` <span class="badge warn" title="标题命中地区字典（河北地市/县名）——非公告正文载明">标题命中</span>` : ""}`
-        : (c.source_region_scope
-            ? `<span class="hint">来源覆盖：${esc(c.source_region_scope)}（平台范围，非公告事实）</span>`
-            : `<span class="hint">待详情页确认</span>`);
-      const multiSrc = (c.source_group || []).length > 1
-        ? `<div class="hint">跨源归并：${c.source_group.join("、")}${c.stage_count && c.stage_count > 1 ? `（含 ${c.stage_labels.join("、")}，共 ${c.stage_count} 条已合并）` : ""}</div>`
-        : "";
-      let action;
-      if (c.import_status === "imported") {
-        action = `<a class="btn sm ok" href="import.html?project_id=${encodeURIComponent(c.project_id || "")}&candidate_id=${encodeURIComponent(c.candidate_id || "")}">继续项目（${c.project_id}）</a>
-                  <span class="hint">已建档，raw 不可重复导入</span>`;
-      } else if (c.import_status === "failed") {
-        const limited = (c.error_message || "").includes("限频");
-        const retrySec = parseRetrySeconds(c.error_message || "");
-        const retryAttr = retrySec ? ` data-retry-at="${Date.now() + retrySec * 1000}" data-retry-label="重试选择深入" disabled` : "";
-        action = `<button class="btn sm" onclick="importCandidate('${c.candidate_id}', this)"${retryAttr}>${retrySec ? "限频中（倒计时）" : "重试选择深入"}</button>
-                  ${limited ? '<span class="badge warn">限频中</span>' : ""}
-                  <span class="hint error">上次失败：${c.error_message || "未知原因"}${limited ? "——红线窗口（≤1 次/5 分钟）内重试仍会被拒，按钮到点自动恢复" : ""}</span>`;
-      } else {
-        action = `<button class="btn sm" onclick="importCandidate('${c.candidate_id}', this)">选择深入</button>`;
-      }
-      return `
-        <div class="project-card" style="margin-top:8px">
-          <div class="pc-main">
-            <div class="pc-title">${t(c.title, "（标题缺失）")} ${typeBadge} ${apiBadge(c.import_status === "imported" ? "ok" : "info", c.import_status === "imported" ? "已入库" : c.import_status === "failed" ? "失败" : "候选")}</div>
-            <div class="pc-meta">
-              <span><b>来源</b>：${t(c.source_name, "—")}（${c.source_id || c.source_category || "—"}）</span>
-              <span><b>发布日期</b>：${t(c.publish_date, "待详情页确认")}</span>
-              <span><b>地区</b>：${regionHtml}</span>
-              <span><b>种类</b>：${c.project_type ? `<b>${esc(c.project_type)}</b> <span class="hint">（标题命中）</span>` : `<span class="hint">待详情页确认</span>`}</span>
-              <span><b>规模</b>：${t(c.scale, "规模待确认")}</span>
-            </div>
-            ${multiSrc}
-            ${missingNote}
-            ${recallNote}
-            <div class="pc-foot">
-              <a class="btn sm ghost" href="${c.source_url || "#"}" target="_blank" rel="noopener">查看公告原页</a>
-              ${action}
-            </div>
-          </div>
-        </div>`;
-    }
-
-    /* ---------- 选择深入：候选 → 建档 → 携带 project_id 跳解析页（§3.1.6） ---------- */
-    async function importCandidate(candidateId, btn) {
-      const original = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = "提交导入任务…";
-      try {
-        const r = await apiPost(`/intake/announcement/candidates/${candidateId}/import`);
-        // 轮询候选导入状态直至 imported/failed（candidate.job_status 终态）
-        btn.textContent = "抓取详情原文并建档中…";
-        const card = btn.closest(".project-card");
-        if (card) card.insertAdjacentHTML("beforeend",
-          `<div class="hint" style="margin-top:6px">导入任务：请求编号 <code>${r.request_id || "—"}</code> · 任务编号 <code>${r.job_id || "—"}</code>——抓取详情原文并建档，成功后自动跳转上传页。</div>`);
-        for (let i = 0; i < 240; i++) {   // 上限 240×1.5s=6min
-          await new Promise((res) => setTimeout(res, 1500));
-          const st = await apiGet(`/intake/announcement/candidates/${candidateId}`);
-          const cand = st.candidate || {};
-          if (cand.import_status === "imported" && cand.project_id) {
-            window.location.href = `import.html?project_id=${encodeURIComponent(cand.project_id)}&candidate_id=${encodeURIComponent(candidateId)}`;
-            return;
-          }
-          if (cand.import_status === "failed" || cand.job_status === "failed") {
-            btn.disabled = false;
-            btn.textContent = original;
-            const msg = cand.error_message || st.error_message || "导入失败（详情见候选卡）";
-            alert("导入失败：" + msg);
-            loadJobCandidates(currentJobId);
-            return;
-          }
-        }
-        btn.disabled = false;
-        btn.textContent = original;
-        alert("导入任务等待超时：worker 可能未运行（见健康检查）。任务会继续排队，可稍后从最近任务重新打开。job_id：" + (r.job_id || "") + (r.request_id ? " · 请求编号：" + r.request_id : ""));
-      } catch (err) {
-        apiShowError(err);
-        btn.disabled = false;
-        btn.textContent = original;
-        alert("导入失败：" + err.message);
-      }
     }
 
     /* ---------- 来源多选（可校验 collectable 已启用源；默认勾河北） ---------- */
@@ -712,9 +473,26 @@
           box.insertAdjacentHTML("beforeend",
             `<div class="notice info" style="margin-top:6px"><b>本次各源采集结果</b>：哪些网站搜到、哪些没搜到，逐源如实记录（含原因）。</div>${summaryBlock}`);
         }
-        if ((done.items || []).length) {
-          // 候选卡进入候选面板（含列表内筛选栏），与状态提示分开展示
-          await loadJobCandidates(job.job_id);
+        // F026 v1.1 / ADR-006：搜索完成即收口为「增量简报 + 去待选池处理」；
+        // 本页不展示候选列表，候选唯一处理入口 = 待选池。
+        try {
+          const brief = await apiGet(`/discovery/briefing?job_id=${encodeURIComponent(job.job_id)}`);
+          const b = brief.briefing || {};
+          box.insertAdjacentHTML("beforeend", `
+            <div class="notice ok" style="margin-top:6px">
+              <b>本次入池简报</b>：新增 <b>${b.added ?? 0}</b> 条进入待选池 ·
+              可选深入（AI 已筛）<b>${(b.by_status && b.by_status.pending) || 0}</b> ·
+              待人工确认 <b>${(b.by_status && b.by_status.needs_manual_review) || 0}</b> ·
+              自动排除（非招标/与业务无关）<b>${b.auto_excluded || 0}</b>
+              ${b.rule_version ? `· 规则 <code>${esc(b.rule_version)}</code>` : ""}
+              <div style="margin-top:6px">
+                <a class="btn sm" href="pool.html">去待选池处理（选择深入 / 删除）→</a>
+              </div>
+              <span class="hint">入池后智能预筛（规则 + AI 分类）在后台完成；简报只统计分布，不是投标建议。</span>
+            </div>`);
+        } catch (briefErr) {
+          box.insertAdjacentHTML("beforeend",
+            `<div class="notice warn" style="margin-top:6px">候选已入池，但简报读取失败（${esc(briefErr.message)}）——请直接前往<a href="pool.html">简报与待选池</a>处理。</div>`);
         }
         loadSearchHistory();
       } catch (err) {
@@ -776,9 +554,9 @@
                 <span><b>来源</b>：${(t.sources || []).join("、") || "全部已启用"}</span>
               </div>
               <div class="pc-foot">
-                <button class="btn sm" onclick="loadJobCandidates('${t.job_id}', document.getElementById('candidate-list'), {})">打开候选</button>
                 <button class="btn sm danger" data-delete-job="${esc(t.job_id)}" title="删除此搜索任务">删除</button>
-                ${t.manual ? `<span class="hint">人工转录登记，走「选择深入」合规建档</span>` : ""}
+                <a class="btn sm" href="pool.html">去待选池处理候选 →</a>
+                ${t.manual ? `<span class="hint">人工转录已入池，处理在待选池</span>` : ""}
               </div>
             </div>`;
           list.appendChild(row);

@@ -52,7 +52,7 @@
       </section>
 
       <div style="display:flex;gap:10px;margin-top:6px;flex-wrap:wrap">
-        <a class="btn ghost" id="rr-back" href="index.html">← 返回搜索结果</a>
+        <a class="btn ghost" id="rr-back" href="pool.html">← 返回简报与待选池</a>
         <a class="btn" id="rr-to-review" href="queue.html" style="display:none">前往复核页确认写入规则集 →</a>
       </div>
     </div>
@@ -205,7 +205,7 @@
     // 无项目参数：提示回搜索（经典 script 顶层 return 是语法错误，必须用 if/else）
     if (!projectId) {
       document.getElementById("groups-box").innerHTML =
-        `<div class="notice warn"><b>尚未选择项目</b>：解析结果页需要来自搜索候选“选择深入”建立的 <code>project_id</code>。请先返回搜索结果选择项目并上传完整招标文件。</div>`;
+        `<div class="notice warn"><b>尚未选择项目</b>：解析结果页需要来自搜索候选“选择深入”建立的 <code>project_id</code>。请先到「简报与待选池」选择项目（选择深入并建档）后再查看解析结果。</div>`;
       document.getElementById("rr-note").innerHTML = "";
     } else {
       loadData();

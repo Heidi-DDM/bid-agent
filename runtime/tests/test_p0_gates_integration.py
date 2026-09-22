@@ -21,10 +21,10 @@ from runtime.worker import process_one
 pytestmark = pytest.mark.integration
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-needs_db = pytest.mark.skipif(
-    not DATABASE_URL,
-    reason="ADR-004 集成验收需要显式设置专用 PostgreSQL DATABASE_URL",
-)
+from runtime.tests._dbguard import integration_db_allowed
+_DB_OK, _DB_WHY = integration_db_allowed()
+needs_db = pytest.mark.skipif(not _DB_OK, reason=_DB_WHY)
+
 
 
 @pytest.fixture()

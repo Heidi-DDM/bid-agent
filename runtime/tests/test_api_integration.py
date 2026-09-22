@@ -29,10 +29,10 @@ from runtime.db.models import (
 pytestmark = pytest.mark.integration
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-needs_db = pytest.mark.skipif(
-    not DATABASE_URL,
-    reason="集成测试需要真实 PostgreSQL：请设置 DATABASE_URL 后执行",
-)
+from runtime.tests._dbguard import integration_db_allowed
+_DB_OK, _DB_WHY = integration_db_allowed()
+needs_db = pytest.mark.skipif(not _DB_OK, reason=_DB_WHY)
+
 
 
 @pytest.fixture()
@@ -230,17 +230,27 @@ def test_waiver_expiry_blocks_approval(session):
 def test_rbac_denial_writes_audit(session):
     _setup_project_with_tender(session)
     material = session.scalar(select(Material).where(Material.material_id == "MAT-ND-001"))
-    # 企业私有资料：法务不可读（F003 §6.2），验证越权拒绝 + 审计留痕
-    material.permission_scope = "enterprise_read"
+    # 审批层数据：投标专员不可读（F003 §6.2 / F026 §5），验证越权拒绝 + 审计留痕
+    material.permission_scope = "approver_only"
     session.commit()
     with pytest.raises(ApiError) as excinfo:
-        api_service.require_scope_or_403(session, "legal", material)
+        api_service.require_scope_or_403(session, "bid_specialist", material)
     assert excinfo.value.code == "forbidden"
     events = session.scalars(select(AuditEvent)).all()
     assert any(e.action.startswith("rbac.deny") for e in events)
 
 
 @needs_db
-def test_enterprise_scope_denied_for_specialist(session):
-    assert rbac.can_read_scope("bid_specialist", "enterprise_read") is False
-    assert rbac.can_read_scope("data_admin", "enterprise_read") is True
+def test_two_role_scope_contract(session):
+    """F026 §5 两级角色数据分层契约（真库回归）。
+
+    - 投标专员（含其 Agent）承接原 data_admin 职责：可读企业私有资料层；
+    - 历史 data_admin/legal 为兼容别名，归并为投标专员，权限一致；
+    - 审批层（approver_only）仍仅经营负责人可读。
+    """
+    assert rbac.can_read_scope("bid_specialist", "enterprise_read") is True
+    assert rbac.can_read_scope("data_admin", "enterprise_read") is True   # 兼容别名
+    assert rbac.can_read_scope("legal", "enterprise_read") is True        # 兼容别名
+    assert rbac.can_read_scope("bid_specialist", "approver_only") is False
+    assert rbac.can_read_scope("data_admin", "approver_only") is False    # 别名不得借道审批层
+    assert rbac.can_read_scope("business_head", "approver_only") is True

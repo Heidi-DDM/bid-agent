@@ -307,6 +307,54 @@ class AnnouncementCandidate(Base):
     )
 
 
+class SelectionPoolItem(Base):
+    """F026：跨搜索批次的统一待选池；候选事实本身仍在 announcement_candidates。"""
+
+    __tablename__ = "selection_pool_items"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", name="uq_selection_pool_candidate"),
+        Index("ix_selection_pool_project_status", "project_key", "pool_status"),
+        Index("ix_selection_pool_status_seen", "pool_status", "last_seen_at"),
+        {"schema": "public_data"},
+    )
+    pool_item_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    candidate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    pool_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    # pending / needs_manual_review / deep_dive / dismissed / superseded / expired
+    screening: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    selected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dismissed_by: Mapped[str | None] = mapped_column(String(128))
+    dismissed_reason: Mapped[str | None] = mapped_column(Text)
+    replaced_by_candidate_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class DiscoveryRuleProfile(Base):
+    """F026：经营策略预筛规则的版本快照；不混入项目资格规则集。"""
+
+    __tablename__ = "discovery_rule_profiles"
+    __table_args__ = (
+        Index("ix_discovery_rule_profiles_active", "is_active"),
+        {"schema": "admission_data"},
+    )
+    rule_profile_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class FieldTrace(Base):
     """F019 §3 field_traces：字段级溯源（F005：clause/source_link/assertion/confidence）。
 

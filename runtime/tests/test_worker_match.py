@@ -914,9 +914,9 @@ def test_match_worker_syncs_typed_remediation_tasks(session):
         select(RemediationTask).where(RemediationTask.project_id == "ND-2025")
     ).all()
     assert {(task.requirement_id, task.task_type, task.assignee_role) for task in tasks} == {
-        ("NQ-MISSING", "evidence_supplement", "data_admin"),
-        ("NQ-FAILED", "termination_correction", "bid_specialist"),
-    }
+                ("NQ-MISSING", "evidence_supplement", "bid_specialist"),
+                ("NQ-FAILED", "termination_correction", "bid_specialist"),
+            }
     assert {task.state for task in tasks} == {"open"}
 
 

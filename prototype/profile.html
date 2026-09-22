@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>企业画像 · 资料解析情况总览｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .dim-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; margin-top: 10px; }
+    .dim-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fff; }
+    .dim-card h3 { margin: 0; font-size: 15px; }
+    .dim-card .cat-tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 2px; }
+    .fact-list, .gap-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+    .fact-list li { margin: 3px 0; color: var(--ink); }
+    .gap-list li { margin: 3px 0; color: #92400e; }
+    .dim-card .remark { margin-top: 8px; }
+    .kind-chip { display:flex; flex-direction:column; align-items:center; gap:2px; padding:10px 6px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  </style>
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+      <div id="api-error" style="display:none"></div>
+
+      <!-- 总览统计（F027 §6） -->
+      <section class="card">
+        <div class="card-title-row">
+          <h2>企业画像 · 资料解析情况总览</h2>
+          <span class="badge info" id="ov-as-of">—</span>
+        </div>
+        <p class="sub" style="margin-top:4px">
+          按招标文件常见<b>评分维度</b>展示企业资料的解析、核验与证据覆盖情况，并按四分类拆分口径（F027）。
+          用于回答「每个维度我们已解析到什么、缺什么」；<b>不构成资格审查结论、评分预测或投标建议</b>，
+          逐项匹配结论以匹配引擎输出为准。
+        </p>
+        <div id="ov-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:12px 0"></div>
+        <div id="ov-kinds" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px"></div>
+        <div class="hint" style="margin-top:8px">
+          核验入口：「企业资料库（后台）」核验队列；未核验（待核验）资料不参与匹配（F022）。本页为只读聚合，不触发任何任务。
+        </div>
+      </section>
+
+      <!-- 四分类口径 -->
+      <section class="card">
+        <div class="card-title-row">
+          <h2>四分类口径（投标要求按判定性质拆分）</h2>
+          <span class="hint">与 F008 四类结论的输入侧对应：硬性→资格核查；客观→评分计算；主观→人工评审；内部→企业侧准入条件。</span>
+        </div>
+        <div id="ov-cats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:8px"></div>
+      </section>
+
+      <!-- 分类维度区 -->
+      <div id="ov-sections"></div>
+
+      <section class="card">
+        <div class="notice" style="margin-bottom:0">
+          <b>口径声明</b>：本页为资料解析情况的事实聚合（计数与覆盖统计）——匹配结论以逐项匹配结果为准（F008）；
+          「内部满分」仍须经营负责人人工审批，系统不自动投标、不自动报价（ADR-001）。
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（F027 企业画像 / 真实 API 版）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <script src="data.js"></script>
+  <script src="api.js"></script>
+  <script src="common.js"></script>
+  <script>
+    initPage("profile.html", "");
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+
+    const STATUS_LABEL = {
+      active: ["ok", "已核验生效"], pending_verification: ["review", "待核验"],
+      expired: ["warn", "已过期"], rejected: ["gray", "已驳回"],
+      archived: ["gray", "已归档"], 未复核: ["review", "未复核"],
+    };
+    const COVERAGE_META = {
+      active: ["ok", "已有核验记录"], pending: ["review", "已解析 · 未核验"],
+      missing: ["danger", "无资料"], not_applicable: ["gray", "不属企业资料库"],
+    };
+    const CATEGORY_META = {
+      hard: "硬性资格/响应要求", objective: "客观可计算评分项",
+      subjective: "主观评审项", internal: "企业内部准入项",
+    };
+
+    const statusBadge = (s) => {
+      const m = STATUS_LABEL[s] || ["gray", s];
+      return `<span class="badge ${m[0]}">${m[1]}</span>`;
+    };
+    const byStatusText = (by) => {
+      const parts = Object.entries(by || {}).map(([k, v]) => `${(STATUS_LABEL[k] || [, k])[1]} ${v}`);
+      return parts.length ? parts.join(" · ") : "—";
+    };
+
+    function renderSummary(data) {
+      const s = data.summary || {};
+      document.getElementById("ov-as-of").textContent = `统计日 ${s.as_of || "—"}`;
+      document.getElementById("ov-cards").innerHTML = [
+        ["业务记录总数", s.records_total ?? 0],
+        ["已核验生效", s.active_total ?? 0],
+        ["待核验", s.pending_total ?? 0],
+        ["已过期", s.expired_total ?? 0],
+      ].map(([k, v]) =>
+        `<div class="card" style="margin:0;text-align:center"><div style="font-size:26px;font-weight:700">${esc(String(v))}</div><div class="hint">${k}</div></div>`).join("");
+      document.getElementById("ov-kinds").innerHTML = (s.kinds || []).map((k) => `
+        <div class="kind-chip">
+          <b>${esc(k.label)}</b>
+          <span style="font-size:22px;font-weight:700">${esc(String(k.total ?? 0))}</span>
+          <span class="hint">${byStatusText(k.by_status)}</span>
+          ${k.kind !== "evidence_files"
+            ? `<span class="hint">证据回链 ${esc(String(k.with_evidence ?? 0))}/${esc(String(k.total ?? 0))}</span>`
+            : `<span class="hint">${esc(String((k.by_status || {})["未复核"] ?? 0))} 份未复核</span>`}
+        </div>`).join("");
+    }
+
+    function renderCategories(defs) {
+      document.getElementById("ov-cats").innerHTML = (defs || []).map((c, i) => `
+        <div class="card" style="margin:0">
+          <h3 style="margin:0">${["①", "②", "③", "④"][i] || ""} ${esc(c.label)} <code class="hint">${esc(c.key)}</code></h3>
+          <div style="font-size:13px;color:var(--ink-2);margin-top:6px">${esc(c.note)}</div>
+        </div>`).join("");
+    }
+
+    function dimCard(d) {
+      const cov = COVERAGE_META[d.coverage] || ["gray", d.coverage];
+      const srcRows = (d.sources || []).map((src) => `
+        <tr>
+          <td>${esc(src.label)}<div class="hint">${esc(src.kind)}</div></td>
+          <td style="text-align:right"><b>${esc(String(src.total ?? 0))}</b></td>
+          <td>${byStatusText(src.by_status)}</td>
+          <td class="hint" style="text-align:right">${src.with_evidence == null ? "—" : `${esc(String(src.with_evidence))}/${esc(String(src.total ?? 0))}`}</td>
+        </tr>`).join("");
+      return `
+        <div class="dim-card">
+          <div class="card-title-row"><h3>${esc(d.label)}</h3><span class="badge ${cov[0]}" title="coverage=${esc(d.coverage)}">${cov[1]}</span></div>
+          <div class="cat-tags">${(d.categories || []).map((c) => `<span class="badge ${c === "hard" ? "danger" : c === "objective" ? "info" : c === "subjective" ? "review" : "gold"}">${esc(CATEGORY_META[c] || c)}</span>`).join("")}</div>
+          ${srcRows ? `<div style="overflow-x:auto;margin-top:8px"><table class="tbl"><thead><tr><th>资料来源</th><th style="text-align:right">记录</th><th>状态分布</th><th style="text-align:right">证据回链</th></tr></thead><tbody>${srcRows}</tbody></table></div>` : `<div class="hint" style="margin-top:8px">（企业资料库无对应表 / 该维度不属资料库承载）</div>`}
+          ${(d.facts || []).length ? `<div style="margin-top:8px;font-size:13px"><b>已解析事实</b><ul class="fact-list">${d.facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul></div>` : ""}
+          ${(d.gaps || []).length ? `<div style="margin-top:8px;font-size:13px"><b style="color:#92400e">缺口 / 待补</b><ul class="gap-list">${d.gaps.map((g) => `<li>${esc(g)}</li>`).join("")}</ul></div>` : ""}
+          ${d.remark ? `<div class="hint remark">判定口径：${esc(d.remark)}</div>` : ""}
+        </div>`;
+    }
+
+    function renderSections(defs, dims) {
+      const order = ["hard", "objective", "subjective", "internal"];
+      const byCat = {};
+      (dims || []).forEach((d) => (d.categories || []).forEach((c) => {
+        (byCat[c] = byCat[c] || []).push(d);
+      }));
+      document.getElementById("ov-sections").innerHTML = order.map((key, i) => {
+        const def = (defs || []).find((c) => c.key === key) || {};
+        const list = byCat[key] || [];
+        return `
+        <section class="card">
+          <div class="card-title-row">
+            <h2>${["①", "②", "③", "④"][i]} ${esc(def.label || key)} <span class="badge gray">${list.length} 个维度</span></h2>
+            <span class="hint">${esc(def.note || "")}</span>
+          </div>
+          <div class="dim-grid">${list.map(dimCard).join("")}</div>
+        </section>`;
+      }).join("");
+    }
+
+    async function load() {
+      try {
+        const data = await apiGet("/enterprise/overview");
+        document.getElementById("api-error").style.display = "none";
+        renderSummary(data);
+        renderCategories(data.category_definitions);
+        renderSections(data.category_definitions, data.dimensions);
+      } catch (err) {
+        if (err.status === 403) {
+          apiShowError(Object.assign(new Error(
+            `权限不足：企业画像页无法访问（F027：企业资料仅投标专员/经营负责人可读）。当前登录：${apiRoleLabel()}（${apiRole() || "未登录"}）——右上角登录后重试。`), err));
+          return;
+        }
+        apiShowError(err);
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

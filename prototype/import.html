@@ -17,7 +17,7 @@
         <span class="badge info">manual_trigger</span>
         <div>
           <span class="state-name">测试期仅人工触发</span>
-          <span class="state-desc">— 人工粘贴公告 / 上传招标文件 / 单条 URL；不启动定时采集（scheduled 须 P0 验收 + 法务签字）。遵守 robots / 限频 / 透明 UA。</span>
+          <span class="state-desc">— 人工粘贴公告 / 上传招标文件 / 单条 URL。定时采集（scheduled）由运行时采集策略（COLLECTION_POLICY）控制触发，遵守 robots / 限频 / 透明 UA。</span>
         </div>
       </div>
 
@@ -27,10 +27,17 @@
         <div id="project-context"><div class="hint">解析项目上下文…</div></div>
         <div id="no-project" style="display:none">
           <div class="notice warn">
-            <b>尚未选择项目</b>：本页需要来自「搜索与推送」页人工选择（候选卡“选择深入”）的
-            <code>project_id</code>。请先返回搜索结果选择一条公告候选，确认建档后再回到这里上传完整招标文件。
+            <b>尚未选择项目</b>：本页需要来自「简报与待选池」页人工「选择深入」（抓取建档）产生的
+            <code>project_id</code>。请先到待选池选择一条公告候选并建档，再回到这里上传完整招标文件。
           </div>
-          <a class="btn" href="index.html">返回搜索结果选择项目</a>
+          <a class="btn" href="pool.html">前往简报与待选池选择项目</a>
+        </div>
+        <div id="project-missing" style="display:none">
+          <div class="notice error">
+            <b>项目不存在或已被清理</b>：<span id="missing-pid"></span> 在项目库中没有对应记录
+            （可能被测试清库或误删）。来源候选若仍在待选池，可回到池中对该候选重新「抓取建档」；已上传过的招标文件重传即可（同文件幂等复用）。
+          </div>
+          <a class="btn" href="pool.html">回简报与待选池处理</a>
         </div>
       </section>
 
@@ -79,7 +86,7 @@
         <div id="file-error" style="margin-top:8px"></div>
         <div style="display:flex;gap:10px;margin-top:14px">
           <button class="btn" id="btn-parse" disabled>上传并开始解析</button>
-          <a class="btn ghost" href="index.html">返回搜索结果</a>
+          <a class="btn ghost" href="pool.html">返回简报与待选池</a>
         </div>
         <div id="api-error" style="display:none"></div>
         <div id="parse-progress" style="margin-top:14px"></div>
@@ -177,9 +184,11 @@
     async function loadProjectContext() {
       const box = document.getElementById("project-context");
       const noProject = document.getElementById("no-project");
+      const missing = document.getElementById("project-missing");
       if (!projectId) {
         box.innerHTML = "";
         noProject.style.display = "block";
+        missing.style.display = "none";
         document.getElementById("upload-card").style.display = "none";
         document.getElementById("raw-panel").style.display = "none";
         return;
@@ -188,10 +197,11 @@
       try {
         const p = await apiGet(`/projects/${projectId}`);
         noProject.style.display = "none";
+        missing.style.display = "none";
         document.getElementById("upload-card").style.display = "block";
         const isParsed = (p.materials || []).some((m) => m.material_type === "tender_document" && m.parse_status === "parsed");
         const restoredNote = projectRestored
-          ? `<div class="hint" style="margin-top:6px">已自动载入<b>上次选择的项目</b>（导航返回后不再丢失）。要处理其他项目，请<a href="index.html">返回搜索结果</a>重新「选择深入」。</div>` : "";
+          ? `<div class="hint" style="margin-top:6px">已自动载入<b>上次选择的项目</b>（导航返回后不再丢失）。要处理其他项目，请<a href="pool.html">前往简报与待选池</a>重新「选择深入」。</div>` : "";
         box.innerHTML = `
           <div class="pc-main" style="border:1px solid var(--line);border-radius:10px;padding:12px">
             <div class="pc-title">${p.project_name || projectId} ${apiBadge(isParsed ? "ok" : "info", isParsed ? "招标文件已解析" : "待上传完整招标文件")}</div>
@@ -214,8 +224,14 @@
           noProject.style.display = "none";
           box.innerHTML = `<div class="notice error"><b>权限不足</b>：当前角色 ${apiRoleLabel()} 无权查看或上传本项目。</div>`;
         } else if (err.status === 404) {
-          noProject.style.display = "block";
+          // 2026-09-22：404 ≠「尚未选择」——项目确实选择了但库里没有（清库/误删），
+          // 给出可操作指引而不是误导用户"回去选项目"
+          noProject.style.display = "none";
+          missing.style.display = "block";
+          document.getElementById("missing-pid").textContent = projectId;
           box.innerHTML = "";
+          document.getElementById("upload-card").style.display = "none";
+          document.getElementById("raw-panel").style.display = "none";
         } else {
           noProject.style.display = "none";
           box.innerHTML = `<div class="notice error"><b>加载项目失败</b>：${err.message}（若 API 未启动，请确认 127.0.0.1:8000 的 runtime 已运行）。</div>`;

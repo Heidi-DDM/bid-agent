@@ -54,7 +54,7 @@
       <!-- C. 补录企业证据材料（匹配后，从队列项带入上下文；默认折叠） -->
       <section class="card" id="supplement-panel" style="display:none">
         <details id="sup-details">
-          <summary style="cursor:pointer"><b>③ 补录企业证据材料</b> <span class="hint" id="sup-target-hint">——针对处置队列里的缺证项上传企业证据；上传后由数据管理员核验 → 经营负责人重算。与①解析复核无关。</span></summary>
+          <summary style="cursor:pointer"><b>③ 补录企业证据材料</b> <span class="hint" id="sup-target-hint">——针对处置队列里的缺证项上传企业证据；上传并核验通过后重算（F026：投标专员/经营负责人均可办理；审批仍仅经营负责人）。与①解析复核无关。</span></summary>
           <div id="sup-context" style="margin-top:8px"></div>
           <div class="form-grid" style="margin-top:10px">
             <div class="form-item"><label>补录目的<span class="req">*</span></label>
@@ -95,8 +95,8 @@
           </div>
           <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
             <button class="btn" id="btn-upload">① 上传补录材料</button>
-            <button class="btn" id="btn-verify" disabled>② 核验通过（数据管理员）</button>
-            <button class="btn" id="btn-recalc" disabled>③ 重算（经营负责人）</button>
+            <button class="btn" id="btn-verify" disabled>② 核验通过（投标专员）</button>
+            <button class="btn" id="btn-recalc" disabled>③ 重算（投标专员/经营负责人）</button>
           </div>
           <div id="sup-progress" style="margin-top:12px"></div>
         </details>
@@ -331,8 +331,8 @@
       }
     }
 
-    /* 负责角色字段是后端流程事实字符串（RBAC 口径），页面转成中文 */
-    const OWNER_ROLE_LABEL = { "bid_specialist:upload → data_admin:verify": "投标专员上传 → 数据管理员核验" };
+    /* 负责角色字段是后端流程事实字符串（RBAC 口径），页面转成中文（F026 两级角色） */
+    const OWNER_ROLE_LABEL = { "bid_specialist:upload → bid_specialist:verify": "投标专员上传并核验" };
     function queueCardHtml(it, g, seq) {
       const rec = it.recommended_material_types || [];
       const recText = rec.map((t) => SUBTYPE_LABEL[t] || apiEvidenceKindLabel(t)).join("、") || "—";
@@ -395,7 +395,7 @@
           条款 <b>${esc(it.clause_ref || it.clause || "—")}</b>
           · 缺失 <b>${esc(it.missing_field || "—")}</b> · 原因 <b>${esc(it.reason || "—")}</b><br>
           <span class="k">本次材料编号（系统按项目与要求生成）：</span><code>${esc(mid)}</code>
-          <span class="hint">——上传后为「待核验」，需数据管理员核验后才能重算。</span>
+          <span class="hint">——上传后为「待核验」，需投标专员/经营负责人核验通过后才能重算。</span>
           <details class="audit-fold"><summary>系统追溯编号</summary><div class="audit-code"><span><b>关联要求</b>：<code>${esc(it.requirement_id || "—")}</code></span></div></details>
         </div>`;
       document.getElementById("sup-details").open = true;
@@ -465,7 +465,7 @@
         document.getElementById("btn-verify").disabled = false;
         applyRoleGate();
         supMsg(`<div class="notice info">① 上传完成：材料编号 <code>${esc(latestMaterialId)}</code>（版本 ${data.version ?? "?"}）· 文件指纹 ${esc((data.content_hash || "").slice(0, 12))}… · ${data.created ? "新建" : "已存在（幂等复用）"} · 状态<b>待核验</b>。<br>
-          <span class="hint">已回链到本条要求。② 核验需<b>数据管理员</b>角色——请用右上角切换「数据管理员」登录后点击核验通过。请求编号 <code>${esc(data.request_id || "—")}</code></span></div>`);
+          <span class="hint">已回链到本条要求。② 核验由投标专员/经营负责人办理（F026）——点击右侧「核验通过」。请求编号 <code>${esc(data.request_id || "—")}</code></span></div>`);
       } catch (err) {
         apiShowError(err);
         supMsg(`<div class="notice error">上传失败：${esc(err.message)}</div>`);
@@ -480,11 +480,10 @@
         const r = await apiPost(`/materials/${encodeURIComponent(latestMaterialId)}/verify`, {});
         verifiedMaterialReady = true;
         applyRoleGate();
-        const needSwitch = apiRole() !== "business_head";
         supMsg(`<div class="notice info">② 核验通过：材料 <code>${esc(latestMaterialId)}</code> 已生效（核验时间 ${esc(String(r.verified_at || "").slice(0, 19).replace("T", " "))}）。<br>
-          <span class="hint">③ 重算只有<b>经营负责人</b>可执行（F020 §5）——${needSwitch ? "请右上角切换「经营负责人」登录，页面将自动识别已核验补录材料并开放 ③ 重算。" : "当前已就绪，可直接点击 ③ 重算。"} 请求编号 <code>${esc(r.request_id || "—")}</code></span></div>`);
+          <span class="hint">③ 重算由投标专员/经营负责人执行（F026）——当前已就绪，可直接点击 ③ 重算。请求编号 <code>${esc(r.request_id || "—")}</code></span></div>`);
       } catch (err) {
-        if (err.status === 403) { supMsg(`<div class="notice error">权限不足：核验需<b>数据管理员</b>。当前「${esc(apiRoleLabel())}」——右上角切换数据管理员后重试。</div>`); }
+        if (err.status === 403) { supMsg(`<div class="notice error">权限不足：核验需企业资料核验权限（F026：投标专员/经营负责人）。当前「${esc(apiRoleLabel())}」——右上角登录后重试。</div>`); }
         else { apiShowError(err); supMsg(`<div class="notice error">核验失败：${esc(err.message)}</div>`); }
       } finally { btn.disabled = false; }
     });
@@ -522,12 +521,13 @@
       } finally { btn.disabled = false; }
     });
 
-    /* 角色提示：补录上传需 material write（投标专员/data_admin），核验需 data_admin；
-       重算 = match:write 仅 business_head（F020 §5 / runtime/core/rbac.py） */
+    /* F026 角色门禁：补录上传=material write、核验=enterprise verify、重算=match write，
+       两级角色（投标专员/经营负责人）均具备；仅未登录或未满足前置时禁用 */
     function applyRoleGate() {
       const r = apiRole();
-      document.getElementById("btn-verify").disabled = !(r === "data_admin") || !latestMaterialId;
-      document.getElementById("btn-recalc").disabled = !(r === "business_head") || !verifiedMaterialReady;
+      const canWork = r === "bid_specialist" || r === "business_head";
+      document.getElementById("btn-verify").disabled = !canWork || !latestMaterialId;
+      document.getElementById("btn-recalc").disabled = !canWork || !verifiedMaterialReady;
     }
     document.addEventListener("api:unauthorized", applyRoleGate);
 
