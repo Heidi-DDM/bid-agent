@@ -57,7 +57,7 @@ def test_not_onsite_never_carries_project(patched_ledger):
         sheet1_rows=[["项目经理M", "保定市蔬菜育种基地项目设计施工总承包（二次）", "2024-12-25", "后续补充", "后续补充"]],
     )
     personnel, managers, stats = iel.build_builder_rows()
-    assert [m["display_name"] for m in managers] == ["毛*·0002", "张*·0003"]
+    assert [m["display_name"] for m in managers] == ["项****·0002", "张*·0003"]
     assert managers[0]["availability"] == "available"
     assert managers[0]["active_projects"] == []
     assert managers[1]["availability"] == "occupied"
