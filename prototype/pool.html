@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>搜索简报与待选池 · 投标智能体</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260929d">
 </head>
 <body>
   <div class="topbar"></div>
@@ -83,9 +83,9 @@
     </section>
   </main>
 
-  <script src="api.js"></script>
-  <script src="data.js"></script>
-  <script src="common.js"></script>
+  <script src="api.js?v=20260929d"></script>
+  <script src="data.js?v=20260929d"></script>
+  <script src="common.js?v=20260929d"></script>
   <script>
     initPage("pool.html", "pool");
 
@@ -171,12 +171,15 @@
       } else if (sc.screen_state === "brief") {
         parts.push(`<span class="badge info">${esc(sc.announcement_type_label || "招标")} · 命中行业</span>`);
       }
-      /* ADR-006：AI 辅助分类徽标（按企业业务画像的事实性分类，不是投标建议） */
+      /* ADR-006：AI 辅助分类徽标（按企业业务画像的事实性分类，不是投标建议）。
+         2026-09-24 业主指令：勘察设计/监理/设备采购类不排除，标签统一显示「其他」。 */
+      const OTHER_CATEGORIES = new Set(["勘察设计咨询", "监理造价", "设备采购"]);
       if (ai) {
+        const catLabel = OTHER_CATEGORIES.has(ai.category) ? "其他" : ai.category;
         const rel = ai.relevant === "yes" ? `<span class="badge ok">AI：业务相关</span>`
           : ai.relevant === "no" ? `<span class="badge gray">AI：与业务无关</span>`
           : `<span class="badge review">AI：未确证</span>`;
-        parts.push(`${rel}<span class="hint">AI 分类：${esc(ai.category)}（依据「${esc(ai.reason)}」· ${esc(ai.confidence)}）</span>`);
+        parts.push(`${rel}<span class="hint">AI 分类：${esc(catLabel)}（依据「${esc(ai.reason)}」· ${esc(ai.confidence)}）</span>`);
       }
       if (sc.excluded_reason && sc.excluded_by === "llm") parts.push(`<span class="hint warn">${esc(sc.excluded_reason)}</span>`);
       if (sc.matched_industries && sc.matched_industries.length) parts.push(`<span class="hint">行业：${sc.matched_industries.map((x) => esc(x)).join("、")}</span>`);

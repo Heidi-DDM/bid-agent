@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>人工复核｜投标智能体原型</title>
-  <link rel="stylesheet" href="styles.css">
+  <title>待确认与处置｜投标智能体原型</title>
+  <link rel="stylesheet" href="styles.css?v=20260929d">
 </head>
 <body>
   <header class="topbar"></header>
@@ -20,7 +20,7 @@
       <!-- A. 解析候选复核（材料解析后、规则集写入前） -->
       <section class="card" id="review-panel">
         <div class="card-title-row">
-          <h2>① 解析候选复核（项目 <span id="rv-proj">—</span>）</h2>
+          <h2>① 解析待确认项处理（项目 <span id="rv-proj">—</span>）</h2>
           <span class="badge review" id="rv-badge">加载中…</span>
         </div>
         <p class="sub" style="margin-top:6px">
@@ -46,7 +46,7 @@
       <section class="card" id="queues-panel" style="display:none">
         <div class="card-title-row">
           <h2>② 匹配后处置队列（项目 <span id="q-proj">—</span>）</h2>
-          <span class="hint">匹配完成后才生成；只列需处置的项（硬性失败 / 缺证 / 复核）。<b>每一条要求</b>的满足/不满足及原因见 <a id="q-to-matrix" href="matrix.html">自动匹配</a> 页逐条明细。</span>
+          <span class="hint">匹配完成后生成。补证任务按<b>所缺事实聚合</b>（同一缺口只一条任务，列出覆盖的全部条款，ADR-008）；资源处置建议（明确不满足）与补证任务<b>分开</b>——不能用「补一份证明」掩盖资源事实缺口。逐条结论见 <a id="q-to-matrix" href="matrix.html">当前结论</a> 页。</span>
         </div>
         <div id="queues-box"><div class="hint">加载中…</div></div>
       </section>
@@ -109,10 +109,10 @@
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
-  <script src="data.js"></script>
-  <script src="api.js"></script>
-  <script src="common.js"></script>
-  <script src="review.js"></script>
+  <script src="data.js?v=20260929d"></script>
+  <script src="api.js?v=20260929d"></script>
+  <script src="common.js?v=20260929d"></script>
+  <script src="review.js?v=20260929d"></script>
   <script>
     initPage("queue.html", "queue");
 
@@ -205,8 +205,20 @@
         const groups = data.groups || [];
         const open = REVIEW.pendingItems(groups);
         const redo = prog.needs_redecision || 0;
+        // 覆盖率摘要（2026-09-24 四步之四）：这批候选靠什么定位、还缺什么——一眼可见
+        const cov = data.coverage;
+        let covHtml = "";
+        if (cov && cov.rule_total) {
+          const loc = cov.located || {};
+          covHtml = ` · 定位来源：<span class="hint" title="确定性正则锚点直接命中">锚点 ${loc.anchor ?? 0}</span>`
+            + ` / <span class="hint" title="规则未命中、大模型定位摘录且过确定性守门（须人工确认）">模型兜底 ${loc.llm_fallback ?? 0}</span>`
+            + ` / <span class="hint" title="锚点未覆盖、大模型发现的候选条款（须人工确认）">模型发现 ${loc.llm_discovery ?? 0}</span>`
+            + (cov.missing_pending ? ` · <b>待人工定位缺失 ${cov.missing_pending}</b>` : " · 缺失 0")
+            + ` · 主卡 ${cov.main_card_located ?? 0}/${cov.main_card_total ?? "?"}`;
+        }
         document.getElementById("rv-progress").innerHTML =
           `候选 ${prog.total ?? "?"} 条 · 待处理 <b>${open.length}</b>（未决 ${prog.pending ?? 0}${redo ? `，需重新决策 ${redo}` : ""}）· 已决 ${prog.decided ?? 0}`
+          + covHtml
           + (confirmMaterialId ? `（招标文件版本 ${data.version ?? "?"}<span class="hint" title="材料编号 ${esc(confirmMaterialId)}" style="cursor:help"> ⓘ</span>）` : "");
         badgeEl.className = open.length > 0 ? "badge review" : "badge ok";
         badgeEl.textContent = open.length > 0 ? `待处理 ${open.length} 项` : "全部已处理";
@@ -293,36 +305,80 @@
       }
     });
 
-    /* ============ B. 处置队列（/queues，DTO v1.7 字段上下文） ============ */
+    /* ============ B. 处置队列（ADR-008：聚合补证任务 + 资源处置建议分开） ============ */
     async function loadQueues() {
       const box = document.getElementById("queues-box");
       document.getElementById("q-proj").textContent = PJ();
       document.getElementById("q-to-matrix").href = "matrix.html?project_id=" + encodeURIComponent(PJ());
       try {
-        const data = await apiGet(`/projects/${encodeURIComponent(PJ())}/queues`);
-        const q = data.queues || { blocked_hard_requirement: [], blocked_missing_data: [], manual_review: [] };
-        const groups = [
-          { key: "blocked_hard_requirement", label: "硬性不满足", title: "硬性不满足 — 证据充分但明确不符合，一票否决（不提供补录）", tone: "danger" },
-          { key: "blocked_missing_data", label: "缺证阻断", title: "缺证阻断 — 关键证据缺失或未核验，默认阻断、不推断满足", tone: "warn" },
-          { key: "manual_review", label: "人工复核", title: "人工复核 — 规则未结构化 / 评分无可复算公式 / 主观项，需按条款原文核对", tone: "review" },
-        ];
+        const [rt, qd] = await Promise.allSettled([
+          apiRemediationTasks(PJ()),
+          apiGet(`/projects/${encodeURIComponent(PJ())}/queues`),
+        ]);
+        if (rt.status === "rejected") throw rt.reason;
+        const data = rt.value;
+        const q = qd.status === "fulfilled" ? (qd.value.queues || {}) : {};
         box.innerHTML = "";
-        let any = false;
-        groups.forEach((g) => {
-          const items = q[g.key] || [];
-          if (!items.length) return;
-          any = true;
-          box.insertAdjacentHTML("beforeend", `<h3 style="margin:10px 0 6px">${g.title}（${items.length} 项）</h3>`);
-          items.forEach((it, i) => {
+
+        /* ① 资源处置建议（明确不满足）：不能以补证"洗白"（docs/12 §4.3-4） */
+        const resources = data.resource_disposition || [];
+        if (resources.length) {
+          box.insertAdjacentHTML("beforeend", `<h3 style="margin:10px 0 6px">资源处置建议（${resources.length} 项）— 证据充分但明确不满足</h3>`);
+          resources.forEach((it, i) => {
+            box.insertAdjacentHTML("beforeend", `
+              <div class="gap-task" style="border-left:4px solid var(--danger,#dc2626)">
+                <div class="gt-title"><span class="badge danger">明确不满足</span> 第 ${i + 1}项 · 条款 ${esc(it.clause_ref || "—")}
+                  ${it.reason_code_label ? `<span class="chip static">${esc(it.reason_code_label)}</span>` : ""}</div>
+                <div class="gt-refs">${esc((it.text || "").slice(0, 160))}</div>
+                <div class="fact-pair">${apiFactPair(it.required_value, it.observed_value)}</div>
+                <div class="gt-refs"><b>处置</b>：${esc(NEXT_ACTION_LABEL[it.next_action] || it.next_action || "更换/补足资源")}——${esc(it.note || "")}</div>
+              </div>`);
+          });
+        }
+
+        /* ② 补证任务（按缺口聚合：同一缺口一条任务，覆盖条款完整回链） */
+        const tasks = data.evidence_tasks || [];
+        if (tasks.length) {
+          box.insertAdjacentHTML("beforeend", `<h3 style="margin:14px 0 6px">补证任务（${tasks.length} 条，按缺口聚合） — 台账缺记录或证据未核验</h3>`);
+          tasks.forEach((tk, i) => {
+            const refs = tk.requirement_refs || [];
+            const clauses = tk.clause_refs || [];
+            const stateBadge = { open: ["warn", "待处理"], in_progress: ["info", "进行中"],
+              evidence_submitted: ["info", "证据已提交"], resolved_pending_recalculation: ["info", "待重算确认"],
+              closed: ["ok", "已关闭"] }[tk.state] || ["gray", tk.state];
+            const div = document.createElement("div");
+            div.className = "gap-task";
+            div.innerHTML = `
+              <div class="gt-title"><span class="badge ${stateBadge[0]}">${esc(stateBadge[1])}</span> 第 ${i + 1} 条 · 覆盖 <b>${tk.covering_count || refs.length}</b> 条条款
+                ${tk.lot_id ? ` · 标段 ${esc(tk.lot_id)}` : ""}</div>
+              <div class="gt-refs">${esc(tk.title || "缺少企业资料/证据")}</div>
+              <div class="gt-refs">条款回链：${clauses.length ? clauses.map((c) => `<code>${esc(c)}</code>`).join(" ") : "—"}
+                <details style="margin-top:4px"><summary class="hint">覆盖的要求编号（${refs.length}）</summary>
+                  <div>${refs.map((r) => `<code>${esc(r)}</code>`).join(" ")}</div></details></div>
+              <div style="margin-top:6px"><button class="btn sm sup-btn">补录证据（补这一类缺口）</button></div>`;
+            box.appendChild(div);
+            div.querySelector(".sup-btn").addEventListener("click", () => prefillSupplement({
+              requirement_id: refs[0], clause_ref: clauses[0],
+              reason: tk.title, recommended_material_types: tk.evidence_required || [],
+            }));
+          });
+        }
+
+        /* ③ 人工复核（规则未结构化/评分不可计算/主观项待评审） */
+        const reviews = q.manual_review || [];
+        if (reviews.length) {
+          box.insertAdjacentHTML("beforeend", `<h3 style="margin:14px 0 6px">人工复核（${reviews.length} 项）— 按条款原文核对后处置</h3>`);
+          reviews.forEach((it, i) => {
             const div = document.createElement("div");
             div.className = "queue-card";
-            div.innerHTML = queueCardHtml(it, g, i + 1);
+            div.innerHTML = queueCardHtml(it, { key: "manual_review", label: "人工复核", tone: "review" }, i + 1);
             box.appendChild(div);
             const supBtn = div.querySelector(".sup-btn");
             if (supBtn) supBtn.addEventListener("click", () => prefillSupplement(it));
           });
-        });
-        if (!any) {
+        }
+
+        if (!resources.length && !tasks.length && !reviews.length) {
           box.insertAdjacentHTML("beforeend",
             `<div class="notice ok"><b>无处置项</b>：最近准入结果没有阻断/待补/复核队列项（满分态，或首次匹配尚在排队——稍后刷新）。</div>`);
         }

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>解析结果｜投标智能体原型</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260929d">
 </head>
 <body>
   <header class="topbar"></header>
@@ -63,10 +63,10 @@
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
-  <script src="data.js"></script>
-  <script src="api.js"></script>
-  <script src="common.js"></script>
-  <script src="review.js"></script>
+  <script src="data.js?v=20260929d"></script>
+  <script src="api.js?v=20260929d"></script>
+  <script src="common.js?v=20260929d"></script>
+  <script src="review.js?v=20260929d"></script>
   <script>
     initPage("import.html", "import");
 
@@ -133,7 +133,16 @@
       } else {
         note.className = "notice warn";
         const redo = prog.needs_redecision ? `，其中 <b>${prog.needs_redecision}</b> 条此前被「通过」但未定位到原文，需重新决策` : "";
-        note.innerHTML = `<b>待人工复核</b>：候选 ${prog.total || 0} 条，未决 ${prog.pending || 0} 条${redo}。全部处理后在复核页确认写入规则集并触发匹配（F021 §2.7）。`;
+        // 覆盖率摘要（2026-09-24 四步之四）：定位来源分布与缺口一眼可见
+        const cov = data.coverage;
+        let covHtml = "";
+        if (cov && cov.rule_total) {
+          const loc = cov.located || {};
+          covHtml = ` 定位来源：锚点 ${loc.anchor ?? 0} / 模型兜底 ${loc.llm_fallback ?? 0} / 模型发现 ${loc.llm_discovery ?? 0}`
+            + (cov.missing_pending ? `，<b>待人工定位缺失 ${cov.missing_pending}</b>` : "，缺失 0")
+            + `；主卡 ${cov.main_card_located ?? 0}/${cov.main_card_total ?? "?"}。`;
+        }
+        note.innerHTML = `<b>待人工复核</b>：候选 ${prog.total || 0} 条，未决 ${prog.pending || 0} 条${redo}。${covHtml}全部处理后在复核页确认写入规则集并触发匹配（F021 §2.7）。`;
       }
       const canReview = apiRole() === "bid_specialist" || !apiToken();
       document.getElementById("rr-review-toolbar").style.display =

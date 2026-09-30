@@ -552,6 +552,46 @@ def test_llm_prescreen_fail_open_and_idempotent(session):
     assert item.screening["llm_assist"]["at"] == first_at
 
 
+def test_llm_prescreen_strategy_exclusion_takes_precedence(session):
+    """策略排除优先于 AI（2026-09-24）：规则层命中排除关键词（如监理/咨询）的条目
+    停留待人工确认，AI 不得晋级回主列表，也不代为排除。"""
+    from runtime.discovery import llm_prescreen
+
+    # 先落一条规则版本，使 sync_candidate 命中排除关键词（标题含"监理"）
+    discovery.update_rules(session, config={
+        "industry_keywords": ["施工", "工程"],
+        "exclude_keywords": ["咨询", "科研", "监理", "勘察设计", "设备采购"],
+        "business_profile": "",
+    }, actor="fuzeren")
+    session.flush()
+    excluded = _cand("XX零碳光伏发电及储能项目监理招标公告", candidate_id="cand-se1")
+    normal = _cand("XX老旧小区改造工程施工招标公告", candidate_id="cand-se2")
+    session.add_all([excluded, normal])
+    item_excluded = discovery.sync_candidate(session, excluded)
+    item_normal = discovery.sync_candidate(session, normal)
+    session.flush()
+    # 规则层：命中排除词 → needs_manual_review 且带 matched_exclusions
+    assert item_excluded.pool_status == discovery.POOL_NEEDS_REVIEW
+    assert "监理" in item_excluded.screening["matched_exclusions"]
+    assert item_normal.pool_status == discovery.POOL_PENDING
+
+    client = _fake_client({
+        "XX零碳光伏发电及储能项目监理招标公告": {"category": "监理造价", "relevant": "yes",
+                                              "reason": "监理", "confidence": "high"},
+        "XX老旧小区改造工程施工招标公告": {"category": "房建装修", "relevant": "yes",
+                                            "reason": "改造工程", "confidence": "high"},
+    })
+    stats = llm_prescreen.prescreen_pool_items(session, items=[item_excluded, item_normal],
+                                               client=client, enabled=True)
+    # 排除词条目不进 LLM（kept_manual）；normal（pending 无 llm_assist）正常走 LLM
+    assert stats["classified"] == 1
+    assert stats["promoted"] == 1
+    assert stats["kept_manual"] == 1
+    assert item_excluded.pool_status == discovery.POOL_NEEDS_REVIEW
+    assert "llm_assist" not in (item_excluded.screening or {})
+    assert item_normal.pool_status == discovery.POOL_PENDING
+
+
 def test_restore_only_for_llm_excluded(session):
     lease = _cand("XX区临街商铺招租公告", candidate_id="cand-r1")
     win = _cand("XX设备采购中标公示", candidate_id="cand-r2")

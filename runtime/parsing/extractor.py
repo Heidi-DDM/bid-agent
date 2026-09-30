@@ -284,10 +284,10 @@ ANCHORS: dict[str, dict] = {
         "evidence": ["bid_bond_receipt"],
         "clause_hint": "投标人须知 §3.4.1",
     },
-    # 报价限价
+    # 报价限价（金额单位万元/元均可——邢台文件「最高投标限价328447260元」为元计，2026-09-24）
     "ceiling_price": {
         "req_type": "hard_requirement", "category": "响应性",
-        "pattern": re.compile(r"最高投标限价\s*([0-9，,.]+\s*万元)", re.S),
+        "pattern": re.compile(r"最高投标限价\s*([0-9，,.]+\s*万?元)", re.S),
         "evidence": ["bid_document"],
         "clause_hint": "招标公告 §2.2",
     },
@@ -404,7 +404,14 @@ ANCHORS: dict[str, dict] = {
     },
     "pm_similar_performance": {
         "req_type": "hard_requirement", "category": "人员",
-        "pattern": re.compile(r"项目经理.{0,40}?(?:担任|主持|负责|完成).{0,40}?类似.{0,30}?(?:[\u4e00-\u9fff]{0,8}?业绩|工程|项目)", re.S),
+        # 项目经理→动词 段不跨「技术负责人」：投标文件格式里的「近年完成的类似项目情况表」
+        # 表头是「…工程质量 项目经理 技术负责人 项目描述 备注…备注：1、类似项目指…」，
+        # 旧模式把「技术负责人」里的「负责」当谓语动词、把表头注释当成要求条款（邢台实测
+        # 2026-09-24：assertion 抓成整行表头）。真实条款「项目经理…担任/主持/负责/完成…类似
+        # 工程」中间不会出现「技术负责人」。
+        "pattern": re.compile(
+            r"项目经理(?:(?!\d{1,2}\.\d|技术负责人)[^；。]){0,40}?(?:担任|主持|负责|完成)"
+            r"(?:(?!\d{1,2}\.\d)[^；。]){0,40}?类似.{0,30}?(?:[\u4e00-\u9fff]{0,8}?业绩|工程|项目)", re.S),
         "evidence": ["manager_profile", "performance_record"],
         "clause_hint": "招标公告 §3.7",
     },
@@ -646,6 +653,7 @@ def extract_rule_candidates(
     content_hash: str,
     as_of: str | None = None,
     prefix: str | None = None,
+    version: int | None = None,
 ) -> list[RuleCandidate]:
     """从解析页抽取规则候选。
 
@@ -657,8 +665,15 @@ def extract_rule_candidates(
     requirement_id 前缀必须包含材料标识（默认取 material_id）：ParseCandidate.candidate_id
     与 Requirement.requirement_id 均为全局主键，前缀写死会导致不同招标文件产出相同
     候选 ID 而撞库（2026-09-03 MAT-TEST-001 与 MAT-ND-TENDER 同前缀实测复现）。
+    version>1 时前缀追加 ``-v{version}``（2026-09-23）：同材料新版本（澄清/重解析）
+    的候选与 v1 全局唯一，否则 store_candidates 撞 parse_candidates 主键
+    （PJ-b4e65720e2 v2 实测 UniqueViolation）。
     """
-    id_prefix = prefix or material_id or "MAT"
+    if prefix is None:
+        prefix = material_id or "MAT"
+        if version is not None and version > 1:
+            prefix = f"{prefix}-v{version}"
+    id_prefix = prefix
     candidates: list[RuleCandidate] = []
     seq = 0
     for key, anchor in ANCHORS.items():
@@ -706,6 +721,11 @@ def extract_rule_candidates(
             # 安许证不分等级，证据种类独立（matching.build_enterprise_evidence 归入 safety_license）；
             # 不带此字段时引擎会拿总承包资质比等级，把有效安许证误判硬性失败（PJ-26a44c8684 实测）
             rule["evidence_type"] = "safety_license"
+        # v1.6 参数结构化：从已定位原文抽出引擎可比对参数（抽不出不写键 → 引擎如实回落
+        # manual_review/unverifiable，不推断）；参数随候选进人工复核，可见可改。
+        structured = structure_rule_params(key, assertion)
+        if structured:
+            rule.update(structured)
         candidates.append(RuleCandidate(
             requirement_id=f"{id_prefix}-{req_type_to_code(req_type)}-{seq:03d}-draft",
             req_type=req_type,
@@ -726,12 +746,243 @@ def req_type_to_code(req_type: str) -> str:
     return {"hard_requirement": "H", "scored_requirement": "S", "action_requirement": "A"}[req_type]
 
 
+# ── 规则参数结构化（F008 §4.1 引擎契约参数；2026-09-23 v1.6）───────────────
+# 背景：此前候选 rule 只带 type/anchor_key，引擎收不到可比对参数，硬性要求一律
+# manual_review「未结构化出可比对参数」（PJ-b4e65720e2 实测 26 条全人工）。
+# 借鉴 ER 实践（Splink/dedupe 的规范化 + OneKE 的 schema 约束抽取）：从已定位的
+# assertion 原文用确定性正则抽出引擎契约参数；抽不出就不写该键（引擎回落人工/
+# 不可判定，不推断），全部参数在复核页可见可改。
+
+_CN_NUM = {"零": 0, "壹": 1, "贰": 2, "叁": 3, "肆": 4, "伍": 5, "陆": 6, "柒": 7, "捌": 8, "玖": 9,
+           "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+_HEAD_NOISE = [
+    "具备", "具有", "取得", "持有", "拟派", "项目经理", "施工负责人", "设计负责人", "技术负责人",
+    "行政主管部门核发的", "建设行政主管部门核发的", "主管部门核发的", "核发的", "核发",
+    "有效的", "有效", "注册在投标单位的", "注册在", "投标单位", "在", "的", "和", "及", "与",
+]
+
+
+def _strip_head_noise(text: str) -> str:
+    """剥离条款谓语/签发机构等头部噪声（「具备行政主管部门核发的工程设计综合」→「工程设计综合」）。"""
+    changed = True
+    while changed and text:
+        changed = False
+        for word in _HEAD_NOISE:
+            if text.startswith(word):
+                text = text[len(word):]
+                changed = True
+                break
+    return text
+
+
+def _cn_amount(text: str) -> float | None:
+    """中文大写金额 → 元（「人民币叁拾万元整」→300000；仅处理亿/万/仟/佰/拾级常见式）。"""
+    # 2026-09-29 修复：必须以数字大写字开头——裸「万元」（如「人民币50万元」的单位部分）
+    # 不能被当作大写金额解析成 0.0，否则短路阿拉伯数字解析（邢台实测保证金 50 万被解析为 0.0）。
+    m = re.search(r"[零壹贰叁肆伍陆柒捌玖拾][零壹贰叁肆伍陆柒捌玖拾佰仟万亿]{0,15}元(?:整)?", text)
+    if not m:
+        return None
+    s = m.group(0).rstrip("元整")
+    total, section, num = 0.0, 0.0, 0
+    for ch in s:
+        if ch in _CN_NUM:
+            num = _CN_NUM[ch]
+        elif ch == "拾":
+            section += (num or 1) * 10
+            num = 0
+        elif ch == "佰":
+            section += (num or 1) * 100
+            num = 0
+        elif ch == "仟":
+            section += (num or 1) * 1000
+            num = 0
+        elif ch == "万":
+            section = (section + num) * 10000
+            total += section
+            section, num = 0.0, 0
+        elif ch == "亿":
+            section = (section + num) * 100000000
+            total += section
+            section, num = 0.0, 0
+    return total + section + num
+
+
+def _amount_yuan(text: str) -> float | None:
+    """阿拉伯金额 → 元（「3000万元」「300000.00元」「3919.5378万元」）。"""
+    m = re.search(r"([0-9][0-9,，.]{0,14})\s*万?元", text)
+    if not m:
+        return None
+    raw = m.group(1).replace("，", "").replace(",", "")
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if "万" in m.group(0):
+        value *= 10000
+    return value
+
+
+def _cn_count(text: str) -> int | None:
+    m = re.search(r"(?:不少于|不低于|至少)?([0-9]+|[一二三四五六七八九十]+)[个名]", text)
+    if not m:
+        return None
+    raw = m.group(1)
+    if raw.isdigit():
+        return int(raw)
+    if raw == "十":
+        return 10
+    if "十" in raw:
+        tens, _, ones = raw.partition("十")
+        return (_CN_NUM.get(tens, 1) if tens else 1) * 10 + (_CN_NUM.get(ones, 0) if ones else 0)
+    return _CN_NUM.get(raw)
+
+
+def _iso_date(text: str) -> str | None:
+    m = re.search(r"(20\d\d)\s*[年.．/\-]\s*(\d{1,2})\s*[月.．/\-]\s*(\d{1,2})\s*日?", text)
+    if not m:
+        return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return None
+    return f"{y:04d}-{mo:02d}-{d:02d}"
+
+
+def _builder_params(text: str) -> dict:
+    """建造师类条款 → 引擎 project_manager/construction_lead 参数。"""
+    params: dict = {}
+    m = re.search(r"([\u4e00-\u9fff]{2,14}?)工程专业\s*[，,]?\s*([一二三壹贰叁特]级)(?:及以上)?(?:注册)?建造师", text)
+    if m:
+        specialty = _strip_head_noise(m.group(1))
+        if len(specialty) >= 2:
+            params["specialty"] = [specialty + "工程"]
+        params["cert_level"] = m.group(2).replace("壹", "一").replace("贰", "二").replace("叁", "三")
+    else:
+        m2 = re.search(r"([一二三壹贰叁特]级)(?:及以上)?注册建造师", text)
+        if m2:
+            params["cert_level"] = m2.group(1).replace("壹", "一").replace("贰", "二").replace("叁", "三")
+    return params
+
+
+def _performance_params(text: str) -> dict:
+    """类似业绩条款 → 引擎 similar_performance 参数（起算期/金额/类型/数量）。"""
+    params: dict = {}
+    m = re.search(r"自\s*(20\d\d\s*[年.．/\-]\s*\d{1,2}\s*[月.．/\-]\s*\d{1,2}\s*日?)\s*以来", text)
+    if m:
+        d = _iso_date(m.group(1))
+        if d:
+            params["since"] = d
+    m = re.search(r"(\d[\d,，.]*)\s*万?元(?:\s*(?:及以上|以上|不低于))?", text)
+    if m:
+        value = float(m.group(1).replace("，", "").replace(",", ""))
+        if "万" in m.group(0):
+            value *= 10000
+        params["min_amount"] = value
+    m = re.search(r"(?:万元|元)(?:\s*(?:及以上|以上|不低于))?\s*([\u4e00-\u9fff]{2,10}工程)", text)
+    if m:
+        params["project_type"] = m.group(1)
+    m = re.search(r"(?:完成过|承担过)\s*[一1]\s*(?:项|个)", text)
+    if m:
+        params["min_count"] = 1
+    params.setdefault("subject", "bidder")
+    return params
+
+
+def _qualification_params(text: str) -> dict:
+    """资质条款 → 引擎 acceptable 列表（category+level 对）。"""
+    pairs: list[dict] = []
+    for m in re.finditer(
+        r"([\u4e00-\u9fff（）()]{2,24}?(?:施工总承包|专业承包|工程设计综合|工程设计|专项设计))"
+        r"(?:资质)?[的]?(综合甲级|特级|[一二三壹贰叁甲乙丙]级)(?:及以上)?", text,
+    ):
+        category = _strip_head_noise(m.group(1))
+        level = m.group(2).replace("壹", "一").replace("贰", "二").replace("叁", "三")
+        if len(category) >= 2 and {"category": category, "level": level} not in pairs:
+            pairs.append({"category": category, "level": level})
+    # 「资质要求：」清单式：逐项「XX资质X级」补录（同一正则已覆盖；无额外处理）
+    return {"acceptable": pairs} if pairs else {}
+
+
+def structure_rule_params(anchor_key: str, assertion: str) -> dict:
+    """按锚点类型从 assertion 原文结构化引擎参数（确定性；抽不出返回空 dict）。
+
+    引擎契约键见 scripts/matching/engine.py：qualification→acceptable、
+    project_manager→specialty/cert_level/require_b_cert/require_no_active_project、
+    safety_officer→count/require_c_cert、similar_performance→since/min_amount/
+    project_type/subject、bid_bond→amount/forms、ceiling_price→max_amount、
+    bid_validity→days、design_lead→cert、construction_lead→specialty/cert_level。
+    """
+    text = _norm(assertion or "")
+    if not text or text == MISSING:
+        return {}
+    if anchor_key in ("qualification_grade",):
+        return _qualification_params(text)
+    if anchor_key in ("pm_registered_builder", "construction_lead"):
+        return _builder_params(text)
+    if anchor_key == "pm_b_cert":
+        return {"require_b_cert": True}
+    if anchor_key == "pm_no_active":
+        return {"require_no_active_project": True}
+    if anchor_key == "safety_officer":
+        params: dict = {"require_c_cert": "安全生产考核合格证书" in text or "C" in text.upper()}
+        count = _cn_count(text)
+        if count is not None:
+            params["count"] = count
+        return params
+    if anchor_key == "tech_team":
+        specialties = re.findall(r"([\u4e00-\u9fff]{2,6})专业", text)
+        return {"specialties": sorted(set(specialties))} if specialties else {}
+    if anchor_key == "financial_audit":
+        # 「提供2022、2023、2024年度财务审计报告」：年度列表可在「年度」前以顿号并列
+        m = re.search(r"((?:20\d\d[、,，和\s]*)+)年度", text)
+        if m:
+            return {"years": sorted(set(re.findall(r"20\d\d", m.group(1))))}
+        if re.search(r"近[三3]年", text):
+            return {"recent_years": 3}
+        return {}
+    if anchor_key == "bid_validity":
+        m = re.search(r"投标有效期.{0,12}?(\d{2,3})\s*日历天", text)
+        return {"days": int(m.group(1))} if m else {}
+    if anchor_key == "bid_bond":
+        params: dict = {}
+        amount = _cn_amount(text)
+        if amount is None:
+            amount = _amount_yuan(text)
+        if amount is not None:
+            params["amount"] = amount
+        forms = [f for f in ("银行汇票", "电汇", "支票", "银行保函", "电子保函", "保证保险") if f in text]
+        if forms:
+            params["forms"] = forms
+        return params
+    if anchor_key == "ceiling_price":
+        m = re.search(r"(?:最高投标限价|招标控制价|最高限价)[^0-9]{0,6}([0-9][0-9,，.]{0,14})\s*万?元", text)
+        if not m:
+            return {}
+        value = float(m.group(1).replace("，", "").replace(",", ""))
+        if "万" in m.group(0):
+            value *= 10000
+        return {"max_amount": value}
+    if anchor_key in ("similar_performance_hard", "scoring_similar_performance", "pm_similar_performance"):
+        params = _performance_params(text)
+        if anchor_key == "pm_similar_performance":
+            params["subject"] = "project_manager"
+        return params
+    if anchor_key == "design_lead":
+        m = re.search(r"(?:具有|具备)\s*(国家)?\s*(注册[\u4e00-\u9fff]{2,10}(?:工程师|建筑师))", text)
+        return {"cert": m.group(2)} if m else {}
+    if anchor_key == "tech_lead":
+        m = re.search(r"技术负责人.{0,30}?([\u4e00-\u9fff]{0,4}(?:高级工程师|工程师))", text)
+        return {"title": m.group(1)} if m else {}
+    return {}
+
+
 def _rule_type_for(anchor_key: str) -> str:
     mapping = {
         "qualification_grade": "qualification", "safety_license": "qualification",
         "pm_registered_builder": "project_manager", "pm_b_cert": "project_manager",
         "pm_no_active": "project_manager", "pm_social_security": "social_security",
-        "safety_officer": "safety_officer", "tech_team": "tech_team",
+        "safety_officer": "safety_officer", "tech_team": "technical_team",
         "financial_audit": "financial", "credit_no_loser": "credit",
         "consortium": "consortium", "bid_validity": "bid_validity",
         "bid_bond": "bid_bond", "ceiling_price": "ceiling_price",
@@ -769,11 +1020,22 @@ MAIN_CARD_PATTERNS: dict[str, re.Pattern] = {
         r"|([\u4e00-\u9fff（）()0-9]{4,60}?(?:工程|项目))已由"
     ),
     "tender_no": re.compile(r"(?:招标|项目)编号[：:]?\s*([A-Z0-9\-]{6,40})"),
-    "tenderee": re.compile(r"(?:招标人|建设单位)[为：:]\s*([\u4e00-\u9fff（）()]{2,40}?)[，,。；]"),
-    "agency": re.compile(r"(?:委托)?代理机构[为：:]\s*([\u4e00-\u9fff（）()]{2,40}?)[。，,；]"),
-    "region": re.compile(r"建设地点[：:]?\s*((?:[\u4e00-\u9fff]{2,3}省)?[\u4e00-\u9fff]{2,3}?市[\u4e00-\u9fff]{2,10}?[区县])"),
-    "ceiling_price": re.compile(r"最高投标限价\s*([0-9，,.]+\s*万元)"),
-    "budget_amount": re.compile(r"总投资\s*([0-9，,.]+\s*万元)"),
+    # 「为」「：」「为：」三种连接都认（旧字符类 [为：:] 只吃一个字符，「招标人为：X」漏配）
+    "tenderee": re.compile(r"(?:招标人|建设单位)为?\s*[：:]?\s*([\u4e00-\u9fff（）()]{2,40}?)[，,。；]"),
+    "agency": re.compile(r"(?:委托)?代理机构为?\s*[：:]?\s*([\u4e00-\u9fff（）()]{2,40}?)[。，,；]"),
+    # region 两个分支（2026-09-24 邢台排水管网实测修复）：① 行政区划式（省?市…区/县）
+    # 保持原口径；② 通用 label-值兜底——值到句读（。；;）或下一编号小节（\d\.\d）为止。
+    # 此前只有分支①：原文写「建设地点：中兴大街(钢铁路-滨江路)等 13 条街道。」这类街道/
+    # 园区描述（不含 市…区/县 结构）永远 missing，用户在原文里明明看得到（bug：每次都
+    # 显示系统没有找到）。「见/详见…」回引值由 extract_main_card 跳过（前附表回引不是地点）。
+    "region": re.compile(
+        r"(?:建设地点|工程地点)[：:]?((?:[\u4e00-\u9fff]{2,3}省)?[\u4e00-\u9fff]{2,3}?市[\u4e00-\u9fff]{2,10}?[区县])"
+        r"|(?:建设地点|工程地点)[：:]?([\u4e00-\u9fffA-Za-z0-9（）()、，,．.\-—/／]{2,80}?)(?=。|；|;|\d\.\d)"
+    ),
+    # 金额单位不写死「万元」：邢台文件写「最高投标限价328447260元」（元计），写死万元则
+    # 原文有限价也报 missing（与 region 同类过约束问题，2026-09-24）
+    "ceiling_price": re.compile(r"最高投标限价\s*([0-9，,.]+\s*万?元)"),
+    "budget_amount": re.compile(r"总投资\s*([0-9，,.]+\s*万?元)"),
     "bid_bond_amount": re.compile(r"金额[：:]?人民币[：:]?\s*([0-9，,.]+万?元)"),
     "deadline_signup": re.compile(r"请于\s*(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[时:：](\d{2})分?"),
     "deadline_bid": re.compile(r"投标(?:文件)?(?:递交)?(?:的)?截止时间.{0,30}?(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[时:：](\d{2})分?", re.S),
@@ -808,6 +1070,96 @@ class MainCardCandidate:
         }
 
 
+def _region_value_from_span(span: str) -> Optional[str]:
+    """从命中 span（含「建设地点/工程地点」label 前缀）取地点值：剥 label 即值。
+
+    不在 span 上二次跑 MAIN_CARD_PATTERNS["region"]——span 在前瞻（?=。|；|\\d\\.\\d）处
+    截断、不含终止符，二次匹配的前瞻永远失败（2026-09-24 实测踩坑）。
+    「见/详见…」回引（如「见投标人须知前附表」）不是地点 → None，调用方取下一处命中。
+    """
+    v = re.sub(r"^(?:建设地点|工程地点)[：:]?", "", span or "").strip()
+    if len(v) < 2 or v.startswith(("见", "详见")):
+        return None
+    return v or None
+
+
+# ── 版面层表格兜底（2026-09-24 解析优化四步之二）────────────────────────
+# pdftotext 把前附表拍平成文本流后，label 与值可能被邻列内容隔断/错行；版面层
+# （router 挂的 ParsedPage.tables，pdfplumber 可选依赖）还原「label → 同行右邻
+# 单元格」，作为文本流锚点未命中时的兜底。只在文本流失败后启用（既有口径优先）。
+_TABLE_LABEL_FIELDS: dict[str, tuple[str, ...]] = {
+    "region": ("建设地点", "工程地点"),
+    "tenderee": ("招标人", "建设单位", "采购人"),
+    "agency": ("招标代理机构", "采购代理机构", "代理机构"),
+    "ceiling_price": ("最高投标限价", "招标控制价", "最高限价", "拦标价"),
+    "budget_amount": ("总投资", "投资总额", "预算金额", "采购预算"),
+}
+_TABLE_LABEL_NOISE = re.compile(r"^[0-9]{1,2}(?:\.[0-9]{1,3}){0,3}[）)、.．]?\s*")
+
+
+def _find_label_value_in_tables(pages: list, labels: tuple[str, ...]) -> Optional[tuple[int, str, str]]:
+    """表格行内找 label 单元格 → 同行右侧首个非空单元格即值。返回 (page_no, label格, 值格)。
+
+    单元格文本为原文逐字；label 匹配剥条款号前缀后等于（或短包含且长度受控——防把
+    正文里「由招标人组织」一类句子当 label）。无表格/未命中 → None（零副作用）。"""
+    if not labels:
+        return None
+    for p in pages:
+        for row in (getattr(p, "tables", None) or []):
+            for i, cell in enumerate(row):
+                raw = (cell or "").strip()
+                if not raw:
+                    continue
+                n = _norm(raw)
+                stripped = _TABLE_LABEL_NOISE.sub("", n)
+                hit = next((lb for lb in labels
+                            if stripped == lb or (lb in n and len(stripped) <= len(lb) + 12)), None)
+                if hit is None:
+                    continue
+                value = next((c for c in row[i + 1:] if c and c.strip()), None)
+                if value and value.strip():
+                    return p.page_no, raw, value.strip()
+    return None
+
+
+def _shape_table_value(field_key: str, raw: str) -> Optional[str]:
+    """单元格原文 → 字段值（确定性整形，不推断）：主体字段剥「名称：」前缀并在
+    地址/联系人处收尾；金额字段在格内找「数字+万?元」。整形不出 → None。"""
+    v = re.sub(r"\s+", "", raw or "")
+    if field_key in ("tenderee", "agency"):
+        v = re.sub(r"^(?:名称|单位名称)[：:]?", "", v)
+        cut = re.search(r"(?:地址|联系人|联系电话|电话|邮箱|传真)[：:]", v)
+        if cut:
+            v = v[:cut.start()]
+        v = v.strip("；;，,。")
+        return v if len(v) >= 4 else None
+    if field_key in ("ceiling_price", "budget_amount"):
+        m = re.search(r"([0-9][0-9，,.]{0,14}万?元)", v)
+        return m.group(1) if m else None
+    # region 等：整格即值（去空白与尾部句读）；「见/详见」回引不是地点
+    v = v.rstrip("。；;，,")
+    if v.startswith(("见", "详见")):
+        return None
+    return v if len(v) >= 2 else None
+
+
+def _table_field_candidate(pages: list, field_key: str, default_clause: str):
+    """主卡字段的表格兜底候选；未命中/整形失败 → None。"""
+    labels = _TABLE_LABEL_FIELDS.get(field_key)
+    if not labels:
+        return None
+    found = _find_label_value_in_tables(pages, labels)
+    if found is None:
+        return None
+    page_no, label_cell, value_cell = found
+    value = _shape_table_value(field_key, value_cell)
+    if not value:
+        return None
+    return MainCardCandidate(
+        field_key=field_key, value=value[:200], clause=default_clause, page_no=page_no,
+        assertion=(label_cell + "：" + value_cell)[:200], confidence=CONFIDENCE_HIGH)
+
+
 def extract_main_card(pages: list, *, default_clause: str = "招标公告") -> list[MainCardCandidate]:
     """从公告页抽取主卡字段候选（缺失字段标 __待补__，不推断——F005 §4.1/§6）。
 
@@ -819,7 +1171,20 @@ def extract_main_card(pages: list, *, default_clause: str = "招标公告") -> l
     scope = [p for p in pages if (p.page_no or 1) <= 12]
     for field_key, pattern in MAIN_CARD_PATTERNS.items():
         hits = _find_in_pages(scope, pattern)
+        if field_key == "region":
+            # 公告区命中若全是「见前附表」回引 → 扩全文再找（前附表/技术标准章可能
+            # 在 12 页之后写着真实地点，邢台实测 p61 亦有完整地点）；都不行才 missing
+            usable = [h for h in hits if _region_value_from_span(h[2]) is not None]
+            if not usable:
+                usable = [h for h in _find_in_pages(pages, pattern)
+                          if _region_value_from_span(h[2]) is not None]
+            hits = usable[:1]
         if not hits:
+            # 版面层兜底（文本流未命中才启用）：前附表 label → 同行右邻单元格。
+            # 可选能力：页面无表格 / pdfplumber 缺席 → tables 恒空，行为与从前一致。
+            cand = _table_field_candidate(pages, field_key, default_clause)
+            if cand is not None:
+                out.append(cand)
             continue
         page_no, snippet, norm_hit = hits[0]
         # 时间字段：直接从归一命中文本抽完整时间（跨行归一后无空白）
@@ -831,6 +1196,9 @@ def extract_main_card(pages: list, *, default_clause: str = "招标公告") -> l
                 value = f"{dm.group(1)}-{int(dm.group(2)):02d}-{int(dm.group(3)):02d} {int(dm.group(4)):02d}:{dm.group(5)}"
             else:
                 value = norm_hit[:120]
+        elif field_key == "region":
+            # 值 = 命中 span 剥 label（span 不含前瞻终止符，二次 pattern.search 必失败）
+            value = _region_value_from_span(norm_hit) or norm_hit
         else:
             m = pattern.search(norm_hit)
             value = next((g for g in m.groups() if g), norm_hit) if m else norm_hit

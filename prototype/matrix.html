@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>解析与自动匹配｜投标智能体原型</title>
-  <link rel="stylesheet" href="styles.css">
+  <title>当前结论（资格与资源）｜投标智能体</title>
+  <link rel="stylesheet" href="styles.css?v=20260930a">
 </head>
 <body>
   <header class="topbar"></header>
@@ -16,49 +16,70 @@
 
       <section class="card">
         <div class="card-title-row">
-          <h2>解析与自动匹配 — <span id="proj-name">加载中…</span></h2>
-          <span class="hint">解析确认后自动执行一次（本页只读，不会触发新的匹配）；企业资料来自已核验生效的资料库快照，不在此页重新选择。</span>
+          <h2>当前结论（资格与资源） — <span id="proj-name">加载中…</span></h2>
+          <span class="hint">本页只读；企业资料来自已核验生效的资料库快照，评分与执行动作在各自页面分层处理（ADR-008）。</span>
         </div>
-        <p class="sub" style="margin-top:6px">
-          左列是<b>招标文件解析并经人工确认的全部要求</b>（规则集），右侧是每一条与企业资质/人员/业绩快照逐项比对的结论：
-          <b>满足</b>写明依据哪条证据，<b>不满足 / 待补 / 人工复核</b>写明原因。每条都列出，不只列不合格项（F008 §6.3 / F023 §2 第 4 步）。
-        </p>
+        <!-- FE-01：运行上下文条（不同页面显示同一 run；stale 可见） -->
+        <div id="run-context" class="run-context"></div>
+        <!-- FE-01：历史解析样本条幅（服务端测试上下文，醒目但非错误态） -->
+        <div id="hist-banner"></div>
 
+        <!-- FE-01：摘要卡（四类可行动数量，固定排序） -->
+        <div id="summary" class="summary-grid"></div>
+        <div id="total-count" class="hint" style="margin:4px 0 8px"></div>
+
+        <!-- FE-01：优先处理（最多 3 项，余项「查看全部」展开矩阵） -->
+        <div id="priority"></div>
+
+        <!-- 2026-09-29：已满足清单（满足项逐条可见） -->
+        <div id="satisfied"></div>
+
+        <!-- 2026-09-30：招标文件正文+附件全量标准总览（资格/评分/执行，不隐藏满足项） -->
+        <div id="full-requirements"></div>
+
+        <!-- 招标文件明确的投标文件组成、附件和递交材料；与企业资格匹配分层 -->
+        <div id="submission-checklist"></div>
+
+        <!-- FE-01/FE-03：解析质量次级提示（中性样式，点击打开抽屉；阻断准入时如实说明但不算缺证） -->
+        <div id="parse-quality"></div>
+
+        <!-- 匹配任务状态（尚无运行/排队/执行中/终态失败；F020 v1.22） -->
         <div id="run-summary" class="hint" style="margin:8px 0"></div>
         <div id="gate-notice"></div>
 
-        <div class="tabs" id="tabs">
-          <button class="tab active" data-t="hard_requirement">硬性要求（…）</button>
-          <button class="tab" data-t="scored_requirement">评分项（…）</button>
-          <button class="tab" data-t="action_requirement">动作项（…）</button>
+        <!-- FE-02：硬性要求矩阵（资格与资源；评分/动作分层到各自页面） -->
+        <div class="card-title-row" style="margin-top:14px">
+          <h3 style="margin:0">硬性要求矩阵（逐条与企业资质/人员/业绩比对）</h3>
         </div>
-
         <div class="match-filters" id="filters"></div>
         <div id="matrix-table"></div>
 
-        <div class="notice" style="margin-top:12px">
-          <b>结论口径（F008 §6.3 / ADR-001 §2.3）</b>：
-          <span class="badge ok">满足</span> 证据充分且符合要求（原因列写明依据的证据）；
-          <span class="badge danger">不满足</span> 证据充分但明确不符合 → 硬性项一票否决；
-          <span class="badge warn">待补/不可判定</span> 关键证据缺失或未核验，默认阻断、不推断满足；
-          <span class="badge review">人工复核</span> 规则只定位到原文、未结构化出可比对参数，或评分项无可复算公式，或主观项待内部评审；
-          <span class="badge gray">未执行</span> 本次运行未判定到此项（旧版门禁短路 / 尚无运行），需重算。
-          <br><span class="hint">「门禁短路后·诊断结果」标记：门禁在某条硬性不满足处停止（一票否决结论已定），其后条目由诊断全量补齐判定，供补录与核对参考。</span>
-        </div>
+        <details style="margin-top:12px">
+          <summary class="hint" style="cursor:pointer">结论口径说明（点开）</summary>
+          <div class="notice" style="margin-top:6px">
+            <span class="badge danger">明确不满足</span> 证据充分但数量不足/等级不够/过期/专业不符/在施冲突——处置是更换或补足资源，不能用「补一份证明」掩盖事实；
+            <span class="badge warn">待补资料</span> 台账无记录或证据未核验——补证后重算；
+            <span class="badge review">人工复核</span> 需专业判断、规则未结构化、证据冲突或无完整候选班子；
+            <span class="badge ok">已满足</span> 有足量、有效、已核验且可回链证据。
+            解析质量问题不计为企业缺证；处置完毕自动重算（ADR-007/ADR-008）。
+          </div>
+        </details>
         <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
-          <a class="btn" id="to-score" href="score.html">查看风险与缺失 →</a>
+          <a class="btn" id="to-score" href="score.html">评分分析 →</a>
+          <a class="btn ghost" id="to-ops" href="operations.html">投标执行计划 →</a>
+          <a class="btn ghost" id="to-queue" href="queue.html">待确认与处置（深度处理）</a>
           <a class="btn ghost" id="to-import" href="import.html">← 返回文件解析</a>
-          <a class="btn ghost" id="to-requirements" href="requirements.html">查看解析结果（要求来源）</a>
         </div>
       </section>
     </div>
   </div>
 
   <footer class="footer">
-    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（Iteration 2 / R011 / F023 §2 v1.4）</span>
+    <span>某建设集团 · 投标智能体 — 当前结论页（ADR-008 / docs/12 §2.2）</span>
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
+  <!-- 单条要求详情抽屉 -->
   <div class="drawer-mask" id="drawer-mask"></div>
   <aside class="drawer" id="drawer">
     <div class="drawer-head">
@@ -68,145 +89,557 @@
     <div class="drawer-body" id="drawer-body"></div>
   </aside>
 
-  <script src="data.js"></script>
-  <script src="api.js"></script>
-  <script src="common.js"></script>
+  <!-- FE-03：解析质量抽屉（独立于企业缺证；按风险排序） -->
+  <div class="drawer-mask" id="pe-mask" style="z-index:60"></div>
+  <aside class="drawer" id="pe-drawer" style="z-index:61">
+    <div class="drawer-head">
+      <h3 style="margin:0">解析质量与待处置项</h3>
+      <button class="close" id="pe-close">×</button>
+    </div>
+    <div class="drawer-body" id="pe-body"></div>
+  </aside>
+
+  <!-- FE-03：处置模态表单（代替浏览器 prompt()；取消/Escape 不写入） -->
+  <div class="decision-modal" id="pe-modal" role="dialog" aria-modal="true" aria-labelledby="pe-modal-title">
+    <div class="dm-panel">
+      <h3 class="dm-title" id="pe-modal-title">处置解析例外</h3>
+      <div class="dm-target" id="pe-modal-target"></div>
+      <div class="dm-field">
+        <label>决策 <span class="req">*</span></label>
+        <div class="dm-choices" id="pe-modal-choices"></div>
+      </div>
+      <div class="dm-field">
+        <label>理由 <span class="req">*</span>（审计留痕）</label>
+        <textarea id="pe-modal-reason" placeholder="如：全文检索「安全生产考核合格证书」未命中，本文件资格审查条款无此项"></textarea>
+      </div>
+      <div class="dm-field" id="pe-modal-scope-field">
+        <label>检索词或检索范围 <span class="req" data-req-na>*</span>（声明「本文件无此条款」必填）</label>
+        <input type="text" id="pe-modal-scope" placeholder="如：全文检索关键词；或章节范围「第三章 资格审查」">
+      </div>
+      <div class="dm-field">
+        <label>页码（可选）</label>
+        <input type="text" id="pe-modal-pages" placeholder="如：12, 45">
+      </div>
+      <div class="dm-field">
+        <label>备注（可选）</label>
+        <textarea id="pe-modal-note" placeholder="补充说明、附件线索等"></textarea>
+      </div>
+      <div class="dm-actions">
+        <button class="btn ghost" id="pe-modal-cancel">取消（Esc）</button>
+        <button class="btn" id="pe-modal-submit">提交处置</button>
+      </div>
+      <div class="dm-receipt" id="pe-modal-receipt"></div>
+    </div>
+  </div>
+
+  <!-- 原文定位弹层（F021 §2.1 v1.5：Bearer 拉 blob 后 iframe 内嵌展示） -->
+  <div class="source-modal" id="source-modal" style="display:none">
+    <div class="source-modal-box">
+      <div class="source-modal-head">
+        <b>招标文件原文</b>
+        <span id="source-modal-meta" class="hint"></span>
+        <button type="button" class="btn ghost" id="source-modal-close">关闭</button>
+      </div>
+      <iframe id="source-modal-frame" class="source-modal-frame" title="招标文件原文"></iframe>
+    </div>
+  </div>
+
+  <script src="data.js?v=20260930b"></script>
+  <script src="api.js?v=20260930b"></script>
+  <script src="common.js?v=20260930b"></script>
   <script>
     initPage("matrix.html", "matrix");
     const PJ0 = apiProjectId();
     const PJ = () => PJ0.id;
     document.getElementById("proj-name").insertAdjacentHTML("afterend", apiProjectChip(PJ0));
-    ["to-score", "to-import", "to-requirements"].forEach((id) => {
+    ["to-score", "to-ops", "to-queue", "to-import"].forEach((id) => {
       const a = document.getElementById(id);
       a.href = a.getAttribute("href") + "?project_id=" + encodeURIComponent(PJ());
     });
-    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
-    /* 结论 → 展示类别（引擎输出 satisfied/not_satisfied/unverifiable/manual_review；
-       结果页补 not_evaluated；兼容旧演示数据 passed/failed/not_qualified/blocked_*） */
-    const RESULT_META = {
-      satisfied: ["ok", "满足"], passed: ["ok", "满足"],
-      not_satisfied: ["danger", "不满足"], failed: ["danger", "不满足"], not_qualified: ["danger", "不满足"],
-      blocked_hard_requirement: ["danger", "硬性不满足"],
-      unverifiable: ["warn", "待补/不可判定"], blocked_missing_data: ["warn", "缺证阻断"],
-      manual_review: ["review", "人工复核"],
-      not_evaluated: ["gray", "未执行"],
-    };
-    const FILTERS = [
-      ["all", "全部"], ["ok", "满足"], ["danger", "不满足"], ["warn", "待补/不可判定"], ["review", "人工复核"], ["gray", "未执行"],
-    ];
-    function toneOf(m) { return (RESULT_META[m] || ["gray"])[0]; }
-    function matchBadge(m) {
-      const mm = RESULT_META[m] || ["gray", "未判定"];
-      return `<span class="badge ${mm[0]}" title="${esc(m || "")}">${esc(mm[1])}</span>`;
-    }
-    function gateTag(r) {
-      return r.gate_executed === false && r.match !== "not_evaluated"
-        ? `<div class="gate-tag" title="门禁在前序硬性不满足处已短路（一票否决结论不变）；此条由诊断全量补齐判定，供补录/核对参考">门禁短路后·诊断结果</div>` : "";
-    }
-    function reasonText(r) {
-      const mr = r.match_reason;
-      if (!mr) return "—";
-      if (typeof mr === "string") return mr;
-      return mr.text || JSON.stringify(mr);
-    }
-    function evidenceHtml(r) {
-      const ev = r.evidence || [];
-      if (ev.length) return `<div class="ev-list">${ev.map((e) => `<span title="${esc(e)}">${esc(apiEvidenceRefLabel(e))}</span>`).join("；")}</div>`;
-      if (r.match === "satisfied" || r.match === "passed")
-        return `<div class="ev-list">按已核验的企业资料快照判定（依据见判定原因）</div>`;
-      const need = r.evidence_required || [];
-      return need.length ? `<div class="ev-list">需要：${need.map((e) => esc(apiEvidenceKindLabel(e))).join("、")}</div>` : `<span class="hint">—</span>`;
-    }
-
-    let REQUIREMENTS = [];
-    let RUN = null;
-    let curType = "hard_requirement";
+    let OVERVIEW = null;      // result-overview（首屏单一读取源）
+    let QUAL = [];            // qualification-matrix items
+    let FULL_REQS = [];       // result-overview 全量要求（资格/评分/执行）
+    let SUBMISSION_CHECKLIST = null; // 经人工复核、与原始文件版本绑定的投标文件/附件材料清单
+    let PEX = null;           // parse-exceptions
+    let MATCH_JOB = null;
+    let REQUIREMENT_COUNT = 0;
     let curFilter = "all";
-    /* 页面上以「硬性/评分/动作 第 N 项」称呼要求；系统编号（MAT-…-H-013-draft）只放悬停提示与抽屉的溯源行 */
-    const TYPE_SHORT = { hard_requirement: "硬性", scored_requirement: "评分", action_requirement: "动作" };
-    function seqOf(r) { return REQUIREMENTS.filter((x) => x.req_type === r.req_type).indexOf(r) + 1; }
-    function seqLabel(r) { return `${TYPE_SHORT[r.req_type] || ""}第 ${seqOf(r)} 项`; }
+    const STATE_TONE = { not_satisfied: "danger", blocked_missing_data: "warn", manual_review: "review", satisfied: "ok" };
+    const FILTERS = [
+      ["all", "全部"], ["danger", "明确不满足"], ["warn", "待补资料"], ["review", "人工复核"], ["ok", "已满足"],
+    ];
 
-    async function loadMatrix() {
+    const ACTIVE_JOB_TEXT = {
+      pending: "匹配任务已排队，等待 worker 领取", running: "正在执行匹配（RAG 检索 + 逐条核验）",
+      retryable: "执行失败，等待自动重试",
+    };
+    let pollTimer = null;
+    function scheduleActivePoll() {
+      if (pollTimer || !(MATCH_JOB && ACTIVE_JOB_TEXT[MATCH_JOB.status])) return;
+      let polls = 0;
+      pollTimer = setInterval(async () => {
+        polls += 1;
+        if (polls > 120) { clearInterval(pollTimer); pollTimer = null; return; }
+        try { await loadAll(); } catch (e) { /* 轮询失败下一轮重试 */ }
+        if (!(MATCH_JOB && ACTIVE_JOB_TEXT[MATCH_JOB.status])) { clearInterval(pollTimer); pollTimer = null; }
+      }, 5000);
+    }
+
+    async function loadAll() {
       const box = document.getElementById("matrix-table");
       const apiError = (msg) => { box.innerHTML = `<div class="notice error">${msg}</div>`; };
       try {
-        const data = await apiGet(`/projects/${encodeURIComponent(PJ())}/matrix`);
-        REQUIREMENTS = data.requirements || [];
-        RUN = data.run || null;
-        const proj = await apiGet(`/projects/${encodeURIComponent(PJ())}`).catch(() => null);
-        if (proj) document.getElementById("proj-name").textContent = proj.project_name;
-        const counts = {};
-        REQUIREMENTS.forEach((r) => { counts[r.req_type] = (counts[r.req_type] || 0) + 1; });
-        document.querySelectorAll("#tabs .tab").forEach((t) => {
-          const n = counts[t.dataset.t] || 0;
-          const label = { hard_requirement: "硬性要求", scored_requirement: "评分项", action_requirement: "动作项" }[t.dataset.t];
-          t.textContent = `${label}（${n}）`;
-        });
+        const [ov, qm, pe, mx, proj] = await Promise.allSettled([
+          apiResultOverview(PJ()),
+          apiQualificationMatrix(PJ()),
+          apiParseExceptions(PJ()),
+          apiGet(`/projects/${encodeURIComponent(PJ())}/matrix`),
+          apiGet(`/projects/${encodeURIComponent(PJ())}`),
+        ]);
+        if (proj.status === "fulfilled") {
+          document.getElementById("proj-name").textContent = proj.value.project_name;
+        } else if (proj.reason && (proj.reason.status === 404)) {
+          document.getElementById("proj-name").textContent = "项目不存在或已被清理";
+        }
+        if (ov.status === "rejected") {
+          if (ov.reason && ov.reason.status === 404) {
+            apiError("结果接口不存在（404）：本机 API 进程仍是旧版本——请重启 API 与 worker（bash scripts/setup_local_env.sh stop && start）后刷新本页。");
+            return;
+          }
+          throw ov.reason;
+        }
+        OVERVIEW = ov.value;
+        QUAL = qm.status === "fulfilled" ? (qm.value.items || []) : [];
+        FULL_REQS = OVERVIEW.requirements_overview || [];
+        SUBMISSION_CHECKLIST = OVERVIEW.document_submission_checklist || null;
+        PEX = pe.status === "fulfilled" ? pe.value : null;
+        const mxv = mx.status === "fulfilled" ? mx.value : {};
+        MATCH_JOB = mxv.match_job || null;
+        REQUIREMENT_COUNT = (mxv.requirements || []).length;
+        renderRunContext();
+        renderSummary();
+        renderPriority();
+        renderSatisfied();
+        renderFullRequirements();
+        renderSubmissionChecklist();
+        renderParseQuality();
         renderRunSummary();
         renderGateNotice();
-        if (!REQUIREMENTS.length) { apiError("暂无要求（规则集未建立或项目无解析确认）——请到「选择与解析 / 复核与补录」完成解析确认。"); document.getElementById("filters").innerHTML = ""; return; }
         renderMatrix();
+        scheduleActivePoll();
+        if (!REQUIREMENT_COUNT && !QUAL.length) {
+          apiError("暂无要求——请先到「选择与解析」上传招标文件，系统会自动解析、核对并匹配（ADR-007）；模型没把握的条目会出现在「解析质量」区。");
+          document.getElementById("filters").innerHTML = "";
+        }
       } catch (err) {
         if (err.status === 403) { apiError(`权限不足：当前角色 ${esc(apiRole() || "未登录")} 无权查看结果（需 result read）。`); return; }
         if (err.status === 401) { apiError("未登录：请用右上角账号登录（投标专员 toubiao / 经营负责人 jingying，密码 123456）。"); return; }
-        apiError("加载矩阵失败：" + esc(err.message));
+        apiError("加载结果失败：" + esc(err.message));
       }
     }
 
-    function renderRunSummary() {
-      const el = document.getElementById("run-summary");
-      if (!(RUN && RUN.run_id)) {
-        el.innerHTML = `<span class="badge warn">尚无匹配运行</span>——解析候选经人工复核确认写入规则集后，系统才会自动触发匹配；当前看到的是要求本身，不是匹配结论。`
-          + (REQUIREMENTS.length ? ` <span class="hint">本项目规则集已确认但匹配尚未运行/排队中，稍后刷新。</span>` : "");
+    /* ---------- FE-01：运行上下文条（同一 run；stale 可见） ---------- */
+    function renderRunContext() {
+      const el = document.getElementById("run-context");
+      const rc = OVERVIEW.run_context || {};
+      const when = OVERVIEW.generated_at ? String(OVERVIEW.generated_at).slice(0, 16).replace("T", " ") : "—";
+      const items = [
+        `<span class="rc-item">运行 <b>${esc(rc.run_id || OVERVIEW.run_context && OVERVIEW.run_context.run_id || "尚无")}</b></span>`,
+        `<span class="rc-item">规则集 <b>${esc(rc.ruleset_version || "—")}</b></span>`,
+        `<span class="rc-item">企业资料快照 <b>${esc(String(rc.enterprise_snapshot_version || "—").slice(0, 8))}</b></span>`,
+        `<span class="rc-item">文件集合 <b>${esc(String(rc.document_set_version || "—").slice(0, 8))}</b></span>`,
+        `<span class="rc-item">解析例外快照 <b>${esc(rc.parse_exception_snapshot_version || "—")}</b></span>`,
+        `<span class="rc-item">判定时点 <b>${esc(OVERVIEW.as_of || "—")}</b></span>`,
+        `<span class="rc-item">生成时间 <b>${esc(when)}</b></span>`,
+      ];
+      let tail = "";
+      if (OVERVIEW.result_freshness === "stale" || OVERVIEW.is_current === false) {
+        tail = `<span class="rc-stale"><span class="badge warn" title="结果已过期：输入（文件/规则/证据/人员/解析处置/候选方案）已变化，须重算后才能用于审批">已过期（stale）</span></span>`;
+      }
+      el.innerHTML = items.join("") + tail;
+      const hb = document.getElementById("hist-banner");
+      hb.innerHTML = OVERVIEW.historical_sample
+        ? `<div class="hist-banner"><span class="hist-tag">${esc(OVERVIEW.historical_sample_banner)}</span>
+             <div>${esc(OVERVIEW.historical_sample_note || "")}——解析/匹配可用于测试验证；审批与递交入口已被服务端拒绝。</div></div>`
+        : "";
+    }
+
+    /* ---------- FE-01：摘要卡（固定排序：明确不满足→待补→复核→已满足） ---------- */
+    function renderSummary() {
+      const s = OVERVIEW.qualification_summary || {};
+      const adm = OVERVIEW.admission || {};
+      const cards = [
+        ["c-danger", s.not_satisfied || 0, "明确不满足（换/补资源）"],
+        ["c-warn", s.blocked_missing_data || 0, "待补资料（补证任务）"],
+        ["c-review", s.manual_review || 0, "人工复核（指派复核人）"],
+        ["c-ok", s.satisfied || 0, "已满足"],
+      ];
+      let html = cards.map(([c, n, t]) => `<div class="sum-card ${c}"><div class="n">${n}</div><div class="t">${esc(t)}</div></div>`).join("");
+      // 已满足卡片可点击直达清单（满足项必须可见，不得"消失"）
+      const okCount = (OVERVIEW.satisfied_items || []).length;
+      const s0 = OVERVIEW.qualification_summary || {};
+      const tc = document.getElementById("total-count");
+      if (tc) tc.textContent = `招标文件解析产出硬性标准 ${s0.total || 0} 条（含正文+附件），逐条判定如上与下方矩阵；评分 ${""}与执行动作在各自页面。`;
+      setTimeout(() => {
+        const okCards = document.querySelectorAll("#summary .sum-card.c-ok");
+        if (okCards.length === 1) {
+          okCards[0].style.cursor = "pointer";
+          okCards[0].title = "点击查看已满足清单";
+          okCards[0].addEventListener("click", () =>
+            document.getElementById("satisfied").scrollIntoView({ behavior: "smooth", block: "start" }));
+        }
+      }, 0);
+      if ((adm.blocking_reasons || []).length) {
+        html += `<div style="grid-column:1/-1;font-size:13px">满分准入暂不可用：${apiBlockingReasonList(adm.blocking_reasons)}
+          <span class="hint">——准入=资格∧评分∧解析质量∧审批前动作∧结果 current∧非历史样本（docs/12 §4.4）；${esc(adm.decision || "")}</span></div>`;
+      }
+      document.getElementById("summary").innerHTML = html;
+    }
+
+    /* ---------- 全量标准总览：正文/附件/评分/执行均逐条保留 ---------- */
+    function renderFullRequirements() {
+      const el = document.getElementById("full-requirements");
+      const rows = FULL_REQS || [];
+      if (!rows.length) { el.innerHTML = ""; return; }
+      const domainLabel = { qualification: "资格与资源", scoring: "评分标准", operation: "投标执行" };
+      const badge = (r) => {
+        const known = ["satisfied", "not_satisfied", "blocked_missing_data", "manual_review"];
+        return known.includes(r.state)
+          ? apiResultStateBadge(r.state, r.state_label)
+          : `<span class="badge info">${esc(r.state_label || r.state || "待登记")}</span>`;
+      };
+      const sub = (r) => {
+        const x = r.submission || {};
+        if (x.required) return `<div><b>需提交：</b>${esc((x.materials || []).join("；") || "按原文核对")}</div>
+          <div class="hint">阶段：${esc(x.stage || "—")}</div>`;
+        return `<div class="hint"><b>提交材料：</b>${esc((x.materials || []).join("；") || "招标文件未明确要求本阶段提交")}</div>
+          <div class="hint">${esc(x.note || "")}</div>`;
+      };
+      const groups = {};
+      rows.forEach(r => (groups[r.domain || "other"] ||= []).push(r));
+      el.innerHTML = `<details class="full-requirements" open>
+        <summary><b>招标文件全量标准总览（${rows.length} 条）</b>
+          <span class="hint">正文+附件；已满足项不隐藏。资格 ${rows.filter(r=>r.domain==='qualification').length} · 评分 ${rows.filter(r=>r.domain==='scoring').length} · 执行 ${rows.filter(r=>r.domain==='operation').length}</span></summary>
+        <div class="hint" style="margin:8px 0">口径：原文明确要求随标提交的才标“需提交”；企业资料缺失显示待补/待核实，不推断为企业事实不满足。点击行可查看原文、企业证据和补充动作。</div>
+        ${Object.entries(groups).map(([domain, list]) => `<section style="margin-top:12px">
+          <h3 style="margin:6px 0">${esc(domainLabel[domain] || domain)}（${list.length}）</h3>
+          <div class="table-wrap"><table class="tbl"><thead><tr><th>状态</th><th>招标文件要求原文</th><th>条款/页码</th><th>材料与阶段</th><th>判定说明</th></tr></thead><tbody>
+          ${list.map(r => `<tr class="clickable full-req-row" data-req="${esc(r.requirement_id)}">
+            <td>${badge(r)}</td>
+            <td><div>${esc(r.assertion || "—")}</div><div class="hint">${esc(r.req_type || "")}</div></td>
+            <td>${esc(fmtClause(r.clause_ref) || "—")}${r.page_no != null ? `<div class="hint">第 ${esc(r.page_no)} 页</div>` : ""}${apiSourcePageLink(r.source_link, r.page_no, "原文")}</td>
+            <td>${sub(r)}</td>
+            <td>${esc(r.reason || (r.state === "satisfied" ? "已满足；保留在全量清单中。" : "—"))}</td>
+          </tr>`).join("")}
+          </tbody></table></div></section>`).join("")}
+      </details>`;
+      el.querySelectorAll(".full-req-row").forEach(tr => tr.addEventListener("click", () => {
+        const r = FULL_REQS.find(x => x.requirement_id === tr.dataset.req);
+        if (r) openReqDetail(r);
+      }));
+    }
+
+    /* ---------- 招标文件明确的投标文件/附件材料：不混入企业资格矩阵 ---------- */
+    function renderSubmissionChecklist() {
+      const el = document.getElementById("submission-checklist");
+      const checklist = SUBMISSION_CHECKLIST;
+      const rows = checklist && checklist.items || [];
+      if (!rows.length) { el.innerHTML = ""; return; }
+      const refs = (r) => (r.requirement_refs || []).length
+        ? `<div class="hint">关联资格核验：${esc((r.requirement_refs || []).join("、"))}</div>` : "";
+      el.innerHTML = `<details class="full-requirements" open style="margin-top:12px">
+        <summary><b>招标文件明确的投标文件 / 附件材料清单（${rows.length} 项）</b>
+          <span class="hint">人工通读复核；与当前招标文件版本绑定</span></summary>
+        <div class="notice" style="margin:8px 0">
+          <b>分层口径：</b>${esc(checklist.review_note || "")}
+          <br><span class="hint">此处“文件要求”不表示企业已具备，也不表示当前必须已有回执；企业资格事实仍只在下方硬性要求矩阵中按证据判定。</span>
+        </div>
+        <div class="table-wrap"><table class="tbl"><thead><tr>
+          <th>类别</th><th>文件明确要求</th><th>需准备/提交材料</th><th>应处阶段与条件</th><th>当前判定口径</th><th>原文</th>
+        </tr></thead><tbody>
+          ${rows.map(r => `<tr>
+            <td><b>${esc(r.category || "—")}</b></td>
+            <td>${esc(r.assertion || "—")}${refs(r)}</td>
+            <td>${(r.materials || []).length ? `<ul class="evidence-list">${r.materials.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : `<span class="hint">本项无须另行提交材料</span>`}</td>
+            <td><b>${esc(r.stage || "—")}</b><div class="hint">${esc(r.condition || "")}</div></td>
+            <td>${esc(r.current_judgement || "—")}</td>
+            <td>${esc(fmtClause(r.clause_ref) || "—")}<div class="hint">第 ${esc(r.page_no || "—")} 页</div>${apiSourcePageLink(r.source_link, r.page_no, "打开原文")}</td>
+          </tr>`).join("")}
+        </tbody></table></div>
+      </details>`;
+    }
+
+    /* ---------- FE-01：优先处理（最多 3 项） ---------- */
+    function renderPriority() {
+      const el = document.getElementById("priority");
+      const items = OVERVIEW.priority_items || [];
+      if (!items.length) {
+        el.innerHTML = `<div class="notice ok" style="margin:6px 0">资格与资源当前没有必须处理的事项${OVERVIEW.more_count ? "" : "。"}</div>`;
         return;
       }
-      const cov = RUN.coverage || {};
-      const total = REQUIREMENTS.length;
-      const tally = { ok: 0, danger: 0, warn: 0, review: 0, gray: 0 };
-      REQUIREMENTS.forEach((r) => { tally[toneOf(r.match)] = (tally[toneOf(r.match)] || 0) + 1; });
-      const when = RUN.created_at ? String(RUN.created_at).slice(0, 16).replace("T", " ") : "—";
-      const trace = `运行编号 ${RUN.run_id} · 规则集 ${RUN.rule_set_id || "—"}（${RUN.rule_set_version || ""}）`;
-      el.innerHTML = `最近一次匹配：<b>${esc(when)}</b> · 判定时点 <b>${esc(RUN.as_of || "—")}</b>（证书有效期、业绩起算期都按这一天判）
-        · 逐条执行 ${esc(cov.executed ?? "?")}/${esc(cov.declared ?? total)} 条
-        <span class="hint" title="${esc(trace)}" style="cursor:help">ⓘ 溯源编号</span><br>
-        <span class="badge gray">共 ${total} 项</span>
-        <span class="badge ok">满足 ${tally.ok}</span>
-        ${tally.danger ? `<span class="badge danger">不满足 ${tally.danger}</span>` : ""}
-        ${tally.warn ? `<span class="badge warn">待补/不可判定 ${tally.warn}</span>` : ""}
-        ${tally.review ? `<span class="badge review">人工复核 ${tally.review}</span>` : ""}
-        ${tally.gray ? `<span class="badge gray">未执行 ${tally.gray}</span>` : ""}`;
+      const CTA = {
+        not_satisfied: "处置建议：更换/补足资源（不能以补证明替代）",
+        blocked_missing_data: "去补证 →（见「待确认与处置」页聚合任务）",
+        manual_review: "指派复核人处理",
+      };
+      el.innerHTML = `
+        <div class="card-title-row" style="margin-top:10px"><h3 style="margin:0">优先处理（${items.length}${OVERVIEW.more_count ? `+${OVERVIEW.more_count}` : ""} 项）</h3></div>
+        <div class="priority-list">${items.map((p) => `
+          <div class="priority-item">
+            <div class="pi-main">
+              <div class="pi-title">${apiResultStateBadge(p.state, p.state_label)} ${p.reason_code_label ? apiReasonCodeBadge(p.reason_code) : ""}
+                ${esc((p.assertion || "").slice(0, 80))}${(p.assertion || "").length > 80 ? "…" : ""}</div>
+              <div class="pi-meta">条款 ${fmtClause(p.clause_ref) || "—"} · ${esc(p.reason || "")}</div>
+              <div class="fact-pair">${apiFactPair(p.required_value, p.observed_value)}</div>
+            </div>
+            <div class="pi-cta">${esc(CTA[p.state] || "")}${p.next_action ? `<div class="hint">${esc(NEXT_ACTION_LABEL[p.next_action] || p.next_action)}</div>` : ""}</div>
+          </div>`).join("")}</div>
+        ${OVERVIEW.more_count ? `<div class="hint">其余 ${OVERVIEW.more_count} 项见下方矩阵（按严重度排序）。</div>` : ""}`;
     }
 
-    /* 门禁短路 / 旧版短路运行提示（F008 覆盖门禁：未执行项必须标识；F023 §2 第 4 步） */
+    /* ---------- 已满足清单（2026-09-29：满足项逐条可见，含证据与原文回链） ---------- */
+    function renderSatisfied() {
+      const el = document.getElementById("satisfied");
+      const items = OVERVIEW.satisfied_items || [];
+      if (!items.length) {
+        el.innerHTML = `<div class="card-title-row" style="margin-top:12px"><h3 style="margin:0">已满足（0 项）</h3></div>
+          <div class="hint">当前没有已满足项——全部条目见下方矩阵（待补/复核项处理后重算产生）。</div>`;
+        return;
+      }
+      el.innerHTML = `
+        <div class="card-title-row" style="margin-top:12px">
+          <h3 style="margin:0">已满足（${items.length} 项）—— 逐项列出，防止误认为漏项</h3>
+        </div>
+        <div class="priority-list">${items.map((p) => `
+          <div class="priority-item" style="border-left-color:var(--ok,#16a34a)">
+            <div class="pi-main">
+              <div class="pi-title"><span class="badge ok">已满足</span> ${esc((p.assertion || "").slice(0, 90))}${(p.assertion || "").length > 90 ? "…" : ""}</div>
+              <div class="pi-meta">条款 ${fmtClause(p.clause_ref) || "—"}
+                ${p.page_no != null ? ` · ${apiSourcePageLink(p.source_link, p.page_no, "原文第 " + p.page_no + " 页")}` : (p.source_link ? ` · ${apiSourcePageLink(p.source_link, null)}` : "")}
+                ${esc(p.reason || "")}</div>
+              ${(p.person_id) ? `<div class="hint">人选 ${esc(p.person_id)}（同一候选班子）</div>` : ""}
+            </div>
+            <div class="pi-cta hint">${(p.candidate_plan_id ? "候选方案已回链" : "")}</div>
+          </div>`).join("")}</div>`;
+    }
+
+    /* ---------- FE-01/03：解析质量次级提示（不抢占首屏） ---------- */
+    function renderParseQuality() {
+      const el = document.getElementById("parse-quality");
+      const pq = OVERVIEW.parse_quality_summary || {};
+      if (!(pq.pending_count > 0)) {
+        el.innerHTML = `<div class="parse-quality-bar"><span>解析质量：无待处置项（全部条款已定位/确认）</span></div>`;
+        return;
+      }
+      const blocking = pq.blocking_count > 0;
+      el.innerHTML = `
+        <div class="parse-quality-bar${blocking ? " blocking" : ""}">
+          <span>${blocking ? "<b>满分准入暂不可用</b>：" : ""}解析质量：${pq.pending_count} 项待处置${blocking ? `（其中 ${pq.blocking_count} 项影响准入的硬性解析例外）` : ""}
+            <span class="hint">——属解析质量问题（未定位/低置信/冲突），<b>不是企业缺证</b>；处置完毕自动重算</span></span>
+          <button class="btn sm pq-open" id="btn-open-pe">打开解析质量抽屉</button>
+        </div>`;
+      // 绑定在静态容器上（事件委托）：重渲染/脚本加载时序不再影响可点性
+    }
+
+    async function openPeDrawer() {
+      const body = document.getElementById("pe-body");
+      try { PEX = await apiParseExceptions(PJ()); } catch (err) { apiShowError(err); return; }
+      const items = (PEX.items || []).filter((x) => x.status !== "resolved");
+      const rankLabel = { 1: "①条款/版本冲突", 2: "②硬性关键条款未定位", 3: "③模型定位候选待确认", 4: "④常见条款未检出" };
+      body.innerHTML = `
+        <div class="notice info" style="margin-top:0">
+          解析例外按风险排序（docs/12 §2.5）：已定位但冲突 → 硬性强锚点未定位 → 模型定位/低置信 → 常见探针未命中。
+          <b>「未检出」不代表文件不存在该要求</b>；处置为「本文件无此条款」必须填写理由与检索范围。
+          ${PEX.snapshot_version ? `<div class="hint">快照版本 ${esc(PEX.snapshot_version)} · 待处置 ${PEX.pending_count} 项</div>` : ""}
+        </div>
+        ${items.length ? `<ul class="pe-list">${items.map((x) => `
+          <li class="pe-item rank-${x.risk_rank}">
+            <div class="pe-title"><span class="pe-rank r${x.risk_rank}">${esc(rankLabel[x.risk_rank] || x.risk_rank)}</span>
+              ${esc(x.title)}</div>
+            <div class="pe-meta">${esc(x.risk_label)}${x.payload && x.payload.page_no ? ` · ${apiSourcePageLink(x.source_link, x.payload.page_no, "原文第 " + x.payload.page_no + " 页")}` : (x.source_link ? ` · ${apiSourcePageLink(x.source_link, null)}` : "")}
+              ${x.payload && x.payload.locate_hints && x.payload.locate_hints.length ? ` · 可搜关键词：${x.payload.locate_hints.slice(0, 4).map(esc).join(" / ")}` : ""}
+              ${x.status === "deep_review" ? ` · <span class="badge review">深度复核中</span>` : ""}</div>
+            <div class="pe-actions">
+              <button class="btn sm" data-decide="approved" data-id="${esc(x.parse_exception_id)}">通过</button>
+              <button class="btn sm ghost" data-decide="not_applicable" data-id="${esc(x.parse_exception_id)}">本文件无此条款</button>
+              <button class="btn sm ghost" data-decide="deep_review" data-id="${esc(x.parse_exception_id)}">转深度复核</button>
+            </div>
+          </li>`).join("")}</ul>
+        <div class="hint">深度复核（人工定位补录 / 编辑摘录 / 无法确认）在「待确认与处置」页逐条处理。</div>`
+          : `<div class="notice ok">解析质量无待处置项。</div>`}
+      `;
+      body.querySelectorAll("[data-decide]").forEach((b) =>
+        b.addEventListener("click", () => openPeModal(b.dataset.id, b.dataset.decide)));
+      document.getElementById("pe-mask").classList.add("open");
+      document.getElementById("pe-drawer").classList.add("open");
+    }
+    document.getElementById("pe-close").addEventListener("click", closePeDrawer);
+    document.getElementById("pe-mask").addEventListener("click", closePeDrawer);
+    function closePeDrawer() {
+      document.getElementById("pe-mask").classList.remove("open");
+      document.getElementById("pe-drawer").classList.remove("open");
+    }
+
+    /* ---------- FE-03：处置模态表单（无 prompt/alert；取消/Escape 不写入） ---------- */
+    let modalCtx = null;
+    const DECISION_LABEL = { approved: "通过（确认无误）", not_applicable: "本文件无此条款", deep_review: "转深度复核" };
+    function openPeModal(excId, decision) {
+      const item = (PEX.items || []).find((x) => x.parse_exception_id === excId);
+      modalCtx = { excId, decision, item };
+      document.getElementById("pe-modal-target").innerHTML =
+        `<b>${esc(item ? item.title : "")}</b><br>${esc(item ? item.risk_label : "")}${item && item.payload && item.payload.page_no ? ` · 第 ${esc(item.payload.page_no)} 页` : ""}`;
+      document.getElementById("pe-modal-choices").innerHTML = Object.entries(DECISION_LABEL)
+        .map(([k, v]) => `<button type="button" class="dm-choice${k === decision ? " on" : ""}" data-d="${k}">${esc(v)}</button>`).join("");
+      document.querySelectorAll("#pe-modal-choices .dm-choice").forEach((b) =>
+        b.addEventListener("click", () => {
+          modalCtx.decision = b.dataset.d;
+          document.querySelectorAll("#pe-modal-choices .dm-choice").forEach((x) => x.classList.toggle("on", x === b));
+          syncScopeRequired();
+        }));
+      ["pe-modal-reason", "pe-modal-scope", "pe-modal-pages", "pe-modal-note"].forEach((id) => { document.getElementById(id).value = ""; });
+      document.getElementById("pe-modal-receipt").textContent = "";
+      syncScopeRequired();
+      document.getElementById("pe-modal").classList.add("open");
+      document.getElementById("pe-modal-reason").focus();
+    }
+    function syncScopeRequired() {
+      const req = document.querySelector("#pe-modal-scope-field [data-req-na]");
+      req.style.visibility = modalCtx && modalCtx.decision === "not_applicable" ? "visible" : "hidden";
+    }
+    function closePeModal() { document.getElementById("pe-modal").classList.remove("open"); modalCtx = null; }
+    document.getElementById("pe-modal-cancel").addEventListener("click", closePeModal);
+    document.getElementById("pe-modal").addEventListener("click", (e) => { if (e.target.id === "pe-modal") closePeModal(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.getElementById("pe-modal").classList.contains("open")) closePeModal(); });
+
+    document.getElementById("pe-modal-submit").addEventListener("click", async () => {
+      if (!modalCtx) return;
+      const reason = document.getElementById("pe-modal-reason").value.trim();
+      const scope = document.getElementById("pe-modal-scope").value.trim();
+      const pages = document.getElementById("pe-modal-pages").value.trim();
+      const note = document.getElementById("pe-modal-note").value.trim();
+      if (!reason) { document.getElementById("pe-modal-receipt").style.color = "var(--danger,#dc2626)"; document.getElementById("pe-modal-receipt").textContent = "请填写处置理由（必填）。"; return; }
+      if (modalCtx.decision === "not_applicable" && !scope) { document.getElementById("pe-modal-receipt").style.color = "var(--danger,#dc2626)"; document.getElementById("pe-modal-receipt").textContent = "声明「本文件无此条款」必须填写检索词或检索范围。"; return; }
+      const btn = document.getElementById("pe-modal-submit");
+      btn.disabled = true;
+      try {
+        const r = await apiDecideParseException(modalCtx.excId, {
+          decision: modalCtx.decision, reason,
+          search_scope: scope || null,
+          page_refs: pages ? pages.split(/[,，\s]+/).map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x)) : null,
+          snapshot_version: modalCtx.item ? modalCtx.item.snapshot_version : null,
+          note: note || null,
+        });
+        document.getElementById("pe-modal-receipt").style.color = "";
+        document.getElementById("pe-modal-receipt").textContent =
+          `✓ 已提交（request_id ${r.request_id || "—"}）${r.exception && r.exception.status === "resolved" ? "；例外已处置" : "；已转深度复核"}`;
+        await new Promise((res) => setTimeout(res, 700));
+        closePeModal();
+        await openPeDrawer();
+        await loadAll();   // 处置后刷新版本（新快照/重算提示由上下文条呈现）
+      } catch (err) {
+        apiShowError(err);
+        document.getElementById("pe-modal-receipt").style.color = "var(--danger,#dc2626)";
+        document.getElementById("pe-modal-receipt").textContent = "提交失败：" + (err.message || "");
+      } finally { btn.disabled = false; }
+    });
+
+    /* ---------- 匹配任务状态（尚无运行分支 + 历史样本测试放行操作卡） ---------- */
+    const GATE_ERROR_LABEL = {
+      gate_overdue: "招标文件对应的投标截止已过",
+      gate_identity_conflict: "招标文件与公告不是同一个项目（身份校验冲突）",
+      gate_identity_warning: "招标文件与公告存在待确认差异",
+    };
+    function renderRunSummary() {
+      const el = document.getElementById("run-summary");
+      if (!(OVERVIEW && OVERVIEW.run_context && OVERVIEW.run_context.run_id)) {
+        if (MATCH_JOB && (MATCH_JOB.status === "failed" || MATCH_JOB.status === "cancelled")) {
+          const gateLike = (MATCH_JOB.error_code || "").startsWith("gate_");
+          const label = GATE_ERROR_LABEL[MATCH_JOB.error_code] || MATCH_JOB.error_code || "未知错误";
+          const when = String(MATCH_JOB.updated_at || "").slice(0, 19).replace("T", " ");
+          el.innerHTML = `
+            <div class="notice error" style="margin:8px 0">
+              <b>匹配未执行</b>：${esc(label)}。<br>
+              ${esc(MATCH_JOB.error_message || "（无错误详情）")}<br>
+              ${gateLike ? `
+              <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(220,38,38,.25)">
+                <b>这是历史招标文件的解析测试？</b>（用已投过标的文件测解析与匹配能力）——
+                登记为「历史解析样本」即可放行本次测试匹配：文件—公告不一致与截止已过按测试安排处理，
+                结果页会显示样本标识，<b>不能用于真实审批或递交</b>。
+                <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+                  <input type="text" id="release-reason" placeholder="填写放行理由（必填，审计留痕），如：以XX项目已投标文件测试解析"
+                         style="flex:1;min-width:260px;border:1px solid rgba(15,23,42,.25);border-radius:8px;padding:8px 10px;font-size:13.5px">
+                  <button class="btn" id="btn-release-test">登记历史样本并重新匹配</button>
+                  <span class="hint" id="release-hint"></span>
+                </div>
+              </div>` : `<span class="hint">任务 ${esc(MATCH_JOB.job_id)} · ${esc(when)}。按错误指引纠正后重新触发匹配。</span>`}
+            </div>`;
+          const btn = document.getElementById("btn-release-test");
+          if (btn) btn.addEventListener("click", releaseHistoricalTest);
+          return;
+        }
+        let head = `<span class="badge warn">尚无匹配结果</span>`;
+        let tail = "";
+        if (MATCH_JOB && ACTIVE_JOB_TEXT[MATCH_JOB.status]) {
+          tail = ` <span class="hint">${ACTIVE_JOB_TEXT[MATCH_JOB.status]}（任务 ${esc(MATCH_JOB.job_id)}），本页每 5 秒自动刷新。</span>`;
+        } else if (REQUIREMENT_COUNT) {
+          tail = ` <span class="hint">规则集已确认但匹配任务未执行——请检查 worker 是否启动（/readyz），或刷新重试。</span>`;
+        } else {
+          tail = ` <span class="hint">请先在「选择与解析」上传招标文件，系统会自动解析并匹配。</span>`;
+        }
+        el.innerHTML = head + tail;
+        return;
+      }
+      el.innerHTML = "";
+    }
+
+    /* 历史样本测试放行（ADR-008 / docs/12 §1.2）：登记测试上下文（服务端放行身份/截止门禁
+       并自动重触发匹配），然后轮询新运行出现即刷新。 */
+    async function releaseHistoricalTest() {
+      const btn = document.getElementById("btn-release-test");
+      const hint = document.getElementById("release-hint");
+      const reason = (document.getElementById("release-reason") || {}).value || "";
+      if (!reason.trim()) { hint.textContent = "请先填写放行理由（必填）。"; return; }
+      btn.disabled = true;
+      hint.textContent = "登记中…";
+      try {
+        await apiSetTestContext(PJ(), { historical_sample: true, reason: reason.trim() });
+        hint.textContent = "已登记，正在触发匹配…";
+        let jobCreated = null;
+        try {
+          jobCreated = await apiPost(`/projects/${encodeURIComponent(PJ())}/match`, {});
+        } catch (e) { /* 服务端已自动重触发时此处幂等返回既有任务，失败不阻断轮询 */ }
+        hint.textContent = `匹配任务${jobCreated && jobCreated.job_id ? " " + jobCreated.job_id : ""}已提交，等待结果…`;
+        const deadline = Date.now() + 10 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((res) => setTimeout(res, 3000));
+          const cur = await apiGet(`/projects/${encodeURIComponent(PJ())}/match-runs/latest`);
+          if (cur.run_id) { hint.textContent = "✓ 匹配完成，正在刷新…"; await loadAll(); return; }
+          const mx = await apiGet(`/projects/${encodeURIComponent(PJ())}/matrix`).catch(() => null);
+          if (mx && mx.match_job && mx.match_job.status === "failed") {
+            hint.textContent = "匹配仍失败：" + (mx.match_job.error_message || mx.match_job.error_code || "");
+            await loadAll(); return;
+          }
+        }
+        hint.textContent = "等待超时（10 分钟无新运行）：请确认 worker 已启动后刷新页面。";
+      } catch (err) {
+        apiShowError(err);
+        hint.textContent = "登记失败：" + (err.message || "");
+      } finally { btn.disabled = false; }
+    }
+
     function renderGateNotice() {
       const el = document.getElementById("gate-notice");
       el.innerHTML = "";
-      if (!(RUN && RUN.run_id)) return;
-      const cov = RUN.coverage || {};
-      const byId = Object.fromEntries(REQUIREMENTS.map((r) => [r.requirement_id, r]));
-      if (Array.isArray(cov.short_circuited)) {
-        if (!cov.short_circuited.length) return;
-        const stopAt = REQUIREMENTS.find((r) => r.gate_executed !== false && ["not_satisfied", "failed"].includes(r.match) && r.req_type === "hard_requirement");
-        el.innerHTML = `<div class="notice warn" style="margin:6px 0 10px">
-          <b>门禁短路</b>：${stopAt ? `硬性要求「${esc(seqLabel(stopAt))} · ${esc((stopAt.assertion || "").slice(0, 40))}${(stopAt.assertion || "").length > 40 ? "…" : ""}」` : "某条硬性要求"}明确不满足，一票否决结论已定；
-          其后 <b>${cov.short_circuited.length}</b> 条由诊断全量补齐判定（表中标「门禁短路后·诊断结果」），用于逐条核对还缺什么、补什么。
-        </div>`;
-        return;
-      }
-      // 旧版运行（无 short_circuited 字段）：只执行了 gate 短路前的条目，其后无结论
-      if (cov.complete === false) {
-        const notRun = REQUIREMENTS.filter((r) => r.match === "not_evaluated").length;
+      const cov = (OVERVIEW.run_context && OVERVIEW.run_context.coverage) || {};
+      // 旧版短路运行提示（coverage.complete=false 且无 short_circuited 字段）
+      if (cov.complete === false && !Array.isArray(cov.short_circuited)) {
         const canRecalc = apiRole() === "business_head";
         el.innerHTML = `<div class="notice warn" style="margin:6px 0 10px">
-          <b>此运行为旧版门禁短路结果</b>：只执行了 ${esc(cov.executed ?? "?")}/${esc(cov.declared ?? REQUIREMENTS.length)} 条，其后 <b>${notRun}</b> 条没有结论（表中标「未执行」，不是"缺证"）。
-          新版匹配会逐条全量判定；需要<b>重算</b>一次才能看到每一项的满足/不满足及原因。
+          <b>此运行为旧版门禁短路结果</b>：部分条目没有结论（标「未执行」，不是"缺证"）。新版匹配逐条全量判定；需要<b>重算</b>一次。
           <div style="margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            ${canRecalc
-              ? `<button class="btn sm" id="btn-full-recalc">全量重算（经营负责人）</button>`
-              : `<span class="hint">重算 = match:write，仅<b>经营负责人</b>可执行——右上角切换「经营负责人」登录后此处出现重算按钮；或在「复核与补录」页 ③ 重算。</span>`}
+            ${canRecalc ? `<button class="btn sm" id="btn-full-recalc">全量重算（经营负责人）</button>` : `<span class="hint">重算 = match:write，仅<b>经营负责人</b>可执行。</span>`}
             <span class="hint" id="recalc-hint"></span>
           </div>
         </div>`;
@@ -221,7 +654,7 @@
       if (!confirm("以当前企业资料快照重算匹配（新版逐条全量判定）？旧结果将标记 stale，不影响审计留痕。")) return;
       btn.disabled = true;
       try {
-        const before = RUN.run_id;
+        const before = OVERVIEW.run_context && OVERVIEW.run_context.run_id;
         const ev = "full-eval-" + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
         const r = await apiPost(`/projects/${encodeURIComponent(PJ())}/recalculate`, { evidence_version: ev });
         hint.textContent = `重算任务 ${r.job_id} 已提交（request_id ${r.request_id || "—"}），等待 worker 执行…`;
@@ -229,7 +662,7 @@
         while (Date.now() < deadline) {
           await new Promise((res) => setTimeout(res, 2000));
           const cur = await apiGet(`/projects/${encodeURIComponent(PJ())}/match-runs/latest`);
-          if (cur.run_id && cur.run_id !== before) { hint.textContent = `✓ 新运行 ${cur.run_id} 完成，已刷新。`; await loadMatrix(); return; }
+          if (cur.run_id && cur.run_id !== before) { hint.textContent = `✓ 新运行 ${cur.run_id} 完成，已刷新。`; await loadAll(); return; }
         }
         hint.textContent = "重算超时（10 分钟无新运行）：请确认 worker 已启动后刷新页面。";
       } catch (err) {
@@ -238,95 +671,112 @@
       } finally { if (btn) btn.disabled = false; }
     }
 
-    function renderFilters(rows) {
-      const tally = { all: rows.length, ok: 0, danger: 0, warn: 0, review: 0, gray: 0 };
-      rows.forEach((r) => { tally[toneOf(r.match)]++; });
+    /* ---------- FE-02：硬性矩阵（精细状态） ---------- */
+    function stateToneOf(it) { return STATE_TONE[it.state] || "gray"; }
+    /* 证据引用短标签：路径取文件名、最多 2 条 + 「等 N 条」（完整引用在悬停提示） */
+    function evShort(refs) {
+      const short = (r) => {
+        const s = apiEvidenceRefLabel(r) || String(r);
+        const base = s.split("/").pop();
+        return base.length > 26 ? base.slice(0, 26) + "…" : base;
+      };
+      const shown = refs.slice(0, 2).map((r) => `<span title="${esc(r)}">${esc(short(r))}</span>`);
+      if (refs.length > 2) shown.push(`<span title="${esc(refs.join("\n"))}">等 ${refs.length} 条证据</span>`);
+      return shown.join("；");
+    }
+    function renderFilters() {
+      const tally = { all: QUAL.length, danger: 0, warn: 0, review: 0, ok: 0 };
+      QUAL.forEach((it) => { tally[stateToneOf(it)] = (tally[stateToneOf(it)] || 0) + 1; });
       document.getElementById("filters").innerHTML = FILTERS
         .filter(([k]) => k === "all" || tally[k])
         .map(([k, label]) => `<button type="button" class="chip${curFilter === k ? " on" : ""}" data-f="${k}">${label}<span class="n">${tally[k]}</span></button>`)
         .join("");
-      if (!tally[curFilter] && curFilter !== "all") { curFilter = "all"; renderFilters(rows); }
+      if (!tally[curFilter] && curFilter !== "all") { curFilter = "all"; renderFilters(); }
     }
-
     function renderMatrix() {
-      const rows = REQUIREMENTS.filter((r) => r.req_type === curType);
-      renderFilters(rows);
-      const shown = curFilter === "all" ? rows : rows.filter((r) => toneOf(r.match) === curFilter);
+      renderFilters();
+      const shown = curFilter === "all" ? QUAL : QUAL.filter((it) => stateToneOf(it) === curFilter);
       const box = document.getElementById("matrix-table");
-      if (!rows.length) { box.innerHTML = `<div class="hint">该类别暂无条目（招标文件解析未产出或复核时标为「本文件无此条款」）。</div>`; return; }
-      const scored = curType === "scored_requirement";
+      if (!QUAL.length) { box.innerHTML = `<div class="hint">暂无硬性要求条目（解析未产出或复核时标为「本文件无此条款」）。</div>`; return; }
       box.innerHTML = `
         <table class="tbl">
           <thead>
             <tr>
-              <th style="width:90px">序号</th>
+              <th style="width:120px">结论 / 原因码</th>
               <th>招标要求（原文摘录 · 条款 · 页码）</th>
-              <th style="width:120px">匹配结论</th>
-              <th style="width:280px">判定原因（为何满足 / 为何不满足）</th>
-              <th style="width:200px">企业证据</th>
-              ${scored ? '<th style="width:100px">满分 / 可复算</th>' : ""}
+              <th style="width:260px">判定原因（为何满足 / 为何不满足）</th>
+              <th style="width:150px">事实（要求 vs 实际）</th>
+              <th style="width:170px">企业证据 / 人员方案</th>
+              <th style="width:120px">下一步</th>
             </tr>
           </thead>
           <tbody>
-            ${shown.map((r) => `
-              <tr class="clickable row-${toneOf(r.match)}" data-req="${esc(r.requirement_id)}" title="点击查看详情 · 系统编号 ${esc(r.requirement_id)}">
-                <td class="num"><b>第 ${seqOf(r)} 项</b>${r.category ? `<div class="hint">${esc(r.category)}</div>` : ""}</td>
-                <td>${esc((r.assertion || "").slice(0, 180))}${(r.assertion || "").length > 180 ? "…" : ""}
-                  <div class="req-src">条款 ${fmtClause(r.clause_ref) || "—"}${r.page_no != null ? ` · 第 ${esc(r.page_no)} 页` : ""}</div></td>
-                <td>${matchBadge(r.match)}${gateTag(r)}</td>
-                <td style="color:var(--ink-2)">${esc(reasonText(r))}</td>
-                <td>${evidenceHtml(r)}</td>
-                ${scored ? `<td class="num">${r.max_score ?? "—"}${r.score != null ? `<div class="hint">可复算 <b>${esc(r.score)}</b></div>` : ""}</td>` : ""}
+            ${shown.map((it, idx) => `
+              <tr class="clickable row-${stateToneOf(it)}" data-req="${esc(it.requirement_id)}" title="点击查看详情 · 系统编号 ${esc(it.requirement_id)}">
+                <td>${apiResultStateBadge(it.state, it.state_label)}${it.reason_code ? `<div style="margin-top:4px">${apiReasonCodeBadge(it.reason_code)}</div>` : ""}
+                  ${it.gate_executed === false ? `<div class="gate-tag">门禁短路后·诊断结果</div>` : ""}</td>
+                <td><b>第 ${idx + 1} 项</b>${it.category ? ` <span class="hint">${esc(it.category)}</span>` : ""}<br>
+                  ${esc((it.assertion || "").slice(0, 150))}${(it.assertion || "").length > 150 ? "…" : ""}
+                  <div class="req-src">条款 ${fmtClause(it.clause_ref) || "—"}${it.page_no != null ? ` · ${apiSourcePageLink(it.source_link, it.page_no, "原文第 " + it.page_no + " 页")}` : (it.source_link ? ` · ${apiSourcePageLink(it.source_link, null)}` : "")}</div></td>
+                <td style="color:var(--ink-2)">${esc((it.reason || "—").slice(0, 160))}${(it.reason || "").length > 160 ? "…" : ""}</td>
+                <td><div class="fact-pair">${apiFactPair(it.required_value, it.observed_value)}
+                  ${it.evidence_state ? `<div class="hint">${esc(EVIDENCE_STATE_LABEL[it.evidence_state] || it.evidence_state)}</div>` : ""}</td>
+                <td>${(it.evidence_refs || []).length
+                    ? `<div class="ev-list" title="${esc(it.evidence_refs.join("\n"))}">${evShort(it.evidence_refs)}</div>`
+                    : (it.state === "satisfied" ? `<div class="ev-list">按已核验快照判定（见判定原因）</div>` : `<span class="hint">—</span>`)}
+                  ${it.person_id ? `<div class="hint">人选 ${esc(it.person_id)}${it.candidate_plan_id ? ` · 候选方案 ${esc(String(it.candidate_plan_id).slice(-18))}` : ""}</div>` : ""}</td>
+                <td class="hint">${esc(NEXT_ACTION_LABEL[it.next_action] || it.next_action || "—")}</td>
               </tr>`).join("")}
             ${!shown.length ? `<tr><td colspan="6" class="hint">当前筛选下无条目。</td></tr>` : ""}
           </tbody>
         </table>`;
       box.querySelectorAll("tr.clickable").forEach((tr) => {
         tr.addEventListener("click", () => {
-          const req = REQUIREMENTS.find((r) => r.requirement_id === tr.dataset.req);
-          if (req) openReqDetail(req);
+          const it = QUAL.find((x) => x.requirement_id === tr.dataset.req);
+          if (it) openReqDetail(it);
         });
       });
     }
 
-    function openReqDetail(r) {
+    function openReqDetail(it) {
       const mask = document.getElementById("drawer-mask");
       const drawer = document.getElementById("drawer");
-      document.getElementById("drawer-title").textContent = `${seqLabel(r)}${r.category ? " · " + r.category : ""}`;
-      const need = r.evidence_required || [];
+      document.getElementById("drawer-title").textContent = it.category ? it.category : "硬性要求详情";
       document.getElementById("drawer-body").innerHTML = `
-        <div class="notice info" style="margin-top:0"><b>条款引用</b>：${fmtClause(r.clause_ref) || "—"}${r.page_no != null ? `（第 ${esc(r.page_no)} 页）` : ""}</div>
+        <div class="notice info" style="margin-top:0"><b>条款引用</b>：${fmtClause(it.clause_ref) || "—"}${it.page_no != null ? `（第 ${esc(it.page_no)} 页）` : ""}
+          ${apiSourcePageLink(it.source_link, it.page_no, "点击查看原文" + (it.page_no != null ? "（定位到第 " + it.page_no + " 页）" : ""))}</div>
         <h3 style="margin-top:6px">招标要求原文</h3>
-        <div class="quote">${esc(r.assertion || "—")}</div>
-        <h3>匹配结论</h3>
+        <div class="quote">${esc(it.assertion || "—")}</div>
+        ${it.submission ? `<h3>招标文件要求提交的材料与阶段</h3><div class="notice ${it.submission.required ? "info" : ""}">
+          <div><b>${it.submission.required ? "原文明确要求提交" : "当前未定位到需提交材料"}</b> · ${esc(it.submission.stage || "—")}</div>
+          <div>${esc((it.submission.materials || []).join("；") || "无（不把企业内部资料自动当成随标材料）")}</div>
+          <div class="hint">${esc(it.submission.note || "")}</div></div>` : ""}
+        <h3>结论</h3>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          ${matchBadge(r.match)}${gateTag(r)}
+          ${apiResultStateBadge(it.state, it.state_label)}${it.reason_code ? apiReasonCodeBadge(it.reason_code) : ""}
+          ${it.gate_executed === false ? '<span class="gate-tag">门禁短路后·诊断结果</span>' : ""}
         </div>
-        <div style="margin-top:6px;font-size:13px;color:var(--ink-2)"><b>判定原因</b>：${esc(reasonText(r))}</div>
-        ${r.max_score != null ? `<div style="margin-top:6px;font-size:13px;color:var(--ink-2)">满分值：<b>${esc(r.max_score)}</b>${r.score != null ? ` ｜ 可复算得分：<b>${esc(r.score)}</b>` : " ｜ 可复算得分：—（无可复算公式或证据不足，不计入内部满分）"}</div>` : ""}
-        <h3>企业证据</h3>
-        ${(r.evidence || []).length
-          ? r.evidence.map((e) => `<div class="hint" title="${esc(e)}">${esc(apiEvidenceRefLabel(e))}</div>`).join("")
-          : `<div class="hint">${r.match === "satisfied" ? "按已核验的企业资料快照（资质/人员/业绩表）直接判定，未产生检索证据引用。" : "无企业证据引用——证据缺失默认阻断，不推断满足；动作类要求以动作登记状态为准。"}</div>`}
-        ${need.length ? `<div class="hint" style="margin-top:6px">该要求需要的证据类型：${need.map((e) => esc(apiEvidenceKindLabel(e))).join("、")}</div>` : ""}
-        <h3>溯源</h3>
-        <div class="hint">每条结论回链招标条款与企业证据；缺失字段一律标注“待补/待核实”，禁止编造（F003 / ADR-001）。</div>
+        <div style="margin-top:6px;font-size:13px;color:var(--ink-2)"><b>判定原因</b>：${esc(it.reason || "—")}</div>
+        <h3>事实值</h3>
+        <div class="fact-pair">${apiFactPair(it.required_value, it.observed_value)}
+          ${it.evidence_state ? `<div class="hint">证据状态：${esc(EVIDENCE_STATE_LABEL[it.evidence_state] || it.evidence_state)}</div>` : ""}</div>
+        <h3>企业证据与人员方案</h3>
+        ${(it.evidence_refs || []).length
+          ? it.evidence_refs.map((e) => `<div class="hint" title="${esc(e)}">· ${esc(apiEvidenceRefLabel(e))}</div>`).join("")
+          : `<div class="hint">${it.state === "satisfied" ? "按已核验的企业资料快照直接判定。" : "无企业证据引用——缺失默认阻断，不推断满足。"}</div>`}
+        ${it.person_id ? `<div class="hint" style="margin-top:6px">关联人选：<b>${esc(it.person_id)}</b>${it.candidate_plan_id ? `（候选方案 ${esc(it.candidate_plan_id)}，同一人满足该岗位全部条件）` : ""}</div>` : ""}
+        <h3>下一步</h3>
+        <div class="hint">${esc(NEXT_ACTION_LABEL[it.next_action] || it.next_action || "—")}</div>
         <details class="audit-fold"><summary>系统追溯编号（审计与去重用）</summary>
-          <div class="audit-code"><span><b>要求编号</b>：<code>${esc(r.requirement_id)}</code></span>
-          ${RUN && RUN.run_id ? `<span><b>匹配运行</b>：<code>${esc(RUN.run_id)}</code></span><span><b>规则集</b>：<code>${esc(RUN.rule_set_id || "")}</code></span>` : ""}</div>
+          <div class="audit-code"><span><b>要求编号</b>：<code>${esc(it.requirement_id)}</code></span>
+          ${OVERVIEW && OVERVIEW.run_context && OVERVIEW.run_context.run_id ? `<span><b>匹配运行</b>：<code>${esc(OVERVIEW.run_context.run_id)}</code></span>` : ""}</div>
         </details>`;
       mask.classList.add("open");
       drawer.classList.add("open");
     }
 
-    document.getElementById("tabs").addEventListener("click", (e) => {
-      const btn = e.target.closest(".tab");
-      if (!btn) return;
-      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-      btn.classList.add("active");
-      curType = btn.dataset.t;
-      curFilter = "all";
-      renderMatrix();
+    document.getElementById("parse-quality").addEventListener("click", (e) => {
+      if (e.target.closest("#btn-open-pe")) openPeDrawer();
     });
     document.getElementById("filters").addEventListener("click", (e) => {
       const chip = e.target.closest(".chip");
@@ -335,7 +785,47 @@
       renderMatrix();
     });
 
-    loadMatrix();
+    /* 原文定位（Bearer 拉 blob → 页内弹层 iframe，附 #page=<n>） */
+    let sourceObjUrl = null;
+    async function openSource(link, page) {
+      if (!link) return;
+      const modal = document.getElementById("source-modal");
+      const frame = document.getElementById("source-modal-frame");
+      const meta = document.getElementById("source-modal-meta");
+      meta.textContent = "正在加载原文…";
+      modal.style.display = "flex";
+      try {
+        const url = apiBase().replace(/\/api\/v1$/, "") + link;
+        const resp = await fetch(url, { headers: apiToken() ? { Authorization: "Bearer " + apiToken() } : {} });
+        if (!resp.ok) {
+          const data = await resp.json().catch(() => ({}));
+          throw new Error((data.error && data.error.message) || `HTTP ${resp.status}`);
+        }
+        if (sourceObjUrl) URL.revokeObjectURL(sourceObjUrl);
+        sourceObjUrl = URL.createObjectURL(await resp.blob());
+        frame.src = sourceObjUrl + (page ? `#page=${page}` : "");
+        meta.textContent = `已按解析所用版本打开${page ? ` · 定位到第 ${page} 页` : ""}`;
+      } catch (err) {
+        modal.style.display = "none";
+        apiShowError({ message: "打开原文失败：" + err.message });
+      }
+    }
+    document.getElementById("source-modal-close").addEventListener("click", () => {
+      document.getElementById("source-modal").style.display = "none";
+      document.getElementById("source-modal-frame").src = "about:blank";
+    });
+    document.getElementById("source-modal").addEventListener("click", (e) => {
+      if (e.target.id === "source-modal") {
+        e.currentTarget.style.display = "none";
+        document.getElementById("source-modal-frame").src = "about:blank";
+      }
+    });
+
+    try { loadAll(); } catch (e) {
+      const box = document.getElementById("api-error");
+      if (box) { box.innerHTML = '<div class="notice error">页面初始化失败：' + esc(e && e.message || e) +
+        '。多为浏览器缓存了旧版脚本——请强制刷新（Mac：Cmd+Shift+R / Windows：Ctrl+F5）。</div>'; box.style.display = "block"; }
+    }
   </script>
 </body>
 </html>

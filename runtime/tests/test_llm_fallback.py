@@ -297,3 +297,115 @@ def test_discovery_category_closed_set():
                                    client=_fake_client(["本项目所在区域气候宜人风景秀丽适合施工。"]),
                                    enabled=True)
     assert out == []  # 词表类别判不出 → 丢弃（不猜）
+
+
+# ── 2026-09-24 邢台实测回归：发现层分类与去重 ──────────────────────────────
+# 用户实测两起分类事故（MAT-PJ1d7fadae0b-TENDER）：
+#   ① 「…招标人取消其中标资格…」（合同签订条款）因含弱词「资格」被判**资质**类 →
+#      复核页出现"资质要求（大模型发现）"挂着无关摘录；
+#   ② 「单位负责人为同一人…不得参加投标」（信用条款）因含弱词「负责人」被判**人员**类 →
+#      人员组混入无关行（用户感知"人员要求重复"）。
+def test_discovery_classification_requires_topic_strong_words():
+    from runtime.parsing.llm_fallback import _classify_discovery
+
+    quote_contract = ("7.5.1招标人和中标人应当自中标通知书发出之日起30日内，根据招标文件和中标人的投标文件"
+                      "订立合同。中标人无正当理由拒签合同的，招标人取消其中标资格，其投标保证金不予退还。")
+    assert _classify_discovery(quote_contract) != "资质"   # 「中标资格」≠资质要求
+    assert _classify_discovery(quote_contract) == "动作"   # 中标通知书/保证金 → 投标动作
+    quote_conflict = ("3.13与招标人存在利害关系可能影响招标公正性的法人、其他组织或者个人，不得参加投标；"
+                      "单位负责人为同一人或者存在控股、管理关系的不同单位，不得参加同一项目投标；"
+                      "投标单位未处于投标禁止期。")
+    assert _classify_discovery(quote_conflict) != "人员"   # 「单位负责人」≠人员要求
+    assert _classify_discovery(quote_conflict) == "信用"
+    quote_cert_a = ("☑3.6企业主要负责人（法定代表人、企业经理、企业分管安全生产的副经理）"
+                    "具有对应有效的安全生产考核合格证书。")
+    assert _classify_discovery(quote_cert_a) == "人员"
+    # 「业绩…得3分」是评分条款（角色类优先于主体类）
+    assert _classify_discovery("完成过一项类似市政工程的得3分。") == "评分"
+    # 只有弱词/无主题词 → 丢弃
+    assert _classify_discovery("本项目所在区域气候宜人风景秀丽适合施工。") is None
+
+
+def test_discovery_drops_quote_already_covered_by_term_candidates():
+    # 「质量保证金 3%」已由 TERM_ANCHORS.retention_money 抽到；发现层此前只对比规则候选
+    # → 同一条款在"投标动作与风险条款"组出现两行（用户实测"重复"问题的一部分）
+    from runtime.parsing.llm_fallback import discover_rule_candidates
+    from runtime.rag.chunker import ParsedPage
+
+    pages = [ParsedPage(page_no=1, paragraphs=[
+        "☑从应付的工程款中预留质量保证金，比例为工程价款结算总额的3%；返还方式为：按照双方约定。",
+    ])]
+    term_like = [type("TermCand", (), {  # 形态对齐 MainCardCandidate（term 候选）
+        "assertion": "从应付的工程款中预留质量保证金，比例为工程价款结算总额的3%",
+        "missing_marker": False, "category": "", "field_key": "retention_money"})()]
+    out_with = discover_rule_candidates(pages, list(term_like), project_id="P", material_id="M",
+                                        content_hash="h", client=_fake_client([
+        "☑从应付的工程款中预留质量保证金，比例为工程价款结算总额的3%；返还方式为：按照双方约定。"]),
+        enabled=True)
+    assert out_with == []
+
+
+# ── 2026-09-24 解析优化四步之三：发现层 LangExtract 式分块多轮 ─────────────
+# 单次大截断只送得进得分最高的前几章；分块后每块独立送模型，长文件后部（评标办法/
+# 合同条款/投标文件格式）同样进入视野，逐字校验/哈希去重/重叠丢弃/强词分类口径不变。
+def test_discovery_chunked_multi_round_cover_late_pages(monkeypatch):
+    from runtime.core import config as cfg
+    from runtime.parsing.llm_fallback import discover_rule_candidates
+    from runtime.rag.chunker import ParsedPage
+
+    filler = "这一页是无关的填充内容，用于把分块预算撑满。" * 30   # ~510 字/页
+    # 两个相关页各带主题词且长度超过单块上限 → 必然分成两块（分块多轮才有意义）
+    pages = [
+        ParsedPage(page_no=1, paragraphs=[filler]),
+        ParsedPage(page_no=2, paragraphs=[
+            "（一）安全生产考核合格证书要求：企业主要负责人具有安全生产考核合格证书。",
+            "关于本条款的说明段落。"] * 12),
+        ParsedPage(page_no=3, paragraphs=[filler]),
+        ParsedPage(page_no=4, paragraphs=[filler]),
+        ParsedPage(page_no=9, paragraphs=[
+            "（七）与招标人存在利害关系可能影响招标公正性的，不得参加投标。",
+            "关于本条款的说明段落。"] * 12),
+    ]
+    calls = []
+
+    def client(messages):
+        calls.append(messages[1]["content"])
+        # 每块都返回该块里的条款（模型只看得到当前块）
+        quotes = []
+        if "安全生产考核" in messages[1]["content"]:
+            quotes.append("企业主要负责人具有安全生产考核合格证书。")
+        if "利害关系" in messages[1]["content"]:
+            quotes.append("与招标人存在利害关系可能影响招标公正性的，不得参加投标。")
+        from runtime.core.model import ModelResult
+        return ModelResult(ok=True, data={"items": [{"quote": q} for q in quotes]})
+
+    monkeypatch.setattr(cfg, "llm_discovery_chunk_chars", lambda: 400)
+    monkeypatch.setattr(cfg, "llm_discovery_max_chunks", lambda: 4)
+    out = discover_rule_candidates(pages, [], project_id="P", material_id="M",
+                                   content_hash="h", client=client, enabled=True)
+    assert len(calls) >= 2, f"应分多块调用（实际 {len(calls)} 次）"
+    cats = {c.category for c in out}
+    assert cats == {"人员", "信用"}          # 后部页面（利害关系）也能被发现
+    assert all(c.page_no in (2, 9) for c in out)
+
+
+def test_discovery_chunk_budget_respected(monkeypatch):
+    from runtime.core import config as cfg
+    from runtime.parsing.llm_fallback import discover_rule_candidates
+    from runtime.rag.chunker import ParsedPage
+
+    pages = [ParsedPage(page_no=i, paragraphs=["评分：本项得3分。" + "填充" * 100])
+             for i in range(1, 9)]
+    calls = []
+
+    def client(messages):
+        calls.append(1)
+        from runtime.core.model import ModelResult
+        return ModelResult(ok=True, data={"items": []})
+
+    monkeypatch.setattr(cfg, "llm_discovery_chunk_chars", lambda: 400)
+    monkeypatch.setattr(cfg, "llm_discovery_max_chunks", lambda: 2)
+    out = discover_rule_candidates(pages, [], project_id="P", material_id="M",
+                                   content_hash="h", client=client, enabled=True)
+    assert out == []
+    assert len(calls) == 2                    # 预算硬上限：块数 ≤ max_chunks

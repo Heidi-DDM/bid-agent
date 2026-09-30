@@ -4,14 +4,14 @@
    ============================================================ */
 
 const STEPS = [
-  { id: "index",     label: "搜索与推送", page: "index.html" },
-  { id: "pool",      label: "简报与待选池", page: "pool.html" },
-  { id: "import",    label: "选择与解析", page: "import.html" },
-  { id: "matrix",    label: "自动匹配",   page: "matrix.html" },
-  { id: "score",     label: "风险与缺失", page: "score.html" },
-  { id: "workbench", label: "项目工作台", page: "workbench.html" },
-  { id: "queue",     label: "复核与补录", page: "queue.html" },
-  { id: "approval",  label: "人工审核",   page: "approval.html" },
+  { id: "index",      label: "搜索与推送", page: "index.html" },
+  { id: "pool",       label: "简报与待选池", page: "pool.html" },
+  { id: "import",     label: "选择与解析", page: "import.html" },
+  { id: "matrix",     label: "当前结论（资格）", page: "matrix.html" },
+  { id: "score",      label: "评分分析", page: "score.html" },
+  { id: "operations", label: "投标执行计划", page: "operations.html" },
+  { id: "queue",      label: "待确认与处置", page: "queue.html" },
+  { id: "approval",   label: "人工审核", page: "approval.html" },
 ];
 
 const NAV = [
@@ -22,8 +22,9 @@ const NAV = [
   { label: "企业资料库（后台）", page: "materials.html" },
   { label: "企业画像", page: "profile.html" },
   { label: "风险与缺失", page: "score.html" },
+  { label: "投标执行计划", page: "operations.html" },
   { label: "项目工作台", page: "workbench.html" },
-  { label: "复核与补录", page: "queue.html" },
+  { label: "待确认与处置", page: "queue.html" },
   { label: "人工审核", page: "approval.html" },
   { label: "进度面板", page: "dashboard.html" },
   { label: "异常态演示", page: "exceptions.html" },

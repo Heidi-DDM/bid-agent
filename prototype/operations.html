@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>投标执行计划｜投标智能体</title>
+  <link rel="stylesheet" href="styles.css?v=20260929d">
+</head>
+<body>
+  <header class="topbar"></header>
+
+  <div class="layout">
+    <div class="main">
+      <div class="steps"></div>
+      <div id="api-error" style="display:none"></div>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>投标执行计划 — <span id="proj-name">加载中…</span></h2>
+          <span class="hint">报名、CA、保证金、编制、递交、开标、踏勘按阶段跟踪；这些是执行动作，<b>不属于企业缺证</b>（ADR-008 §2.2-3）。</span>
+        </div>
+        <div id="run-context" class="run-context"></div>
+        <div id="hist-banner"></div>
+        <div id="ops-gate-note" style="margin:8px 0"></div>
+        <div id="ops-timeline" class="ops-timeline">加载中…</div>
+      </section>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+        <a class="btn" href="matrix.html">← 当前结论（资格与资源）</a>
+        <a class="btn ghost" href="score.html">评分分析 →</a>
+        <a class="btn ghost" href="workbench.html">项目工作台 →</a>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>某建设集团 · 投标智能体 — 投标执行计划页（ADR-008 / docs/12 §2.4）</span>
+    <span>数据均为脱敏演示数据，不代表真实业务</span>
+  </footer>
+
+  <script src="data.js?v=20260929d"></script>
+  <script src="api.js?v=20260929d"></script>
+  <script src="common.js?v=20260929d"></script>
+  <script>
+    initPage("operations.html", "operations");
+    const PJ0 = apiProjectId();
+    const PJ = () => PJ0.id;
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    let PLAN = null;
+
+    const STATUS_OPTIONS = [
+      ["not_started", "尚未开始"], ["ready", "就绪"], ["completed", "已完成"], ["overdue", "已逾期"], ["not_applicable", "不适用"],
+    ];
+
+    async function loadPlan() {
+      const errBox = document.getElementById("api-error");
+      try {
+        PLAN = await apiOperationPlan(PJ());
+        const proj = await apiGet(`/projects/${PJ()}`).catch(() => null);
+        document.getElementById("proj-name").textContent = proj ? proj.project_name : PJ();
+        document.getElementById("proj-name").insertAdjacentHTML("afterend", apiProjectChip(PJ0));
+        renderContext();
+        renderGateNote();
+        renderTimeline();
+      } catch (err) {
+        if (err.status === 403) { errBox.innerHTML = `<div class="notice error">权限不足：当前角色「${apiRoleLabel()}」无权查看执行计划。</div>`; errBox.style.display = "block"; return; }
+        if (err.status === 401) { errBox.innerHTML = `<div class="notice error">未登录：请用右上角账号登录。</div>`; errBox.style.display = "block"; return; }
+        errBox.innerHTML = `<div class="notice error">加载执行计划失败：${esc(err.message)}</div>`; errBox.style.display = "block";
+      }
+    }
+
+    function renderContext() {
+      const rc = PLAN.run_context || {};
+      const when = PLAN.generated_at ? String(PLAN.generated_at).slice(0, 16).replace("T", " ") : "—";
+      document.getElementById("run-context").innerHTML = [
+        `<span class="rc-item">运行 <b>${esc(rc.run_id || "尚无")}</b></span>`,
+        `<span class="rc-item">判定时点 <b>${esc(PLAN.as_of || "—")}</b></span>`,
+        `<span class="rc-item">生成时间 <b>${esc(when)}</b></span>`,
+      ].join("") + ((PLAN.result_freshness === "stale" || PLAN.is_current === false)
+        ? `<span class="rc-stale"><span class="badge warn">已过期（stale）</span></span>` : "");
+      document.getElementById("hist-banner").innerHTML = PLAN.historical_sample
+        ? `<div class="hist-banner"><span class="hist-tag">${esc(PLAN.historical_sample_banner)}</span>
+            <div>${esc(PLAN.historical_sample_note || "")}</div></div>` : "";
+    }
+
+    function renderGateNote() {
+      const el = document.getElementById("ops-gate-note");
+      if (PLAN.approval_actions_ready) {
+        el.innerHTML = `<div class="notice ok"><b>审批前动作已就绪</b>——标注「审批前就绪」的动作均已完成或就绪（未开始的递交/开标等后续动作不阻断进入审批，F008 §4.3 / docs/12 §2.4）。</div>`;
+      } else {
+        el.innerHTML = `<div class="notice warn"><b>审批前动作未就绪</b>——原文明确要求在审批前完成的动作（报名/CA/保证金等）尚未完成；这是执行阶段事项，<b>不是企业缺证</b>。完成并登记回执后重算即恢复。</div>`;
+      }
+    }
+
+    function renderTimeline() {
+      const box = document.getElementById("ops-timeline");
+      const stages = PLAN.stages || [];
+      if (!stages.length) {
+        box.innerHTML = `<div class="hint">尚无执行动作条目——招标文件解析未产出动作类要求（或仍在解析质量区待处置）。</div>`;
+        return;
+      }
+      box.innerHTML = stages.map((st) => `
+        <div class="ops-stage${st.gates_approval ? " gate" : ""}">
+          <div class="os-head">
+            <b>${esc(st.stage_label)}</b>
+            ${st.gates_approval ? '<span class="badge info">审批前门禁</span>' : '<span class="badge gray">到阶段检查</span>'}
+            ${st.ready ? '<span class="badge ok">就绪</span>' : '<span class="badge warn">未就绪</span>'}
+            <span class="hint">${st.tasks.length} 项动作</span>
+          </div>
+          ${st.tasks.map((t) => taskHtml(t)).join("")}
+        </div>`).join("");
+      box.querySelectorAll("[data-task]").forEach((rowEl) => bindTaskActions(rowEl));
+    }
+
+    function taskHtml(t) {
+      const overdue = t.status !== "completed" && t.deadline_at && new Date(t.deadline_at) < new Date();
+      return `
+        <div class="ops-task${overdue ? " is-overdue" : ""}" data-task="${esc(t.operation_task_id)}" data-version="${t.version}">
+          <div class="ot-main">
+            <div class="ot-title"><span class="badge gray">${esc(TASK_KIND_LABEL[t.task_kind] || t.task_kind)}</span> ${esc(t.title)}</div>
+            <div class="ot-meta">条款 ${fmtClause(t.clause_ref) || "—"}
+              ${t.deadline_at ? ` · 截止 <b>${esc(String(t.deadline_at).slice(0, 16).replace("T", " "))}</b>${overdue ? ' <span class="badge danger">已超期</span>' : ""}` : " · 截止待补"}
+              · 责任角色 ${esc(t.owner_role === "bid_specialist" ? "投标专员" : t.owner_role)}${t.owner ? `（${esc(t.owner)}）` : ""}
+              ${t.completed_at ? ` · 完成 ${esc(String(t.completed_at).slice(0, 16).replace("T", " "))}${t.completed_by ? ` by ${esc(t.completed_by)}` : ""}` : ""}</div>
+            ${(t.receipt_evidence_refs || []).length
+              ? `<div class="hint">回执：${t.receipt_evidence_refs.map((r) => `<code title="${esc(r)}">${esc(String(r).slice(0, 40))}</code>`).join("、")}</div>` : ""}
+          </div>
+          <div class="ot-actions">
+            ${apiResultStateBadge(t.status, t.status_label)}
+            <select class="ot-status" title="登记动作状态">
+              ${STATUS_OPTIONS.map(([v, l]) => `<option value="${v}"${v === t.status ? " selected" : ""}>${l}</option>`).join("")}
+            </select>
+            <input type="text" class="ot-receipt" placeholder="回执引用（完成必填）" style="width:180px">
+            <button class="btn sm ot-save">登记</button>
+            <span class="hint ot-hint"></span>
+          </div>
+        </div>`;
+    }
+
+    function bindTaskActions(rowEl) {
+      const taskId = rowEl.dataset.task;
+      rowEl.querySelector(".ot-save").addEventListener("click", async () => {
+        const status = rowEl.querySelector(".ot-status").value;
+        const receipt = rowEl.querySelector(".ot-receipt").value.trim();
+        const hint = rowEl.querySelector(".ot-hint");
+        const refs = receipt ? receipt.split(/[,，\s]+/).filter(Boolean) : null;
+        try {
+          const r = await apiUpdateOperationTask(taskId, {
+            status, receipt_evidence_refs: refs,
+            version: parseInt(rowEl.dataset.version, 10),
+          });
+          hint.style.color = "";
+          hint.textContent = `✓ 已登记（request_id ${r.request_id || "—"}）`;
+          await loadPlan();
+        } catch (err) {
+          apiShowError(err);
+          hint.style.color = "var(--danger,#dc2626)";
+          hint.textContent = "登记失败：" + (err.message || "");
+        }
+      });
+    }
+
+    try { loadPlan(); } catch (e) {
+      const box = document.getElementById("api-error");
+      if (box) { box.innerHTML = '<div class="notice error">页面初始化失败：' + esc(e && e.message || e) +
+        '。多为浏览器缓存了旧版脚本——请强制刷新（Mac：Cmd+Shift+R / Windows：Ctrl+F5）。</div>'; box.style.display = "block"; }
+    }
+  </script>
+</body>
+</html>

@@ -380,6 +380,11 @@ def create_approval(session: Session, *, project_id: str, role: str, actor: str,
     lifecycle_service.ensure_identity_then_deny(
         session, project_row, action="approval", actor=actor, audit_action="approval.create_denied"
     )
+    # ADR-008 / docs/12 §7：历史解析样本测试上下文 → 审批创建二次拒绝（服务端，
+    # 不可由前端参数绕过；导出审批包/递交接口落地时同样接入 ensure_not_historical_sample）。
+    from runtime.db.results_service import ensure_not_historical_sample
+
+    ensure_not_historical_sample(session, project_id, actor=actor, action="approval.create")
     result = latest_admission(session, project_id)
     if result is None or not result.internal_admission_eligible:
         audit(session, actor=actor, action="approval.create_denied",
@@ -558,10 +563,12 @@ def list_audit(session: Session, project_id: str, role: str) -> list[dict[str, A
 # ---------- 匹配/准入/队列（F020 §2.2.3/§2.2.4，只读展示） ----------
 
 def latest_match_run(session: Session, project_id: str) -> MatchRun | None:
+    # ADR-008（docs/12 §3.5）：默认仅返回最新 current 运行（新运行产生后旧运行 is_current=False；
+    # 迁移前的存量行默认 true，created_at desc 兜底取最新）。
     return session.scalar(
         select(MatchRun)
         .where(MatchRun.project_id == project_id)
-        .order_by(MatchRun.created_at.desc())
+        .order_by(MatchRun.is_current.desc(), MatchRun.created_at.desc())
         .limit(1)
     )
 
@@ -580,6 +587,9 @@ def match_runs_latest(session: Session, project_id: str) -> dict[str, Any]:
         "coverage": run.coverage,
         "status": run.status,
         "created_at": run.created_at.isoformat() if run.created_at else None,
+        # ADR-008（docs/12 §3.5）：所有投影接口回显同一 run_context
+        "run_context": run.run_context,
+        "is_current": run.is_current,
     }
 
 
@@ -772,16 +782,25 @@ def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
     页面上显示成英文 "final"（2026-09-16 用户实测）。
     """
     result = latest_admission(session, project_id)
+    run = latest_match_run(session, project_id)
+    # ADR-008（docs/12 §4.2）：旧接口过渡期不删除——回显 run_context 并标记
+    # deprecated_projection（新页面由 result-overview 等新接口承接）。
+    context_echo = {"run_context": run.run_context if run else None,
+                    "is_current": run.is_current if run else None,
+                    "deprecated_projection": True}
     if result is None:
         return {
             "admission": {
                 "qualification": "pending", "hard_satisfied": 0, "hard_total": 0,
-                "scoring": "not_full", "objective_score": 0, "objective_max": 0,
+                "scoring": "not_full", "objective_score": None, "objective_max": None,
+                "scoring_calculable": False,
                 "readiness": "not_ready", "action_done": 0, "action_total": 0,
                 "eligible": False, "state": "collecting",
                 "next_step": next_step.next_step_of_admission("collecting"),
                 "missing": [], "review": [], "manager": None, "price": None,
-            }
+                "blocking_reasons": [],
+            },
+            **context_echo,
         }
     project = session.get(Project, project_id)
     business_state = (project.admission_status if project else None) or (
@@ -792,8 +811,11 @@ def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
             "hard_satisfied": result.qualification_result.get("satisfied", 0),
             "hard_total": result.qualification_result.get("total", 0),
             "scoring": result.scoring_result.get("status", "not_full"),
-            "objective_score": result.scoring_result.get("objective_score", 0),
-            "objective_max": result.scoring_result.get("objective_max", 0),
+            # ADR-008（docs/12 §2.3）：无可自动计算评分项时为 None（不输出 0/0）；
+            # scoring_calculable 供前端区分「不可计算」与「未满分」。
+            "objective_score": result.scoring_result.get("objective_score"),
+            "objective_max": result.scoring_result.get("objective_max"),
+            "scoring_calculable": bool(result.scoring_result.get("calculable", True)),
             "readiness": result.operational_readiness.get("status", "not_ready"),
             "action_done": result.operational_readiness.get("action_done", 0),
             "action_total": result.operational_readiness.get("action_total", 0),
@@ -809,7 +831,10 @@ def admission_summary(session: Session, project_id: str) -> dict[str, Any]:
             "blocked": [_display_item(it) for it in (result.blocked_items or [])],
             "manager": (result.manager_matches[0] if result.manager_matches else None),
             "price": result.scoring_result.get("price"),
-        }
+            "blocking_reasons": result.blocking_reasons or [],
+            "parse_quality_summary": result.parse_quality_summary or {},
+        },
+        **context_echo,
     }
 
 
@@ -822,9 +847,13 @@ def queues_summary(session: Session, project_id: str) -> dict[str, Any]:
     已按证据如实填充，无来源为 null）。
     """
     result = latest_admission(session, project_id)
+    run = latest_match_run(session, project_id)
+    context_echo = {"run_context": run.run_context if run else None,
+                    "is_current": run.is_current if run else None,
+                    "deprecated_projection": True}
     empty = {"blocked_hard_requirement": [], "blocked_missing_data": [], "manual_review": []}
     if result is None:
-        return {"queues": empty}
+        return {"queues": empty, **context_echo}
 
     def _item(it: dict) -> dict[str, Any]:
         return {
@@ -853,11 +882,52 @@ def queues_summary(session: Session, project_id: str) -> dict[str, Any]:
     }
 
 
+def latest_match_job(session: Session, project_id: str) -> dict[str, Any] | None:
+    """项目最近一次匹配任务（match.run/match.recalculate）的队列状态（只读，不创建任务）。
+
+    match.run 被 ADR-004 门禁终态拒绝时不会产生 MatchRun，此前矩阵页在"尚无运行"
+    分支只能显示"排队中稍后刷新"，用户无从知道任务已失败及原因（2026-09-23
+    PJ-b4e65720e2 gate_overdue 实测）。矩阵页据此区分
+    未触发 / 排队中 / 执行中 / 待重试 / 终态失败并展示 error_message。
+    """
+    from runtime.db.models import AnalysisJob
+
+    job = session.scalar(
+        select(AnalysisJob)
+        .where(AnalysisJob.project_id == project_id,
+               AnalysisJob.kind.in_(("match.run", "match.recalculate")))
+        .order_by(AnalysisJob.created_at.desc())
+        .limit(1)
+    )
+    if job is None:
+        return None
+    return {
+        "job_id": job.job_id,
+        "kind": job.kind,
+        "status": job.status,
+        "attempts": job.attempts,
+        "max_attempts": job.max_attempts,
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+    }
+
+
 def matrix_view(session: Session, project_id: str) -> dict[str, Any]:
-    """矩阵页合并视图：requirements + 逐条 match_items（F020 §2.2.4，只读）。"""
+    """矩阵页合并视图：requirements + 逐条 match_items + 最近匹配任务状态（F020 §2.2.4，只读）。
+
+    ADR-008（docs/12 §4.2）：旧接口过渡期不删除——回显 run_context（含于 run）并标记
+    deprecated_projection（资格首屏由 result-overview/qualification-matrix 承接）。
+    """
+    run = match_runs_latest(session, project_id)
     return {
         "requirements": list_requirements(session, project_id),
-        "run": match_runs_latest(session, project_id),
+        "run": run,
+        "run_context": run.get("run_context") if isinstance(run, dict) else None,
+        "is_current": run.get("is_current") if isinstance(run, dict) else None,
+        "deprecated_projection": True,
+        "match_job": latest_match_job(session, project_id),
     }
 
 

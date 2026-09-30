@@ -17,10 +17,15 @@ class MatchingEngineTests(unittest.TestCase):
         self.assertTrue(result["valid"], result["errors"])
         self.assertEqual(result["counts"], {"hard_requirement": 9, "scored_requirement": 3, "action_requirement": 4})
 
-    def test_verification_cannot_be_after_as_of(self):
+    def test_verification_after_as_of_is_valid_but_window_enforced(self):
+        # F023 v1.6（2026-09-23）：核验是对既有事实的事后确认，核验时间可晚于判定时点；
+        # 有效性仍严格按 valid_from/valid_until 对 as_of 判定（docs/12 §3.2 状态拆分：
+        # 过期属 certificate_expired 事实，不覆盖窗口属待核验）。
         evidence = {"status": "active", "verified_at": "2026-08-27", "valid_until": "2029-01-01"}
-        self.assertFalse(evidence_is_valid(evidence, "2024-05-15"))
+        self.assertTrue(evidence_is_valid(evidence, "2024-05-15"))
         self.assertTrue(evidence_is_valid(evidence, "2026-08-27"))
+        expired = {"status": "active", "verified_at": "2026-08-27", "valid_until": "2024-01-01"}
+        self.assertFalse(evidence_is_valid(expired, "2024-05-15"))
 
     def test_financial_year_and_credit_checks_are_enforced(self):
         evidence = {
@@ -29,7 +34,9 @@ class MatchingEngineTests(unittest.TestCase):
         }
         result = evaluate(GOLDEN[:4], evidence, as_of="2024-05-15", mode="diagnostic")
         self.assertEqual(result["matrix"][2]["match_result"], "unverifiable")
-        self.assertEqual(result["matrix"][3]["match_result"], "unverifiable")
+        # 2026-09-29 用户裁定：失信=状态自查项——有已核验无失信记录时如实「满足」；
+        # 无记录时为 not_applicable 自查项，均不再作缺证阻断
+        self.assertEqual(result["matrix"][3]["match_result"], "satisfied")
 
     def test_diagnostic_executes_all_sixteen_and_gate_short_circuits(self):
         evidence = {
@@ -48,7 +55,10 @@ class MatchingEngineTests(unittest.TestCase):
                                   "verified_at": "2024-01-01", "valid_until": "2028-01-01"}]
         }
         result = evaluate([GOLDEN[4]], evidence, as_of="2024-05-15")
-        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+        # 专业与规则要求不符 → 事实性不满足（docs/12 §3.2 profession_mismatch），
+        # 不再以「无一人同时满足」合写为 unverifiable
+        self.assertEqual(result["matrix"][0]["match_result"], "not_satisfied")
+        self.assertEqual(result["matrix"][0]["reason_code"], "profession_mismatch")
 
     def test_expired_evidence_is_unverifiable(self):
         # 证据有效期不覆盖 as_of → unverifiable，不得判满足（F008 §9.1 时点门禁）
@@ -59,15 +69,17 @@ class MatchingEngineTests(unittest.TestCase):
         result = evaluate([GOLDEN[0]], evidence, as_of="2024-05-15")
         self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
 
-    def test_manager_active_project_conflict_is_unverifiable(self):
-        # 专业/等级/B证全满足但在建 → 不得判满足（一票否决语义；缺无在建证据 → unverifiable）
+    def test_manager_active_project_conflict_is_not_satisfied(self):
+        # 专业/等级/B证全满足但在建 → 明确不满足（docs/12 §3.2：onsite_conflict 属事实性
+        # 资源冲突，处置是调整在施/换人，不得伪装缺证据 unverifiable）
         evidence = {
             "manager_profile": [{"manager_id": "PM-2", "specialty": ["市政公用工程"], "cert_level": "一级", "b_cert": True,
                                   "status": "active", "availability": "available", "active_projects": ["某在施项目"],
                                   "verified_at": "2024-01-01", "valid_until": "2028-01-01"}]
         }
         result = evaluate([GOLDEN[4]], evidence, as_of="2024-05-15")
-        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+        self.assertEqual(result["matrix"][0]["match_result"], "not_satisfied")
+        self.assertEqual(result["matrix"][0]["reason_code"], "onsite_conflict")
 
     def test_bid_bond_amount_or_form_mismatch_is_not_satisfied(self):
         # 金额不符 → not_satisfied（阻断）；形式不符 → not_satisfied
@@ -82,9 +94,11 @@ class MatchingEngineTests(unittest.TestCase):
         self.assertTrue(r1["blocked"])
 
     def test_quote_must_be_entered_by_person(self):
-        # 报价未人工录入 → unverifiable，系统不生成/推荐报价
+        # 报价未人工录入 → not_calculable（docs/12 §3.2：authorized_input_missing），
+        # 系统不生成/推荐报价
         result = evaluate([GOLDEN[9]], {}, as_of="2024-05-15")
-        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+        self.assertEqual(result["matrix"][0]["match_result"], "not_calculable")
+        self.assertEqual(result["matrix"][0]["reason_code"], "authorized_input_missing")
         self.assertIn("人员录入", result["matrix"][0]["match_reason"])
 
     def test_response_document_missing_is_unverifiable(self):
@@ -124,13 +138,14 @@ class MatchingEngineTests(unittest.TestCase):
         m5 = next(m for m in r5["matrix"] if m["requirement_id"] == "RQ-H-008")
         m3 = next(m for m in r3["matrix"] if m["requirement_id"] == "RQ-H-008")
         self.assertEqual(m5["match_result"], "satisfied")
-        self.assertEqual(m3["match_result"], "unverifiable")
+        # 2026-09-29 用户裁定：保证金无凭证=投标执行事项（递交前办理），不再缺证阻断
+        self.assertEqual(m3["match_result"], "not_applicable")
         self.assertEqual(r5["coverage"]["declared"], 16)
         self.assertEqual(r3["coverage"]["declared"], 16)
         self.assertEqual(r5["coverage"]["complete"], True)
 
 
-    def test_scored_without_score_formula_is_manual_review(self):
+    def test_scored_without_score_formula_is_not_calculable(self):
         # R021 真库回归（2026-09-02）：自动锚点抽取的 scored requirement 无评分细则
         # （score_formula/max_score 列 NULL，DB 行转 dict 后为 None）→ engine 不得崩
         # （None.get AttributeError），落 manual_review「评分公式或输入不完整」等人工补公式
@@ -148,7 +163,8 @@ class MatchingEngineTests(unittest.TestCase):
         }
         result = evaluate([item], {}, as_of="2024-05-15", mode="diagnostic")
         m = result["matrix"][0]
-        self.assertEqual(m["match_result"], "manual_review")
+        self.assertEqual(m["match_result"], "not_calculable")
+        self.assertEqual(m["reason_code"], "formula_missing")
         self.assertIn("评分公式", m["match_reason"])
         self.assertIsNone(m["score"])
         self.assertTrue(result["review"])
@@ -180,10 +196,16 @@ class NongdaRulesTests(unittest.TestCase):
         self.assertEqual(result["matrix"][0]["match_result"], "satisfied")
 
     def test_safety_officer_count_insufficient(self):
+        # docs/12 8.1-1 状态拆分：已核验 1 人 < 要求 3 人 → 事实性不满足（数量不足），
+        # 不再与「证据缺失」合写为 unverifiable
         rule = [r for r in self.REQS if r["requirement_id"] == "NQ-H-005"][0]
         ev = {"safety_officer_cert": [{"cert_type": "C", "status": "valid", "verified_at": "2025-09-01"}]}
         result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
-        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+        m = result["matrix"][0]
+        self.assertEqual(m["match_result"], "not_satisfied")
+        self.assertEqual(m["reason_code"], "verified_quantity_insufficient")
+        self.assertEqual(m["observed_value"]["value"], 1)
+        self.assertEqual(m["required_value"]["value"], 2)
 
     def test_technical_team_missing_specialty(self):
         rule = [r for r in self.REQS if r["requirement_id"] == "NQ-H-006"][0]
@@ -214,7 +236,7 @@ class NongdaRulesTests(unittest.TestCase):
             {"subject": "bidder", "project_name": "小面积项目", "area": 15000.0, "project_type": "房屋建筑",
              "completed_at": "2023-10-11", "status": "valid", "verified_at": "2025-09-01"}]}
         result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
-        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+        self.assertEqual(result["matrix"][0]["match_result"], "not_calculable")
 
     def test_similar_performance_outside_window(self):
         rule = [r for r in self.REQS if r["requirement_id"] == "NQ-S-003"][0]
@@ -222,7 +244,7 @@ class NongdaRulesTests(unittest.TestCase):
             {"subject": "bidder", "project_name": "窗口外项目", "area": 30000.0, "project_type": "房屋建筑",
              "completed_at": "2022-06-01", "status": "valid", "verified_at": "2025-09-01"}]}
         result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
-        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+        self.assertEqual(result["matrix"][0]["match_result"], "not_calculable")
 
     def test_similar_performance_subject_mismatch_not_shared(self):
         # 投标人业绩与项目经理业绩不可通用（招标文件 第三章四(5) 备注 c）
@@ -231,7 +253,7 @@ class NongdaRulesTests(unittest.TestCase):
             {"subject": "bidder", "project_name": "仅投标人业绩", "area": 30000.0, "project_type": "房屋建筑",
              "completed_at": "2023-10-11", "status": "valid", "verified_at": "2025-09-01"}]}
         result = evaluate([rule], ev, as_of="2025-10-30", mode="diagnostic")
-        self.assertEqual(result["matrix"][0]["match_result"], "unverifiable")
+        self.assertEqual(result["matrix"][0]["match_result"], "not_calculable")
 
     def test_nongda_real_evidence_no_blocked(self):
         # 真实脱敏证据重跑：无阻断；仅财务审计素材缺口待补（当年必有 → 待公司补充）
@@ -243,7 +265,7 @@ class NongdaRulesTests(unittest.TestCase):
         result = ev(self.REQS, evidence, as_of="2025-10-30", mode="diagnostic")
         self.assertEqual(result["coverage"], {"executed": 20, "declared": 20, "complete": True})
         self.assertEqual(result["blocked"], [])
-        self.assertEqual(result["operational_readiness"], "ready")
+        self.assertEqual(result["operational_readiness"]["status"], "ready")
         self.assertEqual([m["requirement_id"] for m in result["pending"]], ["NQ-H-007"])
 
 

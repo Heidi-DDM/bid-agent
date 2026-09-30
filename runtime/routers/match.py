@@ -62,8 +62,13 @@ def trigger_match(
                        "不满足首次匹配触发条件：需解析成功且尚无匹配 run（F020 §2.1）")
 
     job, created = worker_service.create_job(
-        session, kind="match.run", input_ref=project_id, project_id=project_id
+        session, kind="match.run", input_ref=project_id, project_id=project_id,
+        retry_failed=True,
     )
+    # retry_failed=True（2026-09-23）：首次 match.run 被门禁终态拒绝后，纠正数据
+    # （延期登记/身份纠正）再次触发必须复活既有失败任务，否则幂等键永远占住、
+    # 匹配不再执行（与 schedule_post_parse 2026-09-15 修复同一理由）；
+    # 门禁在上方 ensure_identity_then_deny 已过，复活即安全。
     api_service.audit(session, actor=actor, action="match.trigger",
                       basis=f"project_id={project_id}",
                       outcome="created" if created else "idempotent_reuse",

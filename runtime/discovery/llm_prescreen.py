@@ -7,6 +7,7 @@
 2. 依据词（reason）必须是标题子串（机器校验），不过 → 该条不入库结论、回落人工；
 3. 类别/相关性/置信度走封闭词表；LLM 判定非招标且置信度 ≥ 中 → 移出待处理
    （excluded_by=llm 留审计，人工可一键恢复），相关性结论只用于排序与徽标；
+   确定性规则命中经营策略排除关键词的条目不进入 LLM 预筛（策略排除优先，2026-09-24）；
 4. 开关关闭 / 出域门禁不过 / 网络失败 → 零副作用（fail-open 回落人工，不阻断搜索）；
 5. 幂等：已有 llm_assist 结论的条目不重复调用。
 """
@@ -179,9 +180,12 @@ def prescreen_pool_items(
     call = client or _default_client()
     on = is_enabled() if enabled is None else enabled
     stats = {"processed": 0, "classified": 0, "ai_excluded": 0, "promoted": 0, "kept_manual": 0}
+    # 策略排除优先于 AI（2026-09-24 用户规则）：确定性规则命中排除关键词的条目
+    # 停留 needs_manual_review 待人工处理，AI 不得将其晋级回主列表或代为排除。
     todo = [it for it in items
             if it.pool_status in ("pending", "needs_manual_review")
-            and not (it.screening or {}).get("llm_assist")]
+            and not (it.screening or {}).get("llm_assist")
+            and not (it.screening or {}).get("matched_exclusions")]
     stats["kept_manual"] = len(items) - len(todo)
     if not on:
         stats["kept_manual"] += len(todo)

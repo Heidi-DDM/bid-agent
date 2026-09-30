@@ -261,3 +261,149 @@ def test_qualification_label_style_keeps_semicolon_subitems_stops_at_next_clause
     pages2 = [_page(2, "资质要求：（1）具备市政资质壹级；（2）具有安全生产许可证；（2）业绩要求：近三年一项。")]
     q2 = _by_anchor(pages2)["qualification_grade"]
     assert q2.assertion == "资质要求：（1）具备市政资质壹级；（2）具有安全生产许可证"
+
+
+# ── 2026-09-24 邢台排水管网实测回归（region/ceiling 正则过约束 + 表头 FP）──
+# 实测材料：MAT-PJ1d7fadae0b-TENDER（115 页），三个用户可见 bug：
+#   ① region 只认「省?市…区/县」行政区划版式，原文「建设地点：中兴大街(钢铁路-滨江路、
+#      襄都路-高速路下道口)等 13 条街道。」是街道描述 → 每次都 missing；
+#   ② ceiling_price 单位写死「万元」，原文「最高投标限价328447260元」为元计 → 报缺失；
+#   ③ pm_similar_performance 把「近年完成的类似项目情况表」表头（项目经理 技术负责人
+#      项目描述 备注…）当成项目经理业绩要求（「技术负责人」里的「负责」被当谓语）。
+
+_XT_PAGES = [
+    _page(1, "邢台市市区部分街道排水管网提升改造项目施工招标公告"),
+    _page(7,
+          "1.2.1 本招标项目的建设地点：中兴大街(钢铁路-滨江路、襄都路-高速路下道口)等 13 条街道。",
+          "2.2 本次招标范围和内容：审定施工图纸及工程量清单范围内的全部内容。本次招标最高投标限价328447260元。"),
+    _page(105, "（二）近年完成的类似项目情况表", "项目名称", "项目所在地", "合同价格", "开工日期",
+          "竣工日期", "工程质量", "项目经理", "技术负责人", "项目描述", "备注",
+          "备注：1、类似项目指市政公用工程。"),
+]
+
+
+def test_region_street_description_not_admin_division():
+    fields = {c.field_key: c for c in extract_main_card(_XT_PAGES)}
+    assert fields["region"].missing_marker is False
+    assert fields["region"].value == "中兴大街(钢铁路-滨江路、襄都路-高速路下道口)等13条街道"
+    assert fields["region"].page_no == 7
+
+
+def test_region_admin_division_wording_unchanged():
+    # 行政区划式（EPC 既有口径）不受兜底分支影响
+    pages = [_page(1, "2.1.3 建设地点：河北省唐山市曹妃甸区南堡经济开发区 2.1.5 计划工期：150日历天。")]
+    fields = {c.field_key: c for c in extract_main_card(pages)}
+    assert fields["region"].value == "河北省唐山市曹妃甸区"
+
+
+def test_region_back_reference_skipped_and_fulltext_fallback():
+    # 公告区只有「见投标人须知前附表」回引 → 跳过；真实地点在 12 页之外时扩全文
+    pages = [
+        _page(2, "1.1.5 建设地点：见投标人须知前附表。"),
+        _page(13, "1.1.2 本工程施工场地(现场)具体地理位置如下：建设地点：襄都区泉北大街东段。"),
+    ]
+    fields = {c.field_key: c for c in extract_main_card(pages)}
+    assert fields["region"].missing_marker is False
+    assert fields["region"].value == "襄都区泉北大街东段"
+    assert fields["region"].page_no == 13
+
+
+def test_ceiling_price_accepts_yuan_unit():
+    fields = {c.field_key: c for c in extract_main_card(_XT_PAGES)}
+    assert fields["ceiling_price"].value == "328447260元"
+    anchor = _by_anchor(_XT_PAGES)["ceiling_price"]
+    assert anchor.missing_marker is False
+    assert anchor.assertion == "最高投标限价328447260元"
+    # 万元口径（农大）不回归
+    nd = _by_anchor(_PAGES)["ceiling_price"]
+    assert nd.missing_marker is False and "12471.590889万元" in nd.assertion
+
+
+def test_pm_similar_performance_form_table_header_not_matched():
+    # 修复前：表头「项目经理 技术负责人 项目描述 备注…备注：1、类似项目…」被当成
+    # 项目经理类似业绩要求（assertion 抓成整行表头）；pm_similar_performance 是可选
+    # 锚点，0 命中应不产出候选
+    cands = extract_rule_candidates(_XT_PAGES, project_id="PJ", material_id="M", content_hash="h")
+    hits = [c for c in cands if (c.rule or {}).get("anchor_key") == "pm_similar_performance"]
+    assert hits == []
+    # 真实条款措辞仍命中
+    real = _by_anchor([_page(3, "3.7 拟派项目经理近五年内担任过一项类似市政公用工程的施工项目负责人。")])
+    c = real["pm_similar_performance"]
+    assert c.missing_marker is False and "担任" in c.assertion
+
+
+# ── 2026-09-24 解析优化四步之二：版面层表格兜底（pdftotext 拍平前附表后文本流
+#    错行的字段，由 ParsedPage.tables 的 label→右邻单元格兜底；可选能力零副作用）──
+def _tpage(page_no: int, *paragraphs: str, tables=None):
+    return ParsedPage(page_no=page_no, paragraphs=list(paragraphs), tables=tables or [])
+
+
+def test_main_card_table_fallback_region_and_tenderee():
+    # 文本流被邻列内容错行（无「建设地点：值」连写、招标人栏只留名称截断）——版面层兜底
+    pages = [
+        _tpage(11,
+               "1.1.4 项目名称 邢台市市区部分街道排水管网提升改造项目施工",
+               "资金来源及 市政府投资、100%",
+               "1.2.1 比例",
+               tables=[["条款号", "条款名称", "编 列 内 容"],
+                       ["1.1.2", "招标人", "名称：邢台交建全过程工程管理有限公司地址：河北省邢台市"],
+                       ["1.1.5", "建设地点", "中兴大街(钢铁路-滨江路、襄都路-高速路下道口)等 13 条街道。"]]),
+    ]
+    fields = {c.field_key: c for c in extract_main_card(pages)}
+    assert fields["region"].missing_marker is False
+    assert fields["region"].value == "中兴大街(钢铁路-滨江路、襄都路-高速路下道口)等13条街道。".rstrip("。")
+    assert fields["region"].page_no == 11
+    assert fields["tenderee"].missing_marker is False
+    assert fields["tenderee"].value == "邢台交建全过程工程管理有限公司"  # 剥「名称：」、地址处收尾
+    # 招标人文本流原口径（「招标人为：…」）不受表格兜底影响
+    plain = {c.field_key: c for c in extract_main_card(
+        [_tpage(3, "招标人为：河北农业大学，委托代理机构为河北悦中工程项目管理有限公司。")])}
+    assert plain["tenderee"].value == "河北农业大学"
+
+
+def test_main_card_table_fallback_amount_and_backref():
+    pages = [
+        _tpage(11,
+               "投标人须知前附表",
+               tables=[["条款号", "条款名称", "编 列 内 容"],
+                       ["1.1.5", "建设地点", "见投标人须知前附表"],   # 回引不算地点
+                       ["2.2", "最高投标限价", "328447260元（其中含税）"]]),
+    ]
+    fields = {c.field_key: c for c in extract_main_card(pages)}
+    assert fields["ceiling_price"].value == "328447260元"  # 金额格内取数字+单位
+    assert fields["region"].missing_marker is True          # 表格里也只有回引 → 如实缺失
+
+
+def test_table_fallback_absent_tables_zero_effect():
+    # 无 tables（缺 pdfplumber / 无表格页）：与从前行为完全一致
+    fields = {c.field_key: c for c in extract_main_card(
+        [_page(1, "无任何字段的页面")])}
+    assert fields["region"].missing_marker is True
+    assert fields["tenderee"].missing_marker is True
+
+
+def test_router_attaches_tables(monkeypatch):
+    from runtime.parsing import layout, router
+
+    monkeypatch.setattr(layout, "extract_pdf_tables",
+                        lambda path, max_pages=20: {11: [["1.1.5", "建设地点", "襄都区泉北大街"]]})
+    pages = [router.ParsedPage(page_no=11, paragraphs=["1.1.5 建设地点 襄都区泉北大街"])]
+    router._attach_page_tables("/dev/null", pages)
+    assert pages[0].tables and pages[0].tables[0][1] == "建设地点"
+    # 版面层抛异常不阻断主链
+    def boom(path, max_pages=20):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(layout, "extract_pdf_tables", boom)
+    router._attach_page_tables("/dev/null", pages)
+    assert pages[0].page_no == 11
+
+def test_bid_bond_amount_bare_wan_not_parsed_as_zero():
+    """2026-09-29 修复：「人民币50万元」的裸「万元」不得被大写金额解析为 0.0 短路阿拉伯解析。"""
+    from runtime.parsing.extractor import _cn_amount, structure_rule_params
+
+    assert _cn_amount("人民币50万元（不超过50万元）") is None  # 裸单位不是大写金额
+    assert _cn_amount("人民币叁拾万元整") == 300000.0
+    p = structure_rule_params(
+        "bid_bond",
+        "要求提交投标保证金1.金额：人民币50万元（不得超过项目估算价的2%）2.缴纳方式：银行保函")
+    assert p["amount"] == 500000.0 and p["forms"] == ["银行保函"]

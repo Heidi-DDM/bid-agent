@@ -550,14 +550,31 @@ def fallback_rule_candidates(
 #   5. 开关关闭 / 非 public_read / 网络失败 → 零副作用。
 # requirement_id 用摘录内容哈希 → 重解析幂等（同条款不重复落库）。
 
+# 分类词表（2026-09-24 重写）：只用**主题强词**——必须点名该类要求本身（资质等级/建造师/
+# 失信/得分…），不再收录「资格」「负责人」这类弱词。旧版按弱词计数分类，邢台实测两类事故：
+# ①「…招标人取消其中标资格…」因含「资格」被判成**资质**类 → 复核页出现"资质要求（大模型
+# 发现）"挂着合同签订条款；②「单位负责人为同一人…不得参加投标」因含「负责人」被判成
+# **人员**类 → 人员组混入无关行、看起来"人员要求重复"。
+# 判定顺序 = 角色类优先（评分/动作先判——一条"业绩…得3分"是**评分条款**而非业绩条款），
+# 逐类看是否有强词命中，首个命中类别即归类；全部不命中 → 丢弃（不猜，与旧版一致的保守性）。
 DISCOVERY_CATEGORIES: dict[str, list[str]] = {
-    "资质": ["资质", "许可证", "营业执照", "资格"],
-    "人员": ["项目经理", "建造师", "负责人", "安全员", "技术人员", "社保", "职称"],
-    "业绩": ["业绩", "类似工程", "竣工验收", "承建"],
-    "财务": ["财务", "审计", "纳税", "税收", "资产负债"],
-    "信用": ["信用", "失信", "违法", "黑名单"],
+    "资质": ["资质要求", "施工资质", "总承包资质", "专业承包", "资质等级", "工程设计资质",
+             "安全生产许可证", "营业执照", "资格证书", "资格条件", "资格预审", "资格后审"],
+    "人员": ["项目经理", "建造师", "技术负责人", "设计负责人", "施工负责人", "项目负责人",
+             "安全生产管理人员", "专职安全", "安全员", "技术人员", "执业资格", "安全生产考核",
+             "职称", "社保", "社会保险", "养老保险", "劳动合同"],
+    "业绩": ["业绩", "类似工程", "类似项目", "竣工验收"],
+    "财务": ["财务", "审计", "纳税", "税收", "资产负债", "会计报表"],
+    "信用": ["失信", "违法", "信用", "利害关系", "投标禁止期", "黑名单", "信誉"],
     "评分": ["得分", "评分", "加分", "分值", "满分", "评标"],
-    "动作": ["截止", "递交", "开标", "报名", "保证金", "踏勘", "答疑", "有效期"],
+    "动作": ["截止", "递交", "开标", "报名", "保证金", "踏勘", "答疑", "质疑",
+             "有效期", "中标通知书", "订立合同"],
+}
+# 角色类（该条款"做什么"）先于主体类（该条款"关于谁"）判定
+_DISCOVERY_CATEGORY_ORDER = ("评分", "动作", "资质", "人员", "业绩", "财务", "信用")
+# 强词覆盖不到的变体措辞（「得 3 分/加2分/计1.5分」中间夹数字，子串词表命不中）
+_DISCOVERY_STRONG_RE: dict[str, list["re.Pattern"]] = {
+    "评分": [re.compile(r"(?:得|加|计)[0-9]{1,3}(?:\.[0-9])?分")],
 }
 _DISCOVERY_MAX = 8
 _DISCOVERY_HINTS = [w for words in DISCOVERY_CATEGORIES.values() for w in words]
@@ -575,13 +592,14 @@ class _DiscoveryQuote(BaseModel):
 
 
 def _classify_discovery(norm_quote: str) -> Optional[str]:
-    """封闭词表分类：命中类别关键词才算可入库的发现（判不出 → None 丢弃，不猜）。"""
-    best, best_hits = None, 0
-    for cat, words in DISCOVERY_CATEGORIES.items():
-        hits = sum(1 for w in words if w in norm_quote)
-        if hits > best_hits:
-            best, best_hits = cat, hits
-    return best
+    """按 DISCOVERY_CATEGORY_ORDER 逐类找主题强词（词表 + 变体正则）：首个有强词
+    命中的类别即归类（评分/动作角色类优先）；全部不命中 → None 丢弃（不猜）。"""
+    for cat in _DISCOVERY_CATEGORY_ORDER:
+        if any(w in norm_quote for w in DISCOVERY_CATEGORIES[cat]):
+            return cat
+        if any(p.search(norm_quote) for p in _DISCOVERY_STRONG_RE.get(cat, ())):
+            return cat
+    return None
 
 
 def _overlaps_existing(norm_quote: str, existing_norm_assertions: list[str],
@@ -600,6 +618,65 @@ def _overlaps_existing(norm_quote: str, existing_norm_assertions: list[str],
     return False
 
 
+def _select_relevant_chunks(pages: list, anchor_keys: list[str], *, chunk_chars: int,
+                            max_chunks: int, hints_override: Optional[list[str]] = None) -> list[str]:
+    """相关页按原文页序切成 ≤chunk_chars 的块（每页带 @@PAGE 页码标记），最多 max_chunks 块。
+
+    LangExtract 式多轮抽取（2026-09-24 解析优化四步之三）：此前单次送 max_chars 一大段，
+    相关页按得分拼进同一段——得分高的前几章把预算吃光，排在后面的评标办法/合同条款/
+    投标文件格式章节即使同样相关，模型也根本看不到（长文件召回损失的主因）。
+    分块后每块独立送模型、逐字校验与去重口径不变，结果合并。"""
+    from runtime.parsing.extractor import LOCATE_HINTS
+
+    hints: set[str] = set(hints_override or ())
+    if not hints:
+        for k in anchor_keys:
+            hints.update(LOCATE_HINTS.get(k, ()))
+    texts = [(getattr(p, "page_no", i + 1), "\n".join(getattr(p, "paragraphs", []) or []))
+             for i, p in enumerate(pages)]
+    if not texts:
+        return []
+    budget = chunk_chars * max_chunks
+    if hints:
+        scored = []
+        for page_no, text in texts:
+            norm = re.sub(r"\s+", "", text)
+            score = sum(1 for h in hints if re.sub(r"\s+", "", h) in norm)
+            if score:
+                scored.append((score, page_no, text))
+        if scored:
+            scored.sort(key=lambda x: (-x[0], x[1]))
+            chosen, used = [], 0
+            for _, page_no, text in scored:
+                if used >= budget:
+                    break
+                chosen.append((page_no, text))
+                used += len(text)
+            texts = sorted(chosen)  # 送文按原文页序（模型按文档顺序读更稳）
+        # 无关键词命中 → 保持全量页序，走下方预算截断（旧行为：全文前预算字）
+    # 预算内按页序取（无关键词命中时的旧行为：全文前预算字）
+    ordered, used = [], 0
+    for page_no, text in texts:
+        if used >= budget:
+            break
+        ordered.append((page_no, text))
+        used += len(text)
+    chunks: list[str] = []
+    cur: list[str] = []
+    cur_len = 0
+    for page_no, text in ordered:
+        header = f"@@PAGE {page_no}@@\n"
+        block = header + text + "\n"
+        if cur and cur_len + len(block) > chunk_chars:
+            chunks.append("".join(cur))
+            cur, cur_len = [], 0
+        cur.append(block)
+        cur_len += len(block)
+    if cur:
+        chunks.append("".join(cur))
+    return chunks[:max_chunks]
+
+
 def discover_rule_candidates(
     pages: list,
     existing_candidates: list,
@@ -610,6 +687,7 @@ def discover_rule_candidates(
     permission_scope: str = "public_read",
     client: Optional[Callable[[list[dict]], ModelResult]] = None,
     enabled: Optional[bool] = None,
+    version: Optional[int] = None,
 ) -> list:
     """锚点盲区的条款发现（P4-2）。返回新 RuleCandidate 列表（可能为空）；任何失败零副作用。"""
     from runtime.parsing.extractor import ANCHORS, RuleCandidate, _clause_from_line
@@ -619,9 +697,11 @@ def discover_rule_candidates(
         return []
     if not pages:
         return []
-    body = _select_relevant_text(pages, [], config.llm_fallback_max_chars(),
-                                 hints_override=_DISCOVERY_HINTS)
-    if not body.strip():
+    # LangExtract 式分块多轮（四步之三）：相关页切块逐块送模型，替换单次大截断
+    chunks = _select_relevant_chunks(pages, [], chunk_chars=config.llm_discovery_chunk_chars(),
+                                     max_chunks=config.llm_discovery_max_chunks(),
+                                     hints_override=_DISCOVERY_HINTS)
+    if not chunks:
         return []
 
     existing_norm = [_norm_nospace(str(getattr(c, "assertion", "") or ""))
@@ -644,64 +724,70 @@ def discover_rule_candidates(
         '5. 只输出 JSON：{"items": [{"quote": "…"}]}。'
     )
     call = client or _default_client
-    try:
-        result = call([{"role": "system", "content": system},
-                       {"role": "user", "content": f"原文：\n{body}"}])
-    except ModelNotAllowedError:
-        return []
-    except Exception as exc:
-        logger.warning("LLM 条款发现调用异常：%s", type(exc).__name__)
-        return []
-    if not result.ok or not isinstance(result.data, dict):
-        return []
-    raw_items = result.data.get("items")
-    if not isinstance(raw_items, list):
-        return []
 
     out: list = []
     seen_hashes: set[str] = set()
-    for raw in raw_items:
+    for chunk_idx, body in enumerate(chunks, start=1):
         if len(out) >= _DISCOVERY_MAX:
             break
         try:
-            item = _DiscoveryQuote(**raw) if isinstance(raw, dict) else None
-        except ValidationError:
+            result = call([{"role": "system", "content": system},
+                           {"role": "user", "content": f"原文：\n{body}"}])
+        except ModelNotAllowedError:
+            break
+        except Exception as exc:
+            logger.warning("LLM 条款发现第 %s/%s 块调用异常（%s，零副作用续跑后续块）",
+                           chunk_idx, len(chunks), type(exc).__name__)
             continue
-        if item is None:
+        if not result.ok or not isinstance(result.data, dict):
             continue
-        found = _find_verbatim_in_pages(pages, item.quote)
-        if found is None:
+        raw_items = result.data.get("items")
+        if not isinstance(raw_items, list):
             continue
-        page_no, snippet, norm_hit = found
-        nq = _norm_nospace(item.quote)
-        if len(nq) < 12:
-            continue
-        qh = __import__("hashlib").sha1(nq.encode("utf-8")).hexdigest()[:8]
-        if qh in seen_hashes:
-            continue
-        seen_hashes.add(qh)
-        if _overlaps_existing(nq, existing_norm, anchor_patterns):
-            continue
-        category = _classify_discovery(nq)
-        if category is None:
-            continue
-        req_type = ("scored_requirement" if category == "评分"
-                    else "action_requirement" if category == "动作"
-                    else "hard_requirement")
-        clause = _clause_from_line(snippet, "")
-        out.append(RuleCandidate(
-            requirement_id=f"{material_id}-LLM-{qh}-draft",
-            req_type=req_type,
-            category=category,
-            clause_ref=f"{clause}（模型定位·待核对）" if clause else "模型定位（待核对）",
-            assertion=snippet[:300],
-            page_no=page_no,
-            rule={"type": "generic", "located_by": SOURCE_LLM, "discovered": True},
-            evidence_required=[],
-            confidence="low",
-            missing_marker=False,
-            note="大模型发现的候选条款（确定性锚点未覆盖）：请核对原文后通过/修正/驳回（P4-2）",
-        ))
+        for raw in raw_items:
+            if len(out) >= _DISCOVERY_MAX:
+                break
+            try:
+                item = _DiscoveryQuote(**raw) if isinstance(raw, dict) else None
+            except ValidationError:
+                continue
+            if item is None:
+                continue
+            found = _find_verbatim_in_pages(pages, item.quote)
+            if found is None:
+                continue
+            page_no, snippet, norm_hit = found
+            nq = _norm_nospace(item.quote)
+            if len(nq) < 12:
+                continue
+            qh = __import__("hashlib").sha1(nq.encode("utf-8")).hexdigest()[:8]
+            if qh in seen_hashes:
+                continue
+            seen_hashes.add(qh)
+            if _overlaps_existing(nq, existing_norm, anchor_patterns):
+                continue
+            category = _classify_discovery(nq)
+            if category is None:
+                continue
+            req_type = ("scored_requirement" if category == "评分"
+                        else "action_requirement" if category == "动作"
+                        else "hard_requirement")
+            clause = _clause_from_line(snippet, "")
+            id_material = f"{material_id}-v{version}" if version and version > 1 else material_id
+            out.append(RuleCandidate(
+                requirement_id=f"{id_material}-LLM-{qh}-draft",
+                req_type=req_type,
+                category=category,
+                clause_ref=f"{clause}（模型定位·待核对）" if clause else "模型定位（待核对）",
+                assertion=snippet[:300],
+                page_no=page_no,
+                rule={"type": "generic", "located_by": SOURCE_LLM, "discovered": True},
+                evidence_required=[],
+                confidence="low",
+                missing_marker=False,
+                note="大模型发现的候选条款（确定性锚点未覆盖）：请核对原文后通过/修正/驳回（P4-2）",
+            ))
     if out:
-        logger.info("LLM 条款发现：新增 %s 条待复核候选（material=%s）", len(out), material_id)
+        logger.info("LLM 条款发现（%s 块）：新增 %s 条待复核候选（material=%s）",
+                    len(chunks), len(out), material_id)
     return out

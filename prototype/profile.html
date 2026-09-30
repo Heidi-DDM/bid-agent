@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>企业画像 · 资料解析情况总览｜投标智能体原型</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260929d">
   <style>
     .dim-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; margin-top: 10px; }
     .dim-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fff; }
@@ -69,9 +69,9 @@
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
-  <script src="data.js"></script>
-  <script src="api.js"></script>
-  <script src="common.js"></script>
+  <script src="data.js?v=20260929d"></script>
+  <script src="api.js?v=20260929d"></script>
+  <script src="common.js?v=20260929d"></script>
   <script>
     initPage("profile.html", "");
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) =>

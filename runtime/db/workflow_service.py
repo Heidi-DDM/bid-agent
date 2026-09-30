@@ -95,7 +95,13 @@ def _task_payload(task: RemediationTask, *, viewer_role: str | None = None) -> d
         "source_kind": task.source_kind,
         "source_ref": task.source_ref,
         "source_match_run_id": task.source_match_run_id,
+        "source_run_id": task.source_run_id,
         "requirement_id": task.requirement_id,
+        # ADR-008 / docs/12 §3.4：聚合任务回链（同一缺口覆盖的全部条款）
+        "gap_key": task.gap_key,
+        "lot_id": task.lot_id,
+        "requirement_refs": task.requirement_refs or [],
+        "clause_refs": task.clause_refs or [],
         "assignee_role": task.assignee_role,
         "assignee": task.assignee,
         "due_at": task.due_at.isoformat() if task.due_at else None,
@@ -337,9 +343,38 @@ def _create_or_reopen(session: Session, *, project_id: str, source_kind: str, so
     return existing, "existing"
 
 
+def _gap_key_of(req: dict | None) -> str | None:
+    """稳定聚合键（docs/12 §3.4）：enterprise_scope + lot_id + missing_fact_type +
+    evidence_requirement_fingerprint + as_of_bucket。
+
+    不同主体、不同标段、不同有效时点、不同证据法定要求不得错误合并；
+    键不来自 UI 文案。无规则信息时返回 None（退回逐条任务，不猜测）。
+    """
+    if not req:
+        return None
+    rule = req.get("rule") or {}
+    evidence = [str(x) for x in (req.get("evidence_required") or []) if x]
+    fact_type = str(rule.get("type") or (evidence[0] if evidence else "") or "")
+    if not fact_type:
+        return None
+    evidence_fp = ",".join(sorted(evidence))
+    lot = str(req.get("lot_id") or "")
+    as_of = str(req.get("as_of") or "")
+    as_of_bucket = as_of[:4] if as_of else "unknown"
+    raw = f"enterprise|{lot}|{fact_type}|{evidence_fp}|{as_of_bucket}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def sync_tasks_from_admission(session: Session, *, project_id: str, match_run_id: str | None,
-                              admission: AdmissionResult | None = None, commit: bool = True) -> dict[str, int]:
+                              admission: AdmissionResult | None = None, commit: bool = True,
+                              requirements: list[dict] | None = None) -> dict[str, int]:
     """Materialize matching issues and close only issues absent in a new result.
+
+    ADR-008 / docs/12 §3.4（2026-09-28）：缺证队列（blocked_missing_data）按稳定
+    ``gap_key`` 聚合——两个条款引用同一缺失事实只产生一个补证任务，任务
+    ``requirement_refs[]``/``clause_refs[]`` 列出全部条款回链；不同标段/时点不合并。
+    明确不满足（资源事实缺口）仍走 termination_correction（资源处置建议），
+    不能以补证"洗白"。
 
     ``commit=False`` lets a caller decide the transaction boundary. The worker uses
     it after the immutable match/admission result has already been committed, so a
@@ -350,22 +385,68 @@ def sync_tasks_from_admission(session: Session, *, project_id: str, match_run_id
                                   .order_by(AdmissionResult.created_at.desc()).limit(1))
     if admission is None:
         return {"touched": 0, "created": 0, "reopened": 0, "closed": 0}
+    req_by_id = {r.get("requirement_id"): r for r in (requirements or []) if r.get("requirement_id")}
     current: set[str] = set()
     touched = created = reopened = 0
-    for bucket, rows in (("blocked", admission.blocked_items or []), ("missing", admission.pending_items or []),
-                         ("review", admission.review_items or [])):
+
+    def _handle_item(item: dict[str, Any], bucket: str) -> None:
+        nonlocal touched, created, reopened
+        task, mutation = _create_or_reopen(session, project_id=project_id, source_kind="admission_result",
+                                           source_ref=str(item.get("req") or item.get("requirement_id")
+                                                          or hashlib.sha256(str(item.get("text") or item).encode("utf-8")).hexdigest()[:24]),
+                                           source_match_run_id=match_run_id, item=item, bucket=bucket)
+        current.add(task.source_fingerprint)
+        touched += 1
+        if mutation == "created":
+            created += 1
+        elif mutation == "reopened":
+            reopened += 1
+
+    # ---- 缺证任务聚合（docs/12 §3.4：gap_key 合并同缺口，保留逐条回链） ----
+    gap_groups: dict[str, dict[str, Any]] = {}
+    for item in admission.pending_items or []:
+        req = req_by_id.get(item.get("req") or item.get("requirement_id"))
+        gap = _gap_key_of(req)
+        if gap is None:
+            _handle_item(item, "missing")
+            continue
+        group = gap_groups.setdefault(gap, {"items": [], "reqs": [], "clauses": []})
+        group["items"].append(item)
+        if req and req.get("requirement_id"):
+            group["reqs"].append(req["requirement_id"])
+        clause = item.get("clause_ref") or (req or {}).get("clause_ref")
+        if clause:
+            group["clauses"].append(str(clause))
+    for gap, group in gap_groups.items():
+        first = group["items"][0]
+        merged = dict(first)
+        merged["text"] = (f"缺少企业资料/证据（{len(group['items'])} 条条款引用同一缺口）：" +
+                          (first.get("reason") or first.get("text") or "待补录并核验"))
+        # 聚合任务源指纹以 gap 为键（同一缺口跨运行复用同一任务行）
+        task, mutation = _create_or_reopen(session, project_id=project_id, source_kind="admission_result",
+                                           source_ref=f"gap:{gap}", source_match_run_id=match_run_id,
+                                           item=merged, bucket="missing")
+        current.add(task.source_fingerprint)
+        touched += 1
+        if mutation == "created":
+            created += 1
+        elif mutation == "reopened":
+            reopened += 1
+        # requirement_refs/clause_refs 取并集（同一任务覆盖全部引用条款，不丢回链）
+        task.gap_key = gap
+        task.source_run_id = match_run_id
+        lot_ids = {str((req_by_id.get(r) or {}).get("lot_id")) for r in group["reqs"]}
+        lot_ids.discard("None")
+        if len(lot_ids) == 1:
+            task.lot_id = lot_ids.pop()
+        task.requirement_refs = sorted(set((task.requirement_refs or []) + group["reqs"]))
+        task.clause_refs = sorted(set((task.clause_refs or []) + group["clauses"]))
+        if group["reqs"] and not task.requirement_id:
+            task.requirement_id = group["reqs"][0]
+
+    for bucket, rows in (("blocked", admission.blocked_items or []), ("review", admission.review_items or [])):
         for item in rows:
-            source_ref = str(item.get("req") or item.get("requirement_id") or hashlib.sha256(
-                str(item.get("text") or item).encode("utf-8")).hexdigest()[:24])
-            task, mutation = _create_or_reopen(session, project_id=project_id, source_kind="admission_result",
-                                               source_ref=source_ref, source_match_run_id=match_run_id,
-                                               item=item, bucket=bucket)
-            current.add(task.source_fingerprint)
-            touched += 1
-            if mutation == "created":
-                created += 1
-            elif mutation == "reopened":
-                reopened += 1
+            _handle_item(item, bucket)
     closed = 0
     # A task only auto-closes when a subsequent matching result has removed its exact
     # source fingerprint. It does not close merely because somebody uploaded a file.
@@ -384,6 +465,28 @@ def sync_tasks_from_admission(session: Session, *, project_id: str, match_run_id
     else:
         session.flush()
     return {"touched": touched, "created": created, "reopened": reopened, "closed": closed}
+
+
+def _merge_gap_task(session: Session, *, project_id: str, gap_key: str, group: dict[str, Any],
+                    match_run_id: str | None, req_by_id: dict[str, dict]) -> RemediationTask | None:
+    """按缺口键查找/创建聚合任务行（供手动补登记等外部路径复用同一聚合口径）。"""
+    source_ref = f"gap:{gap_key}"
+    fingerprint = _fingerprint(project_id, "admission_result", source_ref, "evidence_supplement")
+    task = session.scalar(select(RemediationTask).where(RemediationTask.source_fingerprint == fingerprint).limit(1))
+    if task is None:
+        first = group["items"][0]
+        task = RemediationTask(
+            task_id=f"RT-GAP-{uuid.uuid4().hex[:10]}", project_id=project_id, task_type="evidence_supplement",
+            state=TASK_OPEN, title=str(first.get("text") or "缺少企业资料或证据")[:256],
+            description="缺少企业资料或证据：补充并核验后重算", source_kind="admission_result",
+            source_ref=source_ref, source_fingerprint=fingerprint, source_match_run_id=match_run_id,
+            assignee_role=rbac.DATA_ADMIN, closing_condition="verified_evidence_and_new_match",
+            evidence_required=list({x for i in group["items"] for x in (i.get("recommended_material_types") or [])}),
+            created_by="system:match",
+        )
+        session.add(task)
+        session.flush()
+    return task
 
 
 def list_tasks(session: Session, *, project_id: str, role: str, actor: str, state: str | None = None,

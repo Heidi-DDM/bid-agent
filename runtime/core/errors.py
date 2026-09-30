@@ -19,6 +19,7 @@ ERROR_CODES: dict[str, int] = {
     "parse_failed": 422,
     "manual_review_required": 422,
     "invalid_state_transition": 409,
+    "stale_input": 409,           # ADR-008（docs/12 §4.1）：引用非当前版本写入（不静默覆写）
     "rate_limited": 429,             # R004/schema §5.2：单源/全局限频（携带 retry_after_seconds）
     "dependency_unavailable": 503,
     "internal_error": 500,

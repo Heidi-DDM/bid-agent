@@ -149,6 +149,27 @@ def llm_fallback_timeout_seconds() -> float:
     return float(_env("LLM_FALLBACK_TIMEOUT_SECONDS", "60"))  # type: ignore[arg-type]
 
 
+# ---------- 版面层（2026-09-24 解析优化四步之二：表格单元格抽取，可选依赖 pdfplumber） ----------
+
+
+def layout_table_pages() -> int:
+    """版面层表格抽取的前 N 页（前附表/公告区在文件前部；全文档逐页识别代价高收益低）。"""
+    return int(_env("LAYOUT_TABLE_PAGES", "20"))  # type: ignore[return-value]
+
+
+# ---------- P4-2 发现层分块多轮（2026-09-24 解析优化四步之三：LangExtract 式） ----------
+
+
+def llm_discovery_chunk_chars() -> int:
+    """发现层单块送文上限（按页切块、块内保持原文页序与 @@PAGE 页码标记）。"""
+    return int(_env("LLM_DISCOVERY_CHUNK_CHARS", "8000"))  # type: ignore[return-value]
+
+
+def llm_discovery_max_chunks() -> int:
+    """发现层最多调用模型次数（=块数；总预算 ≈ chunk_chars × max_chunks，防成本失控）。"""
+    return int(_env("LLM_DISCOVERY_MAX_CHUNKS", "3"))  # type: ignore[return-value]
+
+
 def job_running_timeout_seconds() -> int:
     return int(_env("JOB_RUNNING_TIMEOUT_SECONDS", "600"))  # type: ignore[return-value]
 

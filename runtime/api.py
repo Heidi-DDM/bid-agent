@@ -21,7 +21,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from runtime.routers import approvals, auth, discovery, enterprise, intake, knowledge, materials, match, ocr, parse, projects, workflow
+from runtime.routers import approvals, auth, discovery, enterprise, intake, knowledge, materials, match, ocr, parse, projects, results, workflow
 from runtime.routers.deps import request_id
 from runtime.core import db, model
 from runtime.core.config import app_env, object_store_root, readyz_timeout_seconds
@@ -85,6 +85,7 @@ app.include_router(ocr.router)
 app.include_router(knowledge.router)
 app.include_router(parse.router)
 app.include_router(discovery.router)
+app.include_router(results.router)
 
 
 # ---------- 统一错误处理（F020 §6） ----------

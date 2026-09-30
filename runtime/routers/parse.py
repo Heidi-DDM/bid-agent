@@ -167,9 +167,34 @@ def review_candidate(
                       basis=f"material={cand.material_id}:v{cand.version}",
                       outcome=f"{body.decision}", object_ref=cand.material_id)
     _sync_material_parse_status(session, cand.material_id, cand.version)
+    # ADR-007（2026-09-25）：例外清零自动重确认——最后一条待确认项被决策后，
+    # 增量生成规则集快照链新节点（既有要求复制 + 新决策写入）并自动触发匹配重算。
+    # 失败不阻断决策本身（决策已生效；重算可由人工再次触发）。
+    reconfirmed = None
+    try:
+        reconfirmed = parse_service.reconfirm_rules_after_exceptions(
+            session, project_id=cand.project_id or "",
+            material_id=cand.material_id, version=cand.version, actor=body.reviewer)
+        if reconfirmed:
+            from runtime.db import worker_service
+
+            worker_service.create_job(
+                session, kind="match.recalculate", input_ref=reconfirmed["rule_set_id"],
+                project_id=cand.project_id, retry_failed=True,
+                idempotency_key=f"match.reconfirm:{reconfirmed['rule_set_id']}",
+            )
+            api_service.audit(
+                session, actor=body.reviewer, action="parse.reconfirmed",
+                basis=f"material={cand.material_id}:v{cand.version}",
+                outcome=f"rule_set={reconfirmed['rule_set_id']} "
+                        f"copied={reconfirmed['copied']} created={reconfirmed['created']}",
+                object_ref=cand.project_id)
+    except Exception:
+        session.rollback()
     session.commit()
     return {"request_id": request_id, "candidate_id": candidate_id,
-            "status": result["status"], "decided_at": result["decided_at"]}
+            "status": result["status"], "decided_at": result["decided_at"],
+            "reconfirmed_rule_set": (reconfirmed or {}).get("rule_set_id")}
 
 
 @router.post("/projects/{project_id}/materials/{material_id}/confirm")

@@ -94,7 +94,8 @@ def process_one(session, runner_id: str, stale_seconds: int) -> bool:
 
 
 def _execute_parse_tender_document(session, input_ref: str | None,
-                                   project_id: str | None = None) -> None:
+                                   project_id: str | None = None,
+                                   job_id: str | None = None) -> None:
     """parse.tender_document 执行器（R021-5 / F021 §2 第 3-6 步）：
 
     不可变原文（material_versions.object_uri）→ route_document（PDF 逐页/DOCX 解包/
@@ -138,7 +139,7 @@ def _execute_parse_tender_document(session, input_ref: str | None,
     project = material.project_id or project_id or ""
     rule_cands = extract_rule_candidates(
         route.pages, project_id=project, material_id=material.material_id,
-        content_hash=material.content_hash,
+        content_hash=material.content_hash, version=material.version,
     )
     field_cands = extract_main_card(route.pages)
     term_cands = extract_term_candidates(route.pages)
@@ -153,25 +154,39 @@ def _execute_parse_tender_document(session, input_ref: str | None,
     # generic 候选（必须人工复核；与既有候选/锚点重叠的已在发现层丢弃）
     try:
         from runtime.parsing.llm_fallback import discover_rule_candidates
+        # 重叠去重的"既有候选"必须包含条款（term）与主卡（field）候选：此前只传规则候选，
+        # 大模型把「质量保证金 3%」「履约保证金」这类已由 TERM_ANCHORS 抽到的条款再发现
+        # 一遍 → 复核页同一条款出现两行（邢台实测 2026-09-24"重复"问题的一部分）
         rule_cands.extend(discover_rule_candidates(
-            route.pages, rule_cands, project_id=project, material_id=material.material_id,
-            content_hash=material.content_hash, permission_scope="public_read"))
+            route.pages, rule_cands + term_cands + field_cands, project_id=project,
+            material_id=material.material_id, content_hash=material.content_hash,
+            permission_scope="public_read", version=material.version))
     except Exception as exc:
         logger.warning("LLM 条款发现跳过：%s", exc)
+    # 重新解析：上一轮仍是 pending 的大模型发现草稿先清掉——发现候选 ID 是摘录内容哈希，
+    # LLM 每轮摘录略有差异 → 不清理会跨轮累积出重复行（已决策行不动，审计留痕）
+    pruned = parse_service.prune_pending_llm_drafts(
+        session, material_id=material.material_id, version=material.version)
+    if pruned:
+        logger.info("重新解析：清理上一轮 pending 的 LLM 草稿 %s 条（material=%s）",
+                    pruned, material.material_id)
     c_r, s_r = parse_service.store_candidates(
         session, project_id=project, material_id=material.material_id,
         version=material.version, kind="rule_candidate",
         candidates=[c.to_dict() for c in rule_cands],
+        refresh_pending=True,
     )
     c_f, s_f = parse_service.store_candidates(
         session, project_id=project, material_id=material.material_id,
         version=material.version, kind="main_card_field",
         candidates=[c.to_dict() for c in field_cands],
+        refresh_pending=True,
     )
     c_t, s_t = parse_service.store_candidates(
         session, project_id=project, material_id=material.material_id,
         version=material.version, kind=parse_service.CANDIDATE_KIND_TERM,
         candidates=[c.to_dict() for c in term_cands],
+        refresh_pending=True,
     )
     # 重新解析既有材料：抽取器升级后新锚点会增量落库，但若全部候选均已存在（无新增），
     # 属幂等重放而非空解析——正常完成并如实留痕，让既有候选继续人工复核（2026-09-15：
@@ -210,6 +225,88 @@ def _execute_parse_tender_document(session, input_ref: str | None,
         outcome=outcome,
         object_ref=material.project_id or project_id,
     )
+    # 覆盖率报告（2026-09-24 四步之四）：解析完立即产出「靠什么定位/还缺什么」，
+    # 写入任务 result_summary（任务历史可查）+ 一行人话日志
+    try:
+        coverage = parse_service.parse_coverage(
+            session, project_id=project, material_id=material.material_id,
+            version=material.version)
+        if coverage is not None and job_id:
+            job = session.get(AnalysisJob, job_id)
+            if job is not None:
+                job.result_summary = [{"kind": "parse_coverage", **coverage}]
+        if coverage is not None:
+            loc = coverage["located"]
+            logger.info(
+                "解析覆盖率 material=%s:%s 规则候选 %s 条（锚点 %s / LLM兜底 %s / LLM发现 %s）"
+                "待人工定位缺失 %s · 主卡字段 %s/%s · 商务条款 %s 条",
+                material.material_id, material.version, coverage["rule_total"],
+                loc["anchor"], loc["llm_fallback"], loc["llm_discovery"],
+                coverage["missing_pending"], coverage["main_card_located"],
+                coverage["main_card_total"], coverage["term_total"],
+            )
+    except Exception as exc:  # 报告失败不阻断解析主链
+        logger.warning("覆盖率报告生成失败（不影响解析结果）：%s", type(exc).__name__)
+    # ADR-007（2026-09-25）：解析自动确认与例外驱动复核——用户上传后直达风险判定。
+    # ① 高置信锚点候选系统自动通过（留痕可改判）；② 例外式规则集（pending 例外随快照
+    # 留档，不写 Requirement）；③ 自动触发索引+匹配（schedule_post_parse 幂等）。
+    # 任何异常不阻断解析主链（退化为旧的人工确认路径）。
+    try:
+        auto = parse_service.auto_confirm_anchor_candidates(
+            session, project_id=project, material_id=material.material_id,
+            version=material.version)
+        if auto["approved"]:
+            api_service.audit(
+                session, actor="system", action="parse.auto_confirmed",
+                basis=f"material={material.material_id}:v{material.version}",
+                outcome=f"approved={auto['approved']} remaining_pending={auto['remaining_pending']}",
+                object_ref=project,
+            )
+        suggestion = parse_service.suggested_as_of(
+            session, project_id=project, material_id=material.material_id,
+            version=material.version)
+        if suggestion is not None:
+            try:
+                confirmed = parse_service.confirm_rules_from_approved(
+                    session, project_id=project, material_id=material.material_id,
+                    version=material.version, as_of=suggestion["as_of"],
+                    created_by=parse_service.AUTO_REVIEWER,
+                    allow_pending_exceptions=True,
+                )
+            except parse_service.RuleSetExists:
+                confirmed = None  # 重解析幂等：规则集已存在，例外走 reconfirm 快照链
+            if confirmed and confirmed["rule_set_id"]:
+                parse_service.confirm_main_card_fields(
+                    session, material_id=material.material_id, version=material.version,
+                    project_id=project, actor=parse_service.AUTO_REVIEWER,
+                    content_hash=material.content_hash,
+                )
+                rejected = confirmed["rejected"]
+                exceptions = confirmed["pending"]
+                if rejected or exceptions:
+                    parse_service.mark_material_manual_review(
+                        session, material_id=material.material_id, version=material.version,
+                        note=f"ADR-007 例外驱动：待确认例外 {exceptions} 条、驳回 {rejected} 条"
+                             "（风险页逐条处置，清零后自动重算）",
+                    )
+                else:
+                    parse_service.mark_material_parsed(
+                        session, material_id=material.material_id, version=material.version,
+                        actor=parse_service.AUTO_REVIEWER)
+                api_service.schedule_post_parse(session, project_id=project)
+                logger.info(
+                    "ADR-007 自动确认 material=%s:%s 自动通过=%s 规则集=%s（要求 %s 条，"
+                    "待确认例外 %s 条）→ 已触发索引/匹配",
+                    material.material_id, material.version, auto["approved"],
+                    confirmed["rule_set_id"], confirmed["created_requirements"], exceptions,
+                )
+        else:
+            logger.info(
+                "ADR-007：材料 %s:%s 无 as_of 来源（deadline_bid 未定位）→ 退人工确认路径",
+                material.material_id, material.version)
+    except Exception as exc:  # 自动路径失败不阻断：候选已落库，人工确认流程照常可用
+        session.rollback()
+        logger.warning("ADR-007 自动确认/规则集生成失败（退人工确认路径）：%s", type(exc).__name__)
     session.commit()
     logger.info(
         "招标文件解析完成 material=%s:%s kind=%s rules=%s(+%s) fields=%s(+%s) terms=%s(+%s) → manual_review",
@@ -432,7 +529,7 @@ def _execute(session, kind: str, input_ref: str | None, project_id: str | None =
         _execute_knowledge_index(session, input_ref)
         return
     if kind == "parse.tender_document":
-        _execute_parse_tender_document(session, input_ref, project_id)
+        _execute_parse_tender_document(session, input_ref, project_id, job_id)
         return
     if kind == "ocr.route":
         _execute_ocr_route(session, input_ref)
@@ -472,11 +569,13 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
     from runtime.db import api_service
     from runtime.db.models import (
         Manager,
+        Material,
         MatchItem,
         MatchRun,
         Performance,
         Personnel,
         Project,
+        ProjectIdentity,
         Qualification,
         Requirement,
         RuleSet,
@@ -517,33 +616,99 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
     if not as_of:
         raise matching.MatchNotRunnableError("规则集未提供 as_of（判定时点不得默认当前时间）")
 
-    # 2) 结构化 active 快照（截至 as_of，F023 §2.3）
+    # 2) 结构化 active 快照（截至 as_of，F023 §2.3）+ 台账口径上下文（docs/12 §3.2 状态拆分）
+    quals = session.scalars(select(Qualification)).all()
+    perfs = session.scalars(select(Performance)).all()
+    mgrs = session.scalars(select(Manager)).all()
+    ppls = session.scalars(select(Personnel)).all()
     evidence = matching.build_enterprise_evidence(
-        qualifications=session.scalars(select(Qualification)).all(),
-        performances=session.scalars(select(Performance)).all(),
-        managers=session.scalars(select(Manager)).all(),
-        personnel=session.scalars(select(Personnel)).all(),
-        as_of=as_of,
+        qualifications=quals, performances=perfs, managers=mgrs, personnel=ppls, as_of=as_of,
     )
+    # 台账口径（docs/12 8.1-1）：区分「台账 0 条记录=真缺资料」与「有记录但未核验/过期」
+    ledger_counts, ineligible = matching.build_ledger_context(
+        qualifications=quals, performances=perfs, managers=mgrs, personnel=ppls, as_of=as_of,
+    )
+
+    # 2b) 解析例外快照（ADR-007 / docs/12 §2.5/§3.4：独立解析质量对象 + 快照版本）
+    from runtime.db import parse_service as _parse_service
+
+    pending_rows = _parse_service.pending_exception_rows(session, project_id=project_id)
+    pe_snapshot_version = _parse_exception_snapshot_version(pending_rows)
+    _sync_parse_exceptions(session, project_id=project_id, pending_rows=pending_rows,
+                           snapshot_version=pe_snapshot_version)
+    pending_exc_count = len(pending_rows)
+
+    # 2c) run_context 输入版本固化（docs/12 §3.5：所有投影接口原样回显同一上下文）
+    historical_sample = bool((getattr(project, "test_context", None) or {}).get("historical_sample"))
+    run_context = _build_run_context(
+        project_id=project_id, rule_set=rule_set, as_of=as_of,
+        materials=session.scalars(select(Material).where(Material.project_id == project_id)).all(),
+        identity=session.get(ProjectIdentity, project_id),
+        evidence_snapshot_hash=matching.snapshot_hash(evidence),
+        managers=mgrs, ledger_ineligible=ineligible,
+        parse_exception_snapshot_version=pe_snapshot_version,
+        engine_result=None, historical_sample=historical_sample,
+    )
+    run_input_fingerprint = _run_input_fingerprint(run_context, lot_id=None)
+
+    # 2d) 运行级幂等（docs/12 §4.3-5）：相同输入复用既有结果，任一输入不同创建新运行。
+    #     仅当既有运行仍为 current 且其准入结果未失效时复用（stale 结果必须重算恢复 current）。
+    if mode == "gate":
+        reused = session.scalar(
+            select(MatchRun).where(
+                MatchRun.project_id == project_id,
+                MatchRun.run_input_fingerprint == run_input_fingerprint,
+                MatchRun.status == "completed",
+                MatchRun.is_current.is_(True),
+            ).limit(1)
+        )
+        if reused is not None:
+            from runtime.db.models import AdmissionResult as _AR
+
+            reused_admission = session.scalar(
+                select(_AR).where(_AR.run_id == reused.run_id, _AR.result_freshness == "current").limit(1)
+            )
+            if reused_admission is not None:
+                api_service.audit(
+                    session, actor="system", action="match.reused",
+                    basis=f"fingerprint={run_input_fingerprint} reused_run={reused.run_id}",
+                    outcome="identical_inputs", object_ref=project_id,
+                )
+                session.commit()
+                logger.info("匹配输入未变化 project_id=%s 复用运行 run=%s（不新建结果）",
+                            project_id, reused.run_id)
+                return
 
     # 3) RAG 候选发现 + 结构化核验（索引未就绪 → 可解释降级）
     candidates = _collect_rag_candidates(
         session, project_id, requirements, evidence, as_of, retrieve_fn=retrieve_fn
     )
+    run_context["retrieval_run_id"] = candidates["main_retrieval_run_id"]
+    run_context["candidate_plan_snapshot_version"] = _candidate_plan_snapshot_version(None)
 
     # 4) 规则判定：只有核验通过/明确的证据进入引擎，向量分数不参与（方案 §3.5 第 4 步）
     req_dicts = [matching.requirement_dict(r) for r in requirements]
     result = matching.run_match(
         requirements=req_dicts, evidence=evidence, as_of=as_of,
         mode=mode, lot_id=None, evaluate_fn=evaluate_fn,
+        ledger_counts=ledger_counts, ineligible=ineligible,
     )
     # 4b) ADR-004 §2.5 证据链最低要求：hard/scored 满足项无企业证据回链 → manual_review，
     #     不计入正式准入（RAG 索引未就绪导致全部无回链时一律降级，不以"匹配跑完"冒充匹配正确）
     result = matching.downgrade_satisfied_without_evidence(
         result, candidates["evidence_refs_by_req"], req_dicts,
     )
+    run_context["candidate_plan_snapshot_version"] = _candidate_plan_snapshot_version(result)
 
     # 5) 快照落库（MatchRun + MatchItem，方案 §3.5 第 5 步 / F024 §2 可回放）
+    #    ADR-008（docs/12 §3.5）：新运行产生后同项目旧运行不再是 current（读取端默认
+    #    仅返回 current，避免矩阵/队列/待确认页取到不同版本的数据）。
+    from sqlalchemy import update as _sa_update
+
+    session.execute(
+        _sa_update(MatchRun).where(MatchRun.project_id == project_id, MatchRun.is_current.is_(True))
+        .values(is_current=False)
+    )
     run = MatchRun(
         run_id=f"MR-{_uuid.uuid4().hex[:12]}",
         project_id=project_id,
@@ -557,11 +722,29 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
         candidate_chunk_ids=candidates["candidate_chunk_ids"],
         structured_verification=candidates["verification_summary"],
         evidence_snapshot_hash=matching.snapshot_hash(evidence),
+        run_context=run_context,
+        run_input_fingerprint=run_input_fingerprint,
+        is_current=True,
     )
     session.add(run)
     session.flush()
+    # JSON 列不追踪原地变更：flag_modified 显式标记脏，确保 run_id 写入持久化快照
+    run_context["run_id"] = run.run_id
+    run.run_context = dict(run_context)
+    from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+
+    _flag_modified(run, "run_context")
     refs_by_req = candidates["evidence_refs_by_req"]
     max_score_by_req = {r["requirement_id"]: r.get("max_score") for r in req_dicts}
+    req_type_domain = {"hard_requirement": "qualification", "scored_requirement": "scoring",
+                       "action_requirement": "operation"}
+    for entry in result["matrix"]:
+        refs = refs_by_req.get(entry["requirement_id"], {})
+        # 证据回链合并（2026-09-23 v1.6）：RAG 检索引用 ∪ 引擎满足记录自带 evidence_refs
+        evidence_refs = sorted(set(refs.get("evidence_refs") or []) | set(entry.get("evidence_refs") or []))
+        if evidence_refs and not refs.get("evidence_refs"):
+            refs = dict(refs, evidence_refs=evidence_refs)
+            refs_by_req[entry["requirement_id"]] = refs
     for entry in result["matrix"]:
         refs = refs_by_req.get(entry["requirement_id"], {})
         # gate_executed（F023 §2 第 4 步）：门禁短路后由诊断全量补齐的条目为 False，
@@ -573,12 +756,23 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
             # ADR-004 §2.5：满足项因无证据回链被降级（结果页据此提示「需补证据回链」）
             "evidence_downgraded": bool(entry.get("evidence_downgraded", False)),
         }
+        plan_id = entry.get("candidate_plan_ref")
         session.add(
             MatchItem(
                 item_id=f"MI-{_uuid.uuid4().hex[:12]}",
                 run_id=run.run_id,
                 requirement_id=entry["requirement_id"],
                 match_result=entry["match_result"],
+                domain=entry.get("domain") or req_type_domain.get(entry.get("req_type")),
+                reason_code=entry.get("reason_code"),
+                evidence_state=entry.get("evidence_state"),
+                observed_value=entry.get("observed_value"),
+                required_value=entry.get("required_value"),
+                candidate_plan_id=(f"{run.run_id}:{plan_id}" if plan_id else None),
+                person_id=entry.get("person_id"),
+                next_action=entry.get("next_action"),
+                score_classification=entry.get("score_classification"),
+                task_kind=entry.get("task_kind"),
                 score=entry.get("score"),
                 max_score=(entry.get("max_score") if entry.get("max_score") is not None
                            else max_score_by_req.get(entry["requirement_id"])),
@@ -587,6 +781,14 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
                 evaluated_at=_dt.datetime.now(_dt.timezone.utc),
             )
         )
+
+    # 5b) 候选班子落库（docs/12 §3.3：人员结论回链同一方案同一人；快照不可覆盖）
+    _persist_candidate_plans(session, run=run, engine_result=result)
+
+    # 5c) 动作任务落库（docs/12 §2.4/§3.4：动作项只进执行计划，不进缺证队列）
+    _sync_operation_tasks(session, project_id=project_id, run=run,
+                          requirements=requirements, engine_result=result)
+
     api_service.audit(
         session, actor="system", action="match.completed",
         basis=f"rule_set={rule_set.rule_set_id} as_of={as_of} "
@@ -595,13 +797,15 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
                 f"executed={result['coverage'].get('executed')} "
                 f"gate_executed={result['coverage'].get('gate_executed')} "
                 f"short_circuited={len(result['coverage'].get('short_circuited') or [])} "
-                f"evidence_downgraded={len(result['coverage'].get('evidence_downgraded') or [])}",
+                f"evidence_downgraded={len(result['coverage'].get('evidence_downgraded') or [])} "
+                f"parse_exceptions_pending={pending_exc_count}",
         object_ref=project_id,
     )
 
-    # 6) 准入结果生成（F023 §2 第 6 步 / R024）：gate 运行 → AdmissionResult 不可变快照
-    #    + 旧结果置 stale + 项目准入状态迁移（qualified_full_score/blocked_*）。
-    #    mode=gate 才生成——诊断运行不驱动准入状态（F023 §2 第 4 步）。
+    # 6) 准入结果生成（F023 §2 第 6 步 / R024 / docs/12 §4.4）：gate 运行 → AdmissionResult
+    #    不可变快照 + 旧结果置 stale + 项目准入状态迁移。
+    #    ADR-007 §2.5 + docs/12 §4.3-1：解析例外阻断原因独立为 parse_exceptions_pending；
+    #    历史样本测试上下文阻断审批（blocking_reasons 点名），均不计为企业缺证。
     admission = None
     if mode == "gate":
         from runtime.db.admission_service import generate_admission_result
@@ -612,6 +816,8 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
             engine_result=result,
             requirements=req_dicts,
             evidence=evidence,
+            parse_exception_count=pending_exc_count,
+            historical_sample=historical_sample,
         )
 
     # First commit the immutable MatchRun/MatchItem/AdmissionResult snapshot. Task
@@ -625,7 +831,7 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
 
             task_sync = workflow_service.sync_tasks_from_admission(
                 session, project_id=project_id, match_run_id=run.run_id,
-                admission=admission, commit=False,
+                admission=admission, commit=False, requirements=req_dicts,
             )
             session.commit()
         except Exception as exc:
@@ -645,6 +851,265 @@ def _execute_match_run(session, project_id: str | None, *, mode: str = "gate",
         f"{admission.result_id}:{admission.internal_admission_result.get('status')}"
         if admission else None, task_sync,
     )
+
+
+# ---------------------------------------------------------------------------
+# ADR-008 / docs/12 §3.3-§3.5 辅助：解析例外快照、run_context、候选班子与动作任务
+# ---------------------------------------------------------------------------
+
+def _hash8(payload) -> str:
+    import hashlib as _hashlib
+
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return _hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+
+
+def _parse_exception_snapshot_version(pending_rows) -> str:
+    """解析例外快照版本：PE-<count>-<hash8(候选id 列表)>（docs/12 §3.5）。
+
+    任何一条例外被处置（候选不再 pending）→ 版本变化 → 匹配输入指纹变化 → 新运行。
+    """
+    ids = sorted(getattr(r, "candidate_id", "") or "" for r in pending_rows)
+    return f"PE-{len(ids)}-{_hash8(ids)}"
+
+
+def _parse_exception_type_and_rank(row) -> tuple[str, int]:
+    """单条待确认候选 → (exception_type, risk_rank)（docs/12 §2.5 风险分层）。"""
+    from runtime.core.domain_dict import (
+        PARSE_EXC_CONFLICT, PARSE_EXC_HARD_ANCHOR_MISS, PARSE_EXC_LLM_PENDING,
+        PARSE_EXC_PROBE_MISS, PARSE_EXCEPTION_RISK_RANK,
+    )
+
+    payload = getattr(row, "payload", None) or {}
+    issue = str(payload.get("issue") or "")
+    if "冲突" in issue:
+        return PARSE_EXC_CONFLICT, PARSE_EXCEPTION_RISK_RANK[PARSE_EXC_CONFLICT]
+    rule = payload.get("rule") or {}
+    missing = bool(payload.get("missing_marker"))
+    if missing and payload.get("req_type") == "hard_requirement":
+        return PARSE_EXC_HARD_ANCHOR_MISS, PARSE_EXCEPTION_RISK_RANK[PARSE_EXC_HARD_ANCHOR_MISS]
+    if rule.get("located_by") == "llm":
+        return PARSE_EXC_LLM_PENDING, PARSE_EXCEPTION_RISK_RANK[PARSE_EXC_LLM_PENDING]
+    return PARSE_EXC_PROBE_MISS, PARSE_EXCEPTION_RISK_RANK[PARSE_EXC_PROBE_MISS]
+
+
+def _sync_parse_exceptions(session, *, project_id: str, pending_rows, snapshot_version: str) -> None:
+    from sqlalchemy import select as _sa_select
+    select = _sa_select
+    """把当前待确认候选物化为 parse_exceptions 快照行（docs/12 §3.4）。
+
+    同一快照版本幂等（唯一键 snapshot_version + candidate_id）；处置历史追加在
+    decision_history。该表只影响解析质量与满分阻断，不得宣告企业不满足。
+    """
+    import uuid as _uuid
+
+    from runtime.db.models import ParseException
+
+    for row in pending_rows:
+        exists = session.scalar(
+            select(ParseException).where(
+                ParseException.snapshot_version == snapshot_version,
+                ParseException.candidate_id == row.candidate_id,
+            ).limit(1)
+        )
+        if exists is not None:
+            continue
+        payload = getattr(row, "payload", None) or {}
+        exc_type, rank = _parse_exception_type_and_rank(row)
+        title = str(payload.get("assertion") or payload.get("value") or payload.get("anchor_key")
+                    or row.candidate_id)[:256]
+        if payload.get("missing_marker"):
+            title = f"未检出：{title}（不代表文件无此要求）"
+        elif (payload.get("rule") or {}).get("located_by") == "llm":
+            title = f"大模型定位待确认：{title}"
+        session.add(ParseException(
+            parse_exception_id=f"PX-{_uuid.uuid4().hex[:12]}",
+            project_id=project_id,
+            material_id=row.material_id,
+            material_version=row.version,
+            candidate_id=row.candidate_id,
+            snapshot_version=snapshot_version,
+            exception_type=exc_type,
+            risk_rank=rank,
+            req_type=payload.get("req_type"),
+            status="open",
+            title=title,
+            payload=payload,
+        ))
+    session.flush()
+
+
+def _build_run_context(*, project_id: str, rule_set, as_of: str, materials, identity,
+                       evidence_snapshot_hash: str, managers, ledger_ineligible: dict,
+                       parse_exception_snapshot_version: str, engine_result, historical_sample: bool) -> dict:
+    """docs/12 §3.5：MatchRun 必须固化并由所有投影接口原样返回的运行上下文。"""
+    from runtime.core.domain_dict import DICT_VERSION
+
+    identity_status = getattr(identity, "identity_status", None) if identity is not None else None
+    identity_fields = []
+    if identity is not None:
+        for f in ("project_name_announcement", "project_name_tender", "tenderee", "tender_no",
+                  "lot", "budget", "deadline"):
+            identity_fields.append(str(getattr(identity, f, None) or ""))
+    doc_set = sorted(
+        (f"{m.material_id}:v{m.version}:{(m.content_hash or '')[:12]}"
+         for m in (materials or []) if getattr(m, "project_id", None) == project_id)
+    )
+    personnel_availability = sorted(
+        (f"{getattr(m, 'manager_id', '')}:{len(getattr(m, 'active_projects', None) or [])}"
+         f":{getattr(m, 'availability', None) or ''}"
+         for m in (managers or []))
+    )
+    from scripts.matching.engine import MATCHER_VERSION
+
+    return {
+        "project_id": project_id,
+        "project_identity_version": f"{identity_status or 'unverified'}@{_hash8(identity_fields)}",
+        "document_set_version": _hash8(doc_set),
+        "ruleset_version": getattr(rule_set, "version", None),
+        "parse_exception_snapshot_version": parse_exception_snapshot_version,
+        "enterprise_snapshot_version": evidence_snapshot_hash,
+        "personnel_availability_snapshot_version": _hash8([personnel_availability, _hash8(ledger_ineligible)]),
+        "candidate_plan_snapshot_version": None,  # 引擎执行后回填
+        "retrieval_run_id": None,  # 检索执行后回填
+        "as_of": as_of,
+        "matcher_version": f"{MATCHER_VERSION}@{DICT_VERSION}",
+        "dict_version": DICT_VERSION,
+        "historical_sample": historical_sample,
+    }
+
+
+def _run_input_fingerprint(run_context: dict, *, lot_id) -> str:
+    """docs/12 §4.3-5 幂等键：项目、标段、文件集合、规则、企业/人员快照、解析例外快照、
+    授权评分输入及引擎版本（检索运行与 run_id 不入键——它们是同一输入的派生）。"""
+    keys = ("project_id", "project_identity_version", "document_set_version", "ruleset_version",
+            "parse_exception_snapshot_version", "enterprise_snapshot_version",
+            "personnel_availability_snapshot_version", "candidate_plan_snapshot_version",
+            "as_of", "matcher_version", "historical_sample")
+    payload = {k: run_context.get(k) for k in keys}
+    payload["lot_id"] = lot_id
+    return _hash8(payload)
+
+
+def _candidate_plan_snapshot_version(engine_result) -> str | None:
+    plans = None
+    if isinstance(engine_result, dict):
+        plans = engine_result.get("candidate_plans")
+    elif isinstance(engine_result, list):
+        plans = engine_result
+    if not plans:
+        return "none"
+    return _hash8([[p.get("plan_ref"), p.get("status"), p.get("primary")] for p in plans])
+
+
+def _persist_candidate_plans(session, *, run, engine_result: dict) -> None:
+    from sqlalchemy import select as _sa_select
+    select = _sa_select
+    """候选班子三表落库（docs/12 §3.3）。方案 id = <run_id>:<plan_ref>，跨 run 不复用。"""
+    import uuid as _uuid
+
+    from runtime.db.models import CandidatePlan, CandidatePlanMember, CandidatePlanRequirementLink
+
+    for plan in (engine_result.get("candidate_plans") or []):
+        plan_id = f"{run.run_id}:{plan.get('plan_ref')}"
+        session.add(CandidatePlan(
+            candidate_plan_id=plan_id,
+            run_id=run.run_id,
+            project_id=run.project_id,
+            lot_id=run.lot_id,
+            role_code=plan.get("role_code") or "project_manager",
+            status="proposed",
+            is_primary=bool(plan.get("primary")),
+            selection_basis=plan.get("selection_basis"),
+            gap_reason_codes=plan.get("gap_reason_codes") or [],
+        ))
+        for member in plan.get("members") or []:
+            session.add(CandidatePlanMember(
+                candidate_plan_id=plan_id,
+                role_code=member.get("role_code") or plan.get("role_code") or "project_manager",
+                person_id=member.get("person_id") or "",
+                person_kind=member.get("person_kind") or "manager",
+                is_primary=bool(member.get("is_primary", True)),
+                availability_as_of=member.get("availability_as_of") or run.as_of,
+                evidence_refs=member.get("evidence_refs") or [],
+            ))
+        for rid, res in (plan.get("results") or {}).items():
+            session.add(CandidatePlanRequirementLink(
+                candidate_plan_id=plan_id,
+                requirement_id=rid,
+                person_id=(plan.get("members") or [{}])[0].get("person_id"),
+                result=res.get("result"),
+                reason_code=res.get("reason_code"),
+            ))
+    session.flush()
+
+
+def _sync_operation_tasks(session, *, project_id: str, run, requirements, engine_result: dict) -> None:
+    from sqlalchemy import select as _sa_select
+    select = _sa_select
+    """动作要求 → operation_tasks（docs/12 §2.4/§3.4）。
+
+    任务 id 确定性（project + requirement），跨运行 upsert：状态以引擎判定回写，
+    保留已登记回执；动作只影响执行就绪与 approval_ready 阶段门禁。
+    """
+    import hashlib as _hashlib
+
+    from runtime.db.models import OperationTask
+
+    engine_by_req = {e.get("requirement_id"): e for e in engine_result.get("matrix") or []}
+    # 2026-09-29 用户裁定：保证金等「投标时才发生」的条款转入执行计划（bond/submission_ready），
+    # 判定阶段不作为缺证阻断（docs/12 §2.4 task_kind=bond）。
+    def _execution_rows():
+        for req in requirements or []:
+            entry = engine_by_req.get(req.requirement_id) or {}
+            rule = req.rule if isinstance(req.rule, dict) else {}
+            if req.req_type == "action_requirement":
+                yield req, entry, (entry.get("task_kind") or rule.get("task_kind") or "other"), \
+                    (req.required_by_stage or "approval_ready")
+            elif req.req_type == "hard_requirement" and entry.get("task_kind") == "bond":
+                amount = rule.get("amount")
+                forms = "/".join(rule.get("forms") or [])
+                title = "投标保证金" + (f" {amount} 元" if amount is not None else "")
+                title += f"（{forms}）" if forms else ""
+                title += "——递交投标文件前办理"
+                yield req, entry, "bond", "submission_ready"
+    for req, entry, task_kind, stage in _execution_rows():
+        if task_kind == "bond" and entry.get("task_kind") == "bond":
+            rule = req.rule if isinstance(req.rule, dict) else {}
+            amount = rule.get("amount")
+            forms = "/".join(rule.get("forms") or [])
+            title = "投标保证金" + (f" {amount} 元" if amount is not None else "")
+            title += f"（{forms}）" if forms else ""
+            title += "——递交投标文件前办理"
+        else:
+            title = (req.assertion or req.requirement_id)[:256]
+        # 2026-09-29：按内容去重——重确认快照链（-r2 等）产生新 requirement_id 但同 assertion，
+        # 执行任务以 (project, normalized_assertion) 为确定性键，同内容只留一条
+        dedup_key = (req.assertion or req.requirement_id).strip()[:200]
+        task_id = "OT-" + _hashlib.sha256(f"{project_id}|{dedup_key}".encode()).hexdigest()[:16]
+        existing = session.get(OperationTask, task_id)
+        status = entry.get("match_result") or req.action_status or "not_started"
+        if status == "not_applicable":
+            status = "not_started"  # 执行任务以动作状态表达；not_applicable 是判定阶段口径
+        fields = dict(
+            run_id=run.run_id if run is not None else None,
+            lot_id=req.lot_id,
+            task_kind=task_kind,
+            required_by_stage=stage,
+            title=title[:256],
+            clause_ref=req.clause_ref,
+            deadline_at=req.deadline_at,
+            status=status,
+        )
+        if existing is None:
+            session.add(OperationTask(operation_task_id=task_id, project_id=project_id,
+                                      action_requirement_id=req.requirement_id,
+                                      owner_role="bid_specialist", **fields))
+        else:
+            for k, v in fields.items():
+                setattr(existing, k, v)
+            existing.version = (existing.version or 1) + 1
+    session.flush()
 
 
 def _collect_rag_candidates(session, project_id: str, requirements, evidence: dict,

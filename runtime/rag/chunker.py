@@ -90,11 +90,15 @@ def _smart_split(text: str, size: int, overlap: int) -> list[str]:
 
 @dataclass
 class ParsedPage:
-    """解析器产物：页码 + 段落文本（L1/L2/L3 通用；OCR 分片带置信度）。"""
+    """解析器产物：页码 + 段落文本（L1/L2/L3 通用；OCR 分片带置信度）。
+
+    tables = 版面层表格行（可选能力，结构对齐 runtime.parsing.router.ParsedPage；
+    缺席恒为空，L1-L3 分块只用 paragraphs）。"""
 
     page_no: int
     paragraphs: list[str] = field(default_factory=list)
     ocr_confidence: float | None = None
+    tables: list[list[str]] = field(default_factory=list)
 
 
 def chunk_document(

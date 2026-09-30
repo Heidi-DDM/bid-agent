@@ -452,12 +452,24 @@ def test_match_run_hard_failure_splits_qualification_vs_response(session):
 
 
 def test_match_run_recalculate_marks_previous_stale(session):
+    from runtime.db import api_service
+
     _project(session)
     _rule_set(session)
     _requirement(session)
     _qualification(session)
 
     _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate)
+    first_runs = session.scalars(select(MatchRun).where(MatchRun.project_id == "ND-2025")).all()
+    assert len(first_runs) == 1 and first_runs[0].is_current is True
+
+    # ADR-008 / docs/12 §4.3-5：输入完全相同且结果未失效 → 复用既有运行，不新建
+    _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate)
+    assert len(session.scalars(select(MatchRun).where(MatchRun.project_id == "ND-2025")).all()) == 1
+    assert any(e.action == "match.reused" for e in session.scalars(select(AuditEvent)).all())
+
+    # 真实重算流程（recalculate 路由先置 stale）：旧运行不再是 current，创建新运行
+    api_service.mark_admission_results_stale(session, "ND-2025")
     _execute_match_run(session, "ND-2025", evaluate_fn=_fake_evaluate)
 
     results = _admissions(session)
@@ -466,6 +478,9 @@ def test_match_run_recalculate_marks_previous_stale(session):
     assert results[1].result_freshness == "current"
     events = session.scalars(select(AuditEvent)).all()
     assert any(e.action == "admission.mark_stale" for e in events)
+    runs = session.scalars(select(MatchRun).where(MatchRun.project_id == "ND-2025")
+                           .order_by(MatchRun.created_at)).all()
+    assert [r.is_current for r in runs] == [False, True]  # docs/12 §3.5：仅最新运行为 current
 
 
 def test_full_score_admission_enters_pending_bid_approval_and_decides(session):
@@ -570,18 +585,24 @@ def test_generate_admission_whitelist_full_score(session):
     session.commit()
     assert ar.result_id.startswith("AR-")
     assert ar.internal_admission_eligible is True
-    assert ar.qualification_result == {
-        "status": "passed", "satisfied": 1, "total": 1,
-        "items": [_queue_item_like(_hard_entry(), req)],
-    }
+    assert ar.qualification_result["status"] == "passed"
+    assert ar.qualification_result["satisfied"] == 1
+    assert ar.qualification_result["total"] == 1
+    assert ar.qualification_result["items"] == [_queue_item_like(_hard_entry(), req)]
+    # ADR-008：分域汇总 + 稳定阻断原因（满分时无阻断）
+    assert ar.qualification_summary["satisfied"] == 1
+    assert ar.blocking_reasons == []
+    assert ar.parse_quality_summary == {"pending_count": 0, "blocking": False, "blocking_reason": None}
     assert ar.internal_admission_result["status"] == "qualified_full_score"
     assert ar.manager_matches == []
     assert len(ar.explanation) >= 6
 
 
 def _queue_item_like(entry, req):
-    # F020 §2.2.5 v1.7（09-优化方案 §3.4.3）：队列 DTO 扩展字段同步断言
+    # F020 §2.2.5 v1.7 + ADR-008（docs/12 §3.2）：队列 DTO 扩展字段同步断言
+    from runtime.core.domain_dict import SUMMARY_ORDER, project_result_state, RESULT_LABEL
     required = list(req.get("evidence_required") or [])
+    projected = project_result_state(entry["match_result"], entry.get("reason_code"), entry["req_type"])
     return {
         "req": entry["requirement_id"],
         "requirement_id": entry["requirement_id"],
@@ -589,7 +610,11 @@ def _queue_item_like(entry, req):
         "clause_ref": entry["clause_ref"],
         "text": req["assertion"],
         "match_result": entry["match_result"],
+        "projected_result": projected,
+        "projected_result_label": RESULT_LABEL.get(projected, projected),
+        "reason_code": entry.get("reason_code"),
         "req_type": entry["req_type"],
+        "domain": "qualification",
         "gate_executed": entry.get("gate_executed", True),
         "failure_effect": req["failure_effect"],
         "missing_field": None,
@@ -598,6 +623,11 @@ def _queue_item_like(entry, req):
         "recommended_material_types": list(required) if required else None,
         "owner_role": "bid_specialist:upload → data_admin:verify",
         "due_at": None,
+        "observed_value": entry.get("observed_value"),
+        "required_value": entry.get("required_value"),
+        "next_action": entry.get("next_action"),
+        "person_id": entry.get("person_id"),
+        "candidate_plan_id": entry.get("candidate_plan_id"),
     }
 
 

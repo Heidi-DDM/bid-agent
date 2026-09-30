@@ -1,6 +1,6 @@
 # F020-后端 API、任务编排与权限实现
 
-- **需求来源**：R020 ｜ **状态**：定稿草案 v1.21（2026-09-17）
+- **需求来源**：R020 ｜ **状态**：定稿草案 v1.23（2026-09-28 ADR-008 结果域 API 落地）
 - **关联**：F003-F010、F017-F019、F021-F025、ADR-001、ADR-002
 
 ## 1. 目标
@@ -154,7 +154,7 @@ v1.7 校验与幂等（09-优化方案 §3.2）：① 前后端均校验后缀�
 
 `state` = **项目业务准入状态**（`Project.admission_status`，ADR-001 §2.2：collecting / parsing / manual_review / matching / blocked_missing_data / blocked_hard_requirement / not_qualified / qualified_full_score / pending_bid_approval / approved_for_bidding / rejected_by_approver / blocked_waiver_expired），**不是** AdmissionResult 快照生命周期（final/stale）——v1.19 修正此前误回传后者导致页面显示英文 `final`。v1.19 新增：`result_freshness`（current/stale）、`decision`（结论说明文本）、`blocked[]`（硬性不满足队列，结构同 missing/review 的队列项 DTO）；`missing/review/blocked` 各项的 `clause/clause_ref` 与 matrix/queues 同口径折叠历史「提示（提示）」重复格式。前端一律用中文标签映射展示枚举（`prototype/api.js` ADMISSION_STATE_META / QUALIFICATION_META / SCORING_META / READINESS_META / EVIDENCE_KIND_LABEL / AUDIT_ACTION_LABEL），系统编号只放悬停提示与「系统追溯编号」折叠区。
 
-**`GET /api/v1/projects/{project_id}/matrix`** —— 矩阵页合并视图：requirements + 逐条 match_items（含证据链）；不触发新匹配。
+**`GET /api/v1/projects/{project_id}/matrix`** —— 矩阵页合并视图：requirements + 逐条 match_items（含证据链）+ `match_job`；不触发新匹配。**v1.22 新增 `match_job`**（只读，取项目最近一条 `match.run`/`match.recalculate` 任务；无任务时 `null`）：`{job_id, kind, status, attempts, max_attempts, error_code, error_message, created_at, updated_at}`，`status` 对齐任务状态机 `pending/running/retryable/completed/failed/cancelled`。背景：match.run 被门禁（如 `gate_overdue`/`gate_identity_conflict`）终态拒绝时不产生 MatchRun，`match-runs/latest` 只能返回 `{run_id: null}`——前端此前显示"排队中稍后刷新"，与任务已终态失败的事实矛盾；矩阵页"尚无运行"分支改按 `match_job` 区分未触发/排队中/执行中（每 5s 自动轮询）/终态失败（展示 `error_code` 中文标签与 `error_message` 全文及恢复指引）。配套：`POST /projects/{id}/match` 创建任务改用 `retry_failed=True`——首次 match.run 终态失败后，纠正数据（延期登记/身份纠正重新校验）再次触发时复活既有失败任务，否则幂等键被失败任务永久占住、匹配不再执行（与 `schedule_post_parse` 2026-09-15 修复同理；门禁仍在创建前同步校验）。
 
 **`GET /api/v1/projects/{project_id}/queues`** —— 三类处置队列（对齐 `queue.html`）：
 
@@ -222,6 +222,26 @@ v1.7 校验与幂等（09-优化方案 §3.2）：① 前后端均校验后缀�
 `termination_correction`（明确不满足）不接受 `/evidence`，不得以补证“洗白”；其关闭只能由后续纠正后的匹配结果不再出现相同来源问题，或由经营负责人取消项目/任务并保留理由。所有自动任务按 `project_id + source_kind + source_ref + task_type` 形成来源指纹幂等；新 MatchRun 结果不再存在该来源问题时才由系统关闭开放任务。缺失字段仍为 `null/待补/待核实`，不得由前端或任务状态推断满足。
 
 **身份门禁（v1.21）**：正式 `POST /match` 与 `/recalculate` 在 P0 的 `identity_conflict` 基础上，新增 `identity_warning` 同步 `409` 阻断；投标专员/经营负责人必须用 `POST /identity-confirm` 提交依据后重新发起。快速预核/准备立项仅显示该事实，不将其默认确认。
+
+### 2.2.10 结果域 API（v1.23 / ADR-008 / docs/12 §4.2，2026-09-28 已实现 `runtime/routers/results.py`）
+
+所有读接口接受可选 `run_id`，默认仅返回最新 `current` 运行并回显同一 `run_context`；写接口引用非当前版本 → `409 stale_input`（错误码已注册 F020 §6）；响应含 `request_id`，写操作写审计。
+
+| 接口 | 方法 | 角色（两级角色口径） | 说明 |
+|---|---|---|---|
+| `/api/v1/projects/{id}/result-overview` | GET | 两级角色 | 结果首屏单一读取源：run_context、四类可行动数量摘要、优先事项（≤3）、解析质量摘要、阻断原因 |
+| `/api/v1/projects/{id}/qualification-matrix` | GET | 两级角色 | 只返回资格与资源项（结论/原因码/事实值/证据状态/人员方案/条款页码/下一步），支持 lot_id/state 筛选 |
+| `/api/v1/projects/{id}/scoring-analysis` | GET | 两级角色 | 按五类评分分类分组；无可算项时 calculable=false + 说明文案，不输出 0/0 |
+| `/api/v1/projects/{id}/operation-plan` | GET | 两级角色 | 阶段时间线（preparation→opened）、责任人、截止、回执与阶段门禁 |
+| `/api/v1/projects/{id}/parse-exceptions` | GET | 两级角色 | 解析质量唯一队列源（风险 rank 1-4 排序、处置审计、parse_version 历史查询） |
+| `/api/v1/parse-exceptions/{id}/decisions` | POST | 两级角色 | 结构化处置表单（decision=approved/not_applicable/deep_review；reason 必填；not_applicable 必填 search_scope；snapshot_version 不一致 409）——**代替浏览器 prompt()**；处置后沿用 ADR-007 重确认链 |
+| `/api/v1/projects/{id}/candidate-plans` | GET | 两级角色 | 候选班子与人员—条款回链（同一 person_id） |
+| `/api/v1/projects/{id}/candidate-plans/select` | POST | 仅 business_head | 投标负责人选定方案（理由必填；生成重算任务、旧结果 stale） |
+| `/api/v1/projects/{id}/remediation-tasks` | GET | 两级角色 | 按聚合缺口（gap_key）返回补证任务（requirement_refs/clause_refs 完整回链）+ 资源处置建议分开 |
+| `/api/v1/operation-tasks/{id}` | PATCH/POST | 两级角色 | 任务责任人登记状态/回执（completed 必填回执；version 乐观锁 409） |
+| `/api/v1/projects/{id}/test-context` | GET/POST | 两级角色 | 历史解析样本测试上下文的服务端唯一登记口（POST 理由必填）；登记后身份/截止门禁对匹配/重算放行并自动重触发匹配（ADR-008 / docs/12 §1.2，审批仍二次拒绝；导出/递交接口落地时同样接入） |
+
+过渡期契约：旧 `GET /matrix`、`/admission`、`/queues` 不删除，响应增加 `run_context`/`is_current`/`deprecated_projection=true`，不承诺新增字段完整性；`/admission` 增加 `scoring_calculable`/`blocking_reasons`/`parse_quality_summary`，无可算评分项时 `objective_score/objective_max=null`。
 
 ## 3. 请求校验与幂等
 
@@ -293,3 +313,6 @@ worker 领取任务使用数据库锁和租约；超时任务由恢复器重新�
 | 2026-09-16 | v1.20 | **ADR-004 对齐（优化方案 §11）**。① **Iteration 0 已落地**：`/readyz` 新增 `worker` 检查项（最近心跳 ≤ `WORKER_HEARTBEAT_STALE_SECONDS` 视为可用；无心跳/超时 → `available=false` 整体 503）；新增 `GET /api/v1/projects/{id}/readiness`（阶段/截止/过期/身份校验/最新结果新鲜度/阻断原因）与 `POST /api/v1/projects/{id}/identity-check`（投标专员/经营负责人；比较公告侧与招标文件侧字段，返回 `identity_confirmed / identity_warning / identity_conflict` 与冲突明细）；`POST .../match`、`.../recalculate`、`.../approval/create` 增服务端门禁：`overdue` → `invalid_state_transition`，`identity_conflict` → `invalid_state_transition`，均写审计；② 草案（Iteration 1）：任务中心 API `GET /projects/{id}/tasks`、`POST /tasks/{id}/claim|submit|reject|complete`、`POST /projects/{id}/precheck`、`POST /projects/{id}/preparation-decisions`、`POST /projects/{id}/rulesets/{id}/confirm`、`GET /projects/{id}/approval-package`、`POST /projects/{id}/stale-recheck`、`GET /jobs/{job_id}`；所有写接口校验角色/项目状态/输入版本、幂等、审计、返回 request_id/job_id/新版本 ID，禁止仅靠前端隐藏按钮实现门禁；③ 权限草案：资料管理员不得发起/批准审批，经营负责人不得修改企业资料原始版本。 |
 | 2026-09-16 | v1.14 | **ADR-004 P0 查漏补缺**：`POST /projects/{id}/match`、`/recalculate` 与审批创建均须先自动执行/复用身份校验，再作项目门禁；首次发现 `identity_conflict` 必须同步返回 409 并审计，不得先创建后由 worker 失败。截止登记接口兼容 `bid_deadline`（YYYY-MM-DD）与 `bid_deadline_at`（含时区 ISO 8601）；精确时点与日期不一致、无时区或格式错误一律 422/业务错误；readiness 返回 `bid_deadline_at`、`deadline_precision`、`deadline_accuracy_note`。 |
 | 2026-09-17 | v1.21 | **ADR-004 Iteration 1 实现契约**：冻结快速预核、投标准备立项和 RemediationTask API/状态/权限/审计；正式 match/recalculate 新增 `identity_warning` 同步阻断，资料补证不得自行关闭明确不满足任务。 |
+| 2026-09-23 | v1.22 | **矩阵页匹配任务状态透传（用户实测"排队中稍后刷新"误导整改）**：① `GET /matrix` 响应新增 `match_job`（只读，最近一条 match.run/match.recalculate 的 `{job_id,kind,status,attempts,max_attempts,error_code,error_message,created_at,updated_at}`，无任务 null）；② 前端"尚无运行"分支按任务真实状态展示——排队/执行中/待重试附 5s 自动轮询，终态失败显示错误码中文标签 + `error_message` 全文 + 恢复指引（纠正数据后重新触发），不再笼统提示"排队中稍后刷新"；③ `POST /match` 创建任务增 `retry_failed=True`：门禁终态失败的首次 match.run 在数据纠正后再次触发即复活（此前幂等键被失败任务永久占住），门禁仍在创建前同步校验。背景：PJ-b4e65720e2 以他项目旧招标文件实测，match.run 被 `gate_overdue` 终态拒绝后页面无任何失败提示。 |
+| 2026-09-28 | v1.23 | **ADR-008 结果域 API（docs/12 §4.2）**：新增 §2.2.10 十一个端点（result-overview/qualification-matrix/scoring-analysis/operation-plan/parse-exceptions+decisions/candidate-plans+select/remediation-tasks/operation-tasks/test-context）；错误码表增 `stale_input`（409，引用非当前版本写入）；旧 matrix/admission/queues 加 run_context 回显与 deprecated_projection 标记；审批创建增历史样本二次拒绝。契约测试见 `runtime/tests/test_adr008_layering.py`。 |
+| 2026-09-28（三） | v1.23 补 | 历史样本测试放行：test-context 登记后匹配/重算门禁放行+自动重触发（复活终态失败任务）；结果页降噪与放行操作卡。见 04-修改日志同日条目。 |

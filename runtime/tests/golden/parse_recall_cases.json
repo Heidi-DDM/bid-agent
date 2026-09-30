@@ -1,0 +1,155 @@
+{
+  "$comment": [
+    "解析召回回归语料（P3 golden 体系扩展到招标文件侧，2026-09-24 建）。",
+    "登记规则：每次用户实测发现「原文明确写了、系统没抽到/抽错」，把那段原文逐字粘进 pages，",
+    "expect 写期望结果，source 写材料编号+页码。test_parse_recall_corpus.py 自动加载全部用例。",
+    "所有 paragraph 必须是真实原文逐字摘录（可去换行），禁止合成编造——语料本身是防编造的对照物。"
+  ],
+  "cases": [
+    {
+      "case_id": "XT-20260924-region-street",
+      "source": "MAT-PJ1d7fadae0b-TENDER p7（邢台市市区部分街道排水管网提升改造项目施工，115页）",
+      "kind": "main_card",
+      "pages": [
+        {"page_no": 7, "paragraphs": [
+          "1.2.1 本招标项目的建设地点：中兴大街(钢铁路-滨江路、襄都路-高速路下道口)等 13 条街道。",
+          "2.2 本次招标范围和内容：本工程未开工建设。"
+        ]}
+      ],
+      "expect": {"field": "region", "value": "中兴大街(钢铁路-滨江路、襄都路-高速路下道口)等13条街道"},
+      "regression": "旧 region 正则只认「省?市…区/县」行政区划版式，街道描述永远 missing（2026-09-24 修复）"
+    },
+    {
+      "case_id": "XT-20260924-region-backref-fulltext-fallback",
+      "source": "同上 p2（公告区回引）+ p61（技术标准章真实地点）",
+      "kind": "main_card",
+      "pages": [
+        {"page_no": 2, "paragraphs": ["1.1.5 建设地点：见投标人须知前附表。"]},
+        {"page_no": 13, "paragraphs": ["1.1.2 本工程施工场地(现场)具体地理位置如下：建设地点：襄都区泉北大街东段。"]}
+      ],
+      "expect": {"field": "region", "value": "襄都区泉北大街东段"},
+      "regression": "「见前附表」回引不是地点；公告区全是回引时须扩全文找（旧版直接 missing）"
+    },
+    {
+      "case_id": "TS-20260910-region-admin-division",
+      "source": "唐山三友电子化学品污水处理装置 EPC 公告 2.1.3（2026-09-10 实测措辞）",
+      "kind": "main_card",
+      "pages": [
+        {"page_no": 1, "paragraphs": ["2.1.3 建设地点：河北省唐山市曹妃甸区南堡经济开发区 2.1.5 计划工期：150日历天。"]}
+      ],
+      "expect": {"field": "region", "value": "河北省唐山市曹妃甸区"},
+      "regression": "行政区划式既有口径（兜底分支上线后不得回归）"
+    },
+    {
+      "case_id": "XT-20260924-ceiling-yuan-unit",
+      "source": "MAT-PJ1d7fadae0b-TENDER p7",
+      "kind": "rule_candidate",
+      "pages": [
+        {"page_no": 7, "paragraphs": [
+          "2.2 本次招标范围和内容：审定施工图纸及工程量清单范围内的全部内容。本次招标最高投标限价328447260元。"
+        ]}
+      ],
+      "expect": {"anchor": "ceiling_price", "assertion_equals": "最高投标限价328447260元"},
+      "regression": "旧正则单位写死「万元」，原文元计 → 原文有限价也报 missing（2026-09-24 修复）"
+    },
+    {
+      "case_id": "ND-20260901-ceiling-wanyuan-unit",
+      "source": "农大房建招标公告 2.2（基线文件）",
+      "kind": "rule_candidate",
+      "pages": [
+        {"page_no": 3, "paragraphs": ["2.2 本次招标最高投标限价 12471.590889 万元。"]}
+      ],
+      "expect": {"anchor": "ceiling_price", "assertion_contains": "12471.590889万元"},
+      "regression": "万元口径不得回归"
+    },
+    {
+      "case_id": "XT-20260924-pm-similar-form-header-not-matched",
+      "source": "MAT-PJ1d7fadae0b-TENDER p105（投标文件格式：近年完成的类似项目情况表表头）",
+      "kind": "rule_candidate",
+      "pages": [
+        {"page_no": 105, "paragraphs": [
+          "（二）近年完成的类似项目情况表",
+          "项目名称",
+          "项目所在地",
+          "合同价格",
+          "开工日期",
+          "竣工日期",
+          "工程质量",
+          "项目经理",
+          "技术负责人",
+          "项目描述",
+          "备注",
+          "备注：1、类似项目指市政公用工程。"
+        ]}
+      ],
+      "expect": {"anchor_absent": "pm_similar_performance"},
+      "regression": "旧模式把「技术负责人」里的「负责」当谓语、表头行当成项目经理业绩要求（2026-09-24 修复）"
+    },
+    {
+      "case_id": "TS-20260910-qualification-label-list",
+      "source": "唐山三友 EPC 公告 3.1.1（「资质要求：…；」清单式，无「施工总承包」字样）",
+      "kind": "rule_candidate",
+      "pages": [
+        {"page_no": 2, "paragraphs": [
+          "3.1.1 资质要求：投标人须具有独立法人资格，持有工商行政管理部门登记的有效企业法人营业执照，具备住房城乡建设主管部门颁发的工程设计综合资质",
+          "或具有建设行政主管部门核发的环境工程（水污染防治）专项设计甲级及以上资质，同时具有建设行政主管部门颁发的环保工程专业承包壹级资质，",
+          "建筑机电安装工程专业承包二级及以上资质，有效的安全生产许可证；",
+          "3.1.2 项目经理资格要求：须具备有效期内机电工程专业贰级及以上注册建造师执业资格，同时取得安全生产考核合格证书（B类）。"
+        ]}
+      ],
+      "expect": {"anchor": "qualification_grade", "assertion_contains": "环境工程（水污染防治）专项设计甲级", "assertion_not_contains": "项目经理"},
+      "regression": "「资质要求：」清单式整句抽取（；为并列子条件不截断，下一条款编号收尾）"
+    },
+    {
+      "case_id": "TS-20260910-social-security-yanglao",
+      "source": "唐山三友 EPC 公告 3.1.2 后续（养老保险缴费证明版式）",
+      "kind": "rule_candidate",
+      "pages": [
+        {"page_no": 2, "paragraphs": [
+          "注册建造师证书所记载的聘用单位必须为该投标单位并提供其在本单位连续缴纳近三个月的养老保险缴费证明；"
+        ]}
+      ],
+      "expect": {"anchor": "pm_social_security", "assertion_contains": "养老保险缴费证明"},
+      "regression": "社保锚点曾只认「缴纳社保的证明」措辞"
+    },
+    {
+      "case_id": "XT-20260924-retention-money-term",
+      "source": "MAT-PJ1d7fadae0b-TENDER 前附表（质量保证金条款）",
+      "kind": "term",
+      "pages": [
+        {"page_no": 11, "paragraphs": [
+          "☑从应付的工程款中预留质量保证金，比例为工程价款结算总额的3%；返还方式为：按照双方约定。"
+        ]}
+      ],
+      "expect": {"field": "retention_money", "value_contains": "3%"},
+      "regression": "商务条款锚点基线；发现层与该条重叠时必须去重（不重复入候选）"
+    },
+    {
+      "case_id": "XT-20260924-discovery-contract-not-qualification",
+      "source": "MAT-PJ1d7fadae0b-TENDER p32 7.5.1（大模型发现误分类事故原文）",
+      "kind": "discovery_classify",
+      "pages": [],
+      "quote": "7.5.1招标人和中标人应当自中标通知书发出之日起30日内，根据招标文件和中标人的投标文件订立合同。中标人无正当理由拒签合同的或在签订合同时向招标人提出附加条件的，招标人取消其中标资格，其投标保证金不予退还；给招标人造成的损失超过投标保证金数额的，中标人还应当对超过部分予以赔偿。",
+      "expect": {"category_not": "资质", "category": "动作"},
+      "regression": "旧分类器弱词计数：句中「中标资格」→ 误判资质类，复核页出现\"资质要求（大模型发现）\"挂合同条款"
+    },
+    {
+      "case_id": "XT-20260924-discovery-conflict-not-personnel",
+      "source": "MAT-PJ1d7fadae0b-TENDER 前附表 3.13（利害关系条款误分类事故原文）",
+      "kind": "discovery_classify",
+      "pages": [],
+      "quote": "3.13与招标人存在利害关系可能影响招标公正性的法人、其他组织或者个人，不得参加投标；单位负责人为同一人或者存在控股、管理关系的不同单位，不得参加同一项目投标；投标单位未处于投标禁止期。",
+      "expect": {"category_not": "人员", "category": "信用"},
+      "regression": "旧分类器：「单位负责人」→ 误判人员类，人员组混入无关行（用户感知\"人员要求重复\"）"
+    },
+    {
+      "case_id": "XT-20260924-discovery-cert-a-personnel",
+      "source": "MAT-PJ1d7fadae0b-TENDER 前附表 ☑3.6（企业负责人 A 证——合法发现项）",
+      "kind": "discovery_classify",
+      "pages": [],
+      "quote": "☑3.6企业主要负责人（法定代表人、企业经理、企业分管安全生产的副经理）具有对应有效的安全生产考核合格证书（联合体投标的，联合体成员均应提供）。",
+      "expect": {"category": "人员"},
+      "regression": "强词分类后仍须命中的合法发现（安全生产考核 → 人员）"
+    }
+  ]
+}

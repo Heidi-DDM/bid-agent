@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>选择深入与文件解析｜投标智能体原型</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260929d">
 </head>
 <body>
   <header class="topbar"></header>
@@ -64,22 +64,22 @@
         </div>
       </div>
 
-      <!-- 上传完整招标文件（原生控件 + 可见按钮/拖放区，§3.2.2） -->
+      <!-- 上传完整招标文件（拖放区 + 单一「选择文件…」按钮；2026-09-25 去掉并排的原生控件） -->
       <section class="card" id="upload-card" style="display:none">
         <div class="card-title-row">
           <h2>上传完整招标文件</h2>
-          <span class="badge info">.pdf / .docx</span>
-        </div>
-        <div class="notice info" style="margin-top:0">
-          <b>格式约定</b>：仅支持 <code>.pdf</code>、<code>.docx</code>；
-          加密固化格式 <code>.gef/.etb</code> 不支持，且系统不会绕过加密保护；空文件、伪装后缀（内容魔数与扩展名不符）与超过 100 MB 的文件都会被拒绝。
+          <span class="badge info">.pdf / .docx · ≤ 100 MB</span>
         </div>
         <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择招标文件">
-          <div class="big" id="dz-text">点击选择文件，或将文件拖拽到此处</div>
-          <div class="hint">也可点下方「选择文件…」按钮；选择后需点击「上传并开始解析」才真正上传。</div>
+          <svg class="dz-icon" viewBox="0 0 24 24" width="34" height="34" aria-hidden="true">
+            <path d="M12 15V6.5m0 0L8.5 10M12 6.5 15.5 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4.5 14.5V17A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5v-2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <div class="big" id="dz-text">点击选择，或将招标文件拖拽到此处</div>
+          <div class="hint">支持 .pdf / .docx；加密固化格式（.gef / .etb）不支持，系统不会绕过加密保护。选择后点击「上传并开始解析」才真正上传。</div>
         </div>
-        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;align-items:center">
-          <input type="file" id="file-input" accept=".pdf,.docx" class="native-file">
+        <input type="file" id="file-input" accept=".pdf,.docx" hidden>
+        <div class="upload-actions">
           <button type="button" class="btn sm ghost" id="btn-pick">选择文件…</button>
           <span id="file-info" class="hint"></span>
         </div>
@@ -126,9 +126,9 @@
     <div class="drawer-body" id="drawer-body"></div>
   </aside>
 
-  <script src="data.js"></script>
-  <script src="api.js"></script>
-  <script src="common.js"></script>
+  <script src="data.js?v=20260929d"></script>
+  <script src="api.js?v=20260929d"></script>
+  <script src="common.js?v=20260929d"></script>
   <script>
     initPage("import.html", "import");
 
@@ -402,7 +402,7 @@
       btnParse.disabled = true;
       document.getElementById("file-info").textContent = "";
       document.getElementById("file-error").innerHTML = "";
-      document.getElementById("dz-text").textContent = "点击选择文件，或将文件拖拽到此处";
+      document.getElementById("dz-text").textContent = "点击选择，或将招标文件拖拽到此处";
       dropzone.classList.remove("has-file");
     }
 
@@ -548,7 +548,7 @@
             再到「人工复核」逐条确认候选。复核完成后系统自动写入规则集并触发企业资料匹配。
             <div style="margin-top:8px;display:flex;gap:8px">
               <a class="btn sm" href="requirements.html?project_id=${encodeURIComponent(projectId)}">查看解析结果 →</a>
-              <a class="btn sm ghost" href="queue.html?project_id=${encodeURIComponent(projectId)}">前往复核与补录</a>
+              <a class="btn sm" href="matrix.html?project_id=${encodeURIComponent(projectId)}">查看风险判定 →</a> <a class="btn sm ghost" href="queue.html?project_id=${encodeURIComponent(projectId)}">待确认项处理</a>
             </div>
           </div>`);
         resetFileSelection();
@@ -595,12 +595,12 @@
           let actionCell = "";
           if (isTender) {
             if (m.parse_status === "manual_review") {
-              actionCell = `<a class="btn sm" href="queue.html?project_id=${pj}">去人工复核 →</a>
+              actionCell = `<a class="btn sm" href="matrix.html?project_id=${pj}">查看风险判定 →</a> <a class="btn sm ghost" href="queue.html?project_id=${pj}">待确认处理</a>
                             <a class="btn sm ghost" href="requirements.html?project_id=${pj}">查看解析结果</a>
                             <a href="#" class="reparse-link hint">重新解析</a>`;
             } else if (m.parse_status === "parsed") {
               actionCell = `<a class="btn sm ghost" href="requirements.html?project_id=${pj}">查看解析结果（已确认）</a>
-                            <a class="btn sm ghost" href="queue.html?project_id=${pj}">复核与补录</a>`;
+                            <a class="btn sm ghost" href="queue.html?project_id=${pj}">待确认处理</a>`;
             } else if (m.parse_status === "failed") {
               actionCell = `<button class="btn sm reparse-btn">重新解析</button>`;
             } else {
@@ -639,12 +639,12 @@
         progress.innerHTML = `<div class="notice ok"><b>重新解析完成</b>：已定位候选保留、新锚点候选已补充（如有）——请到解析结果核对后人工复核。
           <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
             <a class="btn sm" href="requirements.html?project_id=${encodeURIComponent(projectId)}">查看解析结果 →</a>
-            <a class="btn sm ghost" href="queue.html?project_id=${encodeURIComponent(projectId)}">前往人工复核 →</a>
+            <a class="btn sm" href="matrix.html?project_id=${encodeURIComponent(projectId)}">查看风险判定 →</a> <a class="btn sm ghost" href="queue.html?project_id=${encodeURIComponent(projectId)}">待确认处理</a>
           </div></div>`;
         loadMaterials();
       } catch (err2) {
         apiShowError(err2);
-        progress.innerHTML = `<div class="notice error">重新解析失败：${err2.message}——既有候选不受影响，仍可<a href="queue.html?project_id=${encodeURIComponent(projectId)}">前往人工复核</a>。</div>`;
+        progress.innerHTML = `<div class="notice error">重新解析失败：${err2.message}——既有候选不受影响，仍可<a href="queue.html?project_id=${encodeURIComponent(projectId)}">前往待确认处理</a>。</div>`;
       }
     }
     loadProjectContext();

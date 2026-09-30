@@ -103,8 +103,18 @@ def gate_reason(session: Session, project: Project, *, action: str, actor: str =
     """返回 (code, message) 表示禁止执行 action；None 表示放行。
 
     action ∈ {match, recalculate, approval}。顺序：截止过期 → 身份冲突。
+
+    ADR-008 / docs/12 §1.2（2026-09-28）：已声明「历史解析样本」测试上下文的项目
+    （projects.test_context.historical_sample=true，服务端登记+审计+UI 条幅），
+    对 **匹配/重算** 放行身份与截止门禁——测试用的是企业已完成项目的招标文件，
+    文件—公告不一致与截止已过都是既定测试安排，不是串档缺陷；**审批不在此放行**
+    （admission 与审批入口仍被 historical_sample_context 阻断）。生产模式下未声明
+    测试上下文的真实项目，本门禁语义不变（ADR-004 红线）。
     """
     label = GATE_LABELS.get(action, action)
+    test_ctx = getattr(project, "test_context", None) or {}
+    if action in {"match", "recalculate"} and test_ctx.get("historical_sample"):
+        return None
     if refresh_overdue(session, project, actor=actor, now=now, today=today):
         return (
             OVERDUE,
@@ -118,14 +128,16 @@ def gate_reason(session: Session, project: Project, *, action: str, actor: str =
         return (
             "identity_conflict",
             f"项目身份校验存在硬冲突/高风险冲突（公告与招标文件疑似串档），禁止{label}；"
-            f"请纠正项目关联或材料后重新校验（ADR-004 §2.3）",
+            f"请纠正项目关联或材料后重新校验（ADR-004 §2.3）；"
+            f"若为历史样本解析测试，请在结果页登记测试上下文放行（ADR-008 / docs/12 §1.2）",
         )
     # Iteration 1: a warning is not an implicit identity confirmation. It blocks
     # formal matching/recalculation, while early prescreen/preparation may display it.
     if action in {"match", "recalculate"} and status == "identity_warning":
         return (
             "identity_warning",
-            f"项目身份校验仍有待确认项，禁止{label}；请提交人工核对依据并执行身份确认（ADR-004 §2.7）",
+            f"项目身份校验仍有待确认项，禁止{label}；请提交人工核对依据并执行身份确认（ADR-004 §2.7）；"
+            f"若为历史样本解析测试，请在结果页登记测试上下文放行（ADR-008 / docs/12 §1.2）",
         )
     return None
 

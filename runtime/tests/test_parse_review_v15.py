@@ -370,3 +370,133 @@ def test_rejected_is_reopenable_after_finding_source(session):
     _decide(session, "R-10", "approved")
     with pytest.raises(parse_service.CandidateAlreadyDecided):
         _decide(session, "R-10", "rejected", review_note="扫描不清")
+
+
+# ── 2026-09-24 重解析刷新回归（邢台实测"每次都这样"的根因之一）──
+# 此前重解析只增量新增候选、从不刷新仍是 pending 的旧行：抽取器修了 bug，
+# 用户点「重新解析」仍看到旧 missing/错摘录；LLM 发现草稿 ID 是摘录哈希，跨轮
+# 摘录措辞变化 → 新 ID 不断插入，旧 pending 不清 → 复核页重复行越积越多。
+def _region_cand(value: str, missing: bool) -> dict:
+    return {"field_key": "region", "value": value, "clause": "招标公告", "page_no": None,
+            "assertion": "" if missing else f"建设地点：{value}", "confidence": "low" if missing else "high",
+            "missing_marker": missing}
+
+
+def test_reparse_refreshes_pending_but_never_decided(session):
+    # 第一轮：region missing
+    parse_service.store_candidates(session, project_id="PJ-T", material_id="MAT-T", version=1,
+                                   kind=CANDIDATE_KIND_FIELD, candidates=[_region_cand("__待补__", True)])
+    # 复核人已通过另一个字段（决策必须留痕，重解析不得覆盖）
+    parse_service.store_candidates(session, project_id="PJ-T", material_id="MAT-T", version=1,
+                                   kind=CANDIDATE_KIND_FIELD,
+                                   candidates=[{"field_key": "tenderee", "value": "邢台交建",
+                                                "clause": "招标公告", "page_no": 7,
+                                                "assertion": "招标人为邢台交建", "confidence": "high",
+                                                "missing_marker": False}])
+    parse_service.decide_candidate(session, candidate_id="MAT-T:tenderee", material_id="MAT-T",
+                                   version=1, decision="approved", reviewer="toubiao")
+    # 第二轮：抽取器修复后 region 已定位（refresh_pending=True，与 worker 一致）
+    parse_service.store_candidates(session, project_id="PJ-T", material_id="MAT-T", version=1,
+                                   kind=CANDIDATE_KIND_FIELD,
+                                   candidates=[_region_cand("中兴大街等13条街道", False),
+                                               {"field_key": "tenderee", "value": "不应生效",
+                                                "clause": "x", "page_no": 1, "assertion": "x",
+                                                "confidence": "high", "missing_marker": False}],
+                                   refresh_pending=True)
+    rows = {r.candidate_id: r for r in session.scalars(
+        __import__("sqlalchemy").select(ParseCandidate)).all()}
+    assert rows["MAT-T:region"].status == "pending"
+    assert rows["MAT-T:region"].payload["value"] == "中兴大街等13条街道"   # pending 被刷新
+    assert rows["MAT-T:region"].payload["missing_marker"] is False
+    assert rows["MAT-T:tenderee"].payload["value"] == "邢台交建"          # 已决策行不动
+
+
+def test_prune_pending_llm_drafts_only_undiscovered_pending(session):
+    from datetime import datetime, timezone
+
+    def _row(cid: str, status: str, rule: dict) -> ParseCandidate:
+        return ParseCandidate(
+            candidate_id=cid, material_id="MAT-T", version=1, project_id="PJ-T",
+            kind=CANDIDATE_KIND_RULE,
+            payload={"requirement_id": cid, "req_type": "hard_requirement", "category": "人员",
+                     "clause_ref": "3.6", "assertion": "…", "page_no": 8, "rule": rule,
+                     "evidence_required": [], "confidence": "low", "missing_marker": False},
+            status=status, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        )
+
+    session.add_all([
+        _row("MAT-T-LLM-aaaa-draft", "pending", {"type": "generic", "located_by": "llm", "discovered": True}),
+        _row("MAT-T-LLM-bbbb-draft", "approved", {"type": "generic", "located_by": "llm", "discovered": True}),
+        _row("MAT-T-H-003-draft", "pending", {"type": "project_manager", "anchor_key": "pm_registered_builder",
+                                              "located_by": "llm"}),
+    ])
+    session.commit()
+    pruned = parse_service.prune_pending_llm_drafts(session, material_id="MAT-T", version=1)
+    assert pruned == 1
+    left = {r.candidate_id for r in session.scalars(
+        __import__("sqlalchemy").select(ParseCandidate)).all()}
+    assert "MAT-T-LLM-aaaa-draft" not in left          # pending 的发现草稿被清
+    assert "MAT-T-LLM-bbbb-draft" in left              # 已决策发现行留痕
+    assert "MAT-T-H-003-draft" in left                 # 锚点行（ID 稳定）不走清理，由 refresh 覆盖
+
+
+# ── 2026-09-24 解析优化四步之四：覆盖率报告 ──────────────────────────────
+def test_coverage_from_candidates_pure_function():
+    from runtime.parsing.extractor import RuleCandidate
+    from runtime.db.parse_service import coverage_from_candidates
+
+    def rc(anchor_key, *, missing=False, discovered=False, llm=False):
+        rule = {"type": "generic", "anchor_key": anchor_key}
+        if discovered:
+            rule = {"type": "generic", "located_by": "llm", "discovered": True}
+        elif llm:
+            rule = {"type": "qualification", "anchor_key": anchor_key, "located_by": "llm"}
+        return RuleCandidate(
+            requirement_id=f"M-H-{anchor_key}-draft", req_type="hard_requirement",
+            category="资质", clause_ref="3.1", assertion=parse_service.MISSING if missing else "具备资质",
+            page_no=None if missing else 3, rule=rule, evidence_required=[], confidence="low",
+            missing_marker=missing)
+
+    fields = [
+        type("F", (), {"missing_marker": False, "value": "中兴大街"})(),
+        type("F", (), {"missing_marker": True, "value": parse_service.MISSING})(),
+    ]
+    cov = coverage_from_candidates(
+        [rc("a"), rc("b", llm=True), rc("c", discovered=True), rc("d", missing=True)],
+        fields, [type("T", (), {})])
+    assert cov["located"] == {"anchor": 1, "llm_fallback": 1, "llm_discovery": 1}
+    assert cov["located_total"] == 3 and cov["missing_pending"] == 1
+    assert cov["main_card_located"] == 1 and cov["main_card_missing"] == 1
+    assert cov["term_total"] == 1
+
+
+def test_parse_coverage_db_and_grouped_passthrough(session):
+    from runtime.db.parse_service import grouped_requirements, parse_coverage
+
+    parse_service.store_candidates(session, project_id="PJ-T", material_id="MAT-T", version=1,
+                                   kind=CANDIDATE_KIND_RULE, candidates=[{
+                                       "requirement_id": "MAT-T-H-001-draft", "req_type": "hard_requirement",
+                                       "category": "资质", "clause_ref": "3.1", "assertion": "具备市政资质壹级",
+                                       "page_no": 3, "rule": {"type": "qualification", "anchor_key": "qualification_grade"},
+                                       "evidence_required": [], "confidence": "high", "missing_marker": False}])
+    parse_service.store_candidates(session, project_id="PJ-T", material_id="MAT-T", version=1,
+                                   kind=CANDIDATE_KIND_RULE, candidates=[{
+                                       "requirement_id": "MAT-T-LLM-abc-draft", "req_type": "hard_requirement",
+                                       "category": "人员", "clause_ref": "3.6", "assertion": "企业负责人安全证",
+                                       "page_no": 8, "rule": {"type": "generic", "located_by": "llm", "discovered": True},
+                                       "evidence_required": [], "confidence": "low", "missing_marker": False}])
+    parse_service.store_candidates(session, project_id="PJ-T", material_id="MAT-T", version=1,
+                                   kind=CANDIDATE_KIND_FIELD, candidates=[
+                                       {"field_key": "region", "value": "中兴大街等13条街道", "clause": "招标公告",
+                                        "page_no": 7, "assertion": "建设地点：中兴大街…", "confidence": "high",
+                                        "missing_marker": False},
+                                       {"field_key": "tenderee", "value": parse_service.MISSING, "clause": "招标公告",
+                                        "page_no": None, "assertion": "", "confidence": "low", "missing_marker": True}])
+    cov = parse_coverage(session, project_id="PJ-T", material_id="MAT-T", version=1)
+    assert cov["located"] == {"anchor": 1, "llm_fallback": 0, "llm_discovery": 1}
+    assert cov["llm_pending"] == 1                      # 发现行仍 pending → 待人工确认数
+    assert cov["main_card_located"] == 1 and cov["main_card_missing"] == 1
+    assert cov["located_ratio"] == 1.0                  # 无缺失规则候选
+    # 聚合视图透出（前端进度条数据源）
+    data = grouped_requirements(session, project_id="PJ-T", material_id="MAT-T", version=1)
+    assert data["coverage"]["rule_total"] == 2

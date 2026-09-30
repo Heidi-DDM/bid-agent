@@ -74,12 +74,18 @@ def store_candidates(
     kind: str,
     candidates: list[dict],
     actor: str = "parse.worker",
+    refresh_pending: bool = False,
 ) -> tuple[int, int]:
     """候选落库（幂等）。返回 (created, skipped)。
 
     candidate_id 全局主键：规则候选取 requirement_id（extractor 已带 material 前缀）；
     主卡候选的 field_key（project_name 等）跨材料必相同 → 前缀 material_id 避免撞库
     （2026-09-03 MAT-TEST-001 实测：rule 候选 ND-H-001-draft 与 MAT-ND-TENDER 撞主键）。
+
+    refresh_pending=True（重解析路径，2026-09-24）：同 ID 且仍是 pending 的行用新解析
+    payload 覆盖——此前重解析只增量新增、从不刷新旧行，抽取器修了 bug 用户点「重新解析」
+    仍然看到旧的 missing/错摘录（邢台实测：region 一直显示未找到）。已决策行
+    （approved/rejected/revised/not_applicable）永不覆盖（F005 §8 人工决策留痕优先）。
     """
     created = 0
     skipped = 0
@@ -87,7 +93,14 @@ def store_candidates(
         raw_id = cand.get("requirement_id") or cand.get("field_key") or ""
         if not raw_id:
             continue
-        cand_id = raw_id if kind == CANDIDATE_KIND_RULE else f"{material_id}:{raw_id}"
+        if kind == CANDIDATE_KIND_RULE:
+            cand_id = raw_id
+        else:
+            # 主卡/术语候选的 field_key 跨材料必相同 → 前缀 material_id 避免撞库；
+            # version>1 追加版本段（2026-09-23：同材料新版本与 v1 全局唯一，
+            # 否则 v2 解析撞 parse_candidates 主键）
+            cand_id = (f"{material_id}:v{version}:{raw_id}" if version and version > 1
+                       else f"{material_id}:{raw_id}")
         existing = session.scalar(
             select(ParseCandidate).where(
                 ParseCandidate.candidate_id == cand_id,
@@ -96,6 +109,9 @@ def store_candidates(
             )
         )
         if existing is not None:
+            if refresh_pending and existing.status == STATUS_PENDING:
+                existing.payload = cand
+                existing.updated_at = _now()
             skipped += 1
             continue
         session.add(ParseCandidate(
@@ -112,6 +128,32 @@ def store_candidates(
         created += 1
     session.commit()
     return created, skipped
+
+
+def prune_pending_llm_drafts(session: Session, *, material_id: str, version: int) -> int:
+    """重解析前清理：仍是 pending 的「大模型发现」草稿（rule.discovered=True）。
+
+    发现候选 ID 是摘录内容哈希，LLM 每轮摘录措辞略有差异 → ID 变化，store_candidates
+    幂等去重拦不住跨轮累积（邢台实测 2026-09-24：复核页人员/动作组出现多轮重复的
+    「大模型发现」行）。已决策的发现行不清（人工结论优先，审计可查）；
+    锚点定位型 LLM 行（located_by=llm 但非 discovered）ID 稳定，由 refresh_pending 覆盖。
+    """
+    rows = session.scalars(
+        select(ParseCandidate).where(
+            ParseCandidate.material_id == material_id,
+            ParseCandidate.version == version,
+            ParseCandidate.status == STATUS_PENDING,
+        )
+    ).all()
+    n = 0
+    for r in rows:
+        rule = (r.payload or {}).get("rule") if isinstance(r.payload, dict) else None
+        if isinstance(rule, dict) and rule.get("discovered") is True:
+            session.delete(r)
+            n += 1
+    if n:
+        session.commit()
+    return n
 
 
 # ── 查询 ──────────────────────────────────────────────────────────────
@@ -506,13 +548,19 @@ def confirm_rules_from_approved(
     version: int,
     as_of: str,
     created_by: str,
+    allow_pending_exceptions: bool = False,
 ) -> dict:
     """把全部 approved 规则候选写入 RuleSet/Requirement（快照式，历史不可覆盖）。
 
     仅 hard/scored 候选写入；rejected/revised 的处理：
     - rejected → 不写入（缺项由 review_note 记录，parse_status 保持 manual_review）
     - revised → 写入 revised_payload 内容（人工修正值，留痕可查）
-    返回 {rule_set_id, created_requirements, rejected, pending}。
+    返回 {rule_set_id, created_requirements, rejected, pending, not_applicable}。
+
+    allow_pending_exceptions=True（ADR-007 例外驱动）：仍 pending 的候选不阻断生成，
+    记入 snapshot.pending_exceptions[]（不写 Requirement，不推断）——自动路径用：
+    高置信锚点项已被 system.parse_auto 通过、剩余 pending 为"模型定位/发现 + 缺失"
+    例外，由用户在风险页逐条处置，清零后经 reconfirm_rules_after_exceptions 入快照链。
     """
     rows = session.scalars(
         select(ParseCandidate).where(
@@ -536,7 +584,7 @@ def confirm_rules_from_approved(
     rejected = [r for r in rows if r.status == STATUS_REJECTED]
     pending = [r for r in rows if r.status == STATUS_PENDING]
     not_applicable = [r for r in rows if r.status == STATUS_NOT_APPLICABLE]
-    if pending:
+    if pending and not allow_pending_exceptions:
         raise ParseServiceError(f"仍有 {len(pending)} 个待决候选，不能生成规则集")
     # v1.5：已「通过」的 missing 占位不得静默跳过（= 规则无声消失）→ 阻断并点名，要求重新决策
     # （revised 行的原始 payload 仍是 missing，但 revised_payload 已人工定位，不算遗留）
@@ -561,6 +609,16 @@ def confirm_rules_from_approved(
             "as_of": as_of,
             "confirmed_by": created_by,
             "requirement_count": len(approved),
+            # ADR-007 例外驱动：待确认例外随快照留档（不写 Requirement；清零后 reconfirm 入快照链）
+            "pending_exceptions": [
+                {
+                    "candidate_id": r.candidate_id,
+                    "anchor_key": ((r.payload or {}).get("rule") or {}).get("anchor_key"),
+                    "category": (r.payload or {}).get("category"),
+                    "missing": _is_missing(r.kind, r.payload or {}),
+                }
+                for r in pending
+            ],
             # 审计：谁确认了“本文件没有这一条”（F021 §2.1 v1.5）
             "not_applicable": [
                 {
@@ -620,6 +678,242 @@ def confirm_rules_from_approved(
     return {"rule_set_id": rule_set_id, "created_requirements": created,
             "rejected": len(rejected), "pending": len(pending),
             "not_applicable": len(not_applicable)}
+
+
+# ════════════════════════════════════════════════════════════════════
+# ADR-007：解析自动确认与例外驱动复核（2026-09-25）
+# 高置信锚点候选系统自动通过（留痕可改判）；例外（模型定位/发现 + 缺失）留给人工，
+# 在风险页逐条处置；例外清零后增量重确认生成规则集快照链新节点。
+# ════════════════════════════════════════════════════════════════════
+
+AUTO_REVIEWER = "system.parse_auto"
+
+
+def _auto_confirmable(row: ParseCandidate) -> bool:
+    """可自动通过：pending + 已定位 + 高/中置信 + 确定性锚点（located_by != llm）。
+
+    红线（ADR-007 §3）：missing 永不自动决策；模型定位/发现（located_by=llm）永不自动通过。"""
+    if row.status != STATUS_PENDING:
+        return False
+    payload = row.payload or {}
+    if payload.get("missing_marker") or payload.get("confidence") not in ("high", "medium"):
+        return False
+    rule = payload.get("rule")
+    if isinstance(rule, dict) and rule.get("located_by") == "llm":
+        return False
+    if row.kind == CANDIDATE_KIND_RULE:
+        return (payload.get("assertion") or "") not in ("", MISSING)
+    return (payload.get("value") or "") not in ("", MISSING)
+
+
+def auto_confirm_anchor_candidates(session: Session, *, project_id: str, material_id: str,
+                                   version: int, actor: str = AUTO_REVIEWER) -> dict:
+    """解析落库后系统自动通过高置信锚点候选（决策走 decide_candidate 同一通道，留痕可改判）。
+
+    返回 {approved, remaining_pending}。任何单行异常跳过不阻断（下一轮重解析仍可补）。"""
+    rows = session.scalars(
+        select(ParseCandidate).where(
+            ParseCandidate.project_id == project_id,
+            ParseCandidate.material_id == material_id,
+            ParseCandidate.version == version,
+        )
+    ).all()
+    approved = 0
+    for row in rows:
+        if not _auto_confirmable(row):
+            continue
+        try:
+            decide_candidate(
+                session, candidate_id=row.candidate_id, material_id=material_id,
+                version=version, decision=STATUS_APPROVED, reviewer=actor,
+                review_note=f"系统自动通过：确定性锚点逐字命中原文（置信 {row.payload.get('confidence')}），"
+                            "人工可随时改判（ADR-007）",
+            )
+        except ParseServiceError:
+            continue
+        approved += 1
+    pending = pending_summary(session, project_id=project_id, material_id=material_id)["pending"]
+    return {"approved": approved, "remaining_pending": pending}
+
+
+def _tender_material(session: Session, project_id: str, material_id: str | None = None):
+    """项目的招标文件材料（显式传参优先；否则项目引用 / 最新 tender_document）。"""
+    if material_id is None:
+        from runtime.db.models import Project
+
+        project = session.get(Project, project_id)
+        material_id = project.tender_document_ref if project else None
+    if material_id is None:
+        return session.scalar(
+            select(Material)
+            .where(Material.project_id == project_id,
+                   Material.material_type == "tender_document")
+            .order_by(Material.version.desc())
+            .limit(1)
+        )
+    return session.scalar(
+        select(Material).where(Material.material_id == material_id)
+        .order_by(Material.version.desc()).limit(1)
+    )
+
+
+def pending_exception_rows(session: Session, *, project_id: str,
+                           material_id: str | None = None) -> list[ParseCandidate]:
+    """风险页待确认例外（ADR-007）：项目招标材料当前仍 pending 的候选（模型定位/发现 + 缺失）。"""
+    material = _tender_material(session, project_id, material_id)
+    if material is None:
+        return []
+    return list(session.scalars(
+        select(ParseCandidate).where(
+            ParseCandidate.project_id == project_id,
+            ParseCandidate.material_id == material.material_id,
+            ParseCandidate.version == material.version,
+            ParseCandidate.status == STATUS_PENDING,
+        )
+    ).all())
+
+
+def pending_exception_count(session: Session, *, project_id: str) -> int:
+    """满分门禁用：待确认例外数（>0 → internal_admission_eligible=False，ADR-007 §2.5）。"""
+    return len(pending_exception_rows(session, project_id=project_id))
+
+
+def reconfirm_rules_after_exceptions(session: Session, *, project_id: str, material_id: str,
+                                     version: int, actor: str) -> dict | None:
+    """例外清零后的增量重确认（ADR-007 §2.4）：生成规则集快照链新节点。
+
+    前置：基础规则集存在且 snapshot.pending_exceptions 非空（否则无增量可确认 → None）；
+    pending=0。新节点 = 既有 Requirement 复制（id 追加 -rN 后缀，历史行不动）+ 本轮新
+    approved/revised 写入 + not_applicable 并入。不满足前置返回 None（幂等）。"""
+    base_id = material_ruleset_id(material_id, version)
+    prev = session.get(RuleSet, base_id)
+    if prev is None or not ((prev.snapshot or {}).get("pending_exceptions")):
+        return None
+    if pending_summary(session, project_id=project_id, material_id=material_id)["pending"] > 0:
+        return None
+    # 快照链最新节点（base → -r2 → -r3…；重解析可能产生新一轮例外，支持多跳）
+    n = 2
+    latest = prev
+    while session.get(RuleSet, f"{base_id}-r{n}") is not None:
+        latest = session.get(RuleSet, f"{base_id}-r{n}")
+        n += 1
+    new_id = f"{base_id}-r{n}"
+    # 增量判定：最新节点已覆盖的原始要求（剥 -rN 后缀）之外的已确认规则候选。
+    # 无开放例外且无增量 → 幂等返回 None。
+    latest_reqs = session.scalars(
+        select(Requirement).where(Requirement.rule_set_id == latest.rule_set_id)
+    ).all()
+    represented = {re.sub(r"-r\d+$", "", r.requirement_id) for r in latest_reqs}
+    rows = session.scalars(
+        select(ParseCandidate).where(
+            ParseCandidate.project_id == project_id,
+            ParseCandidate.material_id == material_id,
+            ParseCandidate.version == version,
+        )
+    ).all()
+    # 仅规则类候选进 Requirement（主卡/条款类走 FieldTrace，与 confirm_rules_from_approved 同口径）
+    approved = [r for r in rows
+                if r.kind == CANDIDATE_KIND_RULE and r.status in (STATUS_APPROVED, STATUS_REVISED)]
+    not_applicable = [r for r in rows if r.status == STATUS_NOT_APPLICABLE]
+    delta = [r for r in approved if _requirement_id_of(r) not in represented]
+    if not (latest.snapshot or {}).get("pending_exceptions") and not delta:
+        return None
+    as_of = (prev.snapshot or {}).get("as_of")
+
+    session.add(RuleSet(
+        rule_set_id=new_id,
+        project_id=project_id,
+        version=f"v{version}-r{n}",
+        effective_from=None,
+        created_by=actor,
+        snapshot={
+            "source": f"material={material_id}:v{version}",
+            "as_of": as_of,
+            "confirmed_by": actor,
+            "reconfirm_of": latest.rule_set_id,
+            "requirement_count": len(latest_reqs) + len(delta),
+            "not_applicable": [
+                {"candidate_id": r.candidate_id,
+                 "anchor_key": ((r.payload or {}).get("rule") or {}).get("anchor_key"),
+                 "category": (r.payload or {}).get("category"),
+                 "reviewer": r.reviewer,
+                 "note": r.review_note,
+                 "decided_at": r.decided_at.isoformat() if r.decided_at else None}
+                for r in not_applicable
+            ] + [x for x in ((prev.snapshot or {}).get("not_applicable") or [])
+                 if isinstance(x, dict)],
+        },
+        diff=None,
+    ))
+    copied = 0
+    for r in latest_reqs:
+        session.add(Requirement(
+            requirement_id=f"{r.requirement_id}-r{n}",
+            rule_set_id=new_id,
+            req_type=r.req_type,
+            category=r.category,
+            lot_id=r.lot_id,
+            clause_ref=r.clause_ref,
+            assertion=r.assertion,
+            rule=dict(r.rule or {}),
+            evidence_required=list(r.evidence_required or []),
+            as_of=r.as_of,
+            missing_action=r.missing_action,
+            failure_effect=r.failure_effect,
+            priority=r.priority,
+            logic_group=r.logic_group,
+            operator=r.operator,
+            consortium_role=r.consortium_role,
+            max_score=r.max_score,
+            weight=r.weight,
+            score_nature=r.score_nature,
+            score_formula=r.score_formula,
+            required_by_stage=r.required_by_stage,
+        ))
+        copied += 1
+    created = 0
+    for row in delta:
+        payload = row.revised_payload or row.payload
+        req_id = _requirement_id_of(row)
+        if payload.get("missing_marker") or not payload.get("assertion") or payload.get("assertion") == MISSING:
+            continue
+        req_type = payload.get("req_type", "hard_requirement")
+        rule_dict = dict(payload.get("rule") or {})
+        if payload.get("page_no") is not None and "page_no" not in rule_dict:
+            rule_dict["page_no"] = payload.get("page_no")
+        session.add(Requirement(
+            requirement_id=f"{req_id}-r{n}",
+            rule_set_id=new_id,
+            req_type=req_type,
+            category=payload.get("category"),
+            lot_id=None,
+            clause_ref=payload.get("clause_ref") or "",
+            assertion=payload.get("assertion") or "",
+            rule=rule_dict,
+            evidence_required=payload.get("evidence_required") or [],
+            as_of=as_of,
+            missing_action="blocked_missing_data",
+            failure_effect="not_qualified" if req_type == "hard_requirement" else None,
+            priority=None,
+            logic_group=req_type,
+            operator=None,
+            consortium_role="none",
+            max_score=payload.get("max_score"),
+            weight=payload.get("weight"),
+            score_nature=payload.get("score_nature"),
+            score_formula=payload.get("score_formula"),
+            required_by_stage=payload.get("required_by_stage"),
+        ))
+        created += 1
+    session.commit()
+    return {"rule_set_id": new_id, "copied": copied, "created": created}
+
+
+def _requirement_id_of(row: ParseCandidate) -> str:
+    payload = row.payload or {}
+    if row.kind == CANDIDATE_KIND_RULE:
+        return payload.get("requirement_id") or row.candidate_id
+    return row.candidate_id
 
 
 def suggested_as_of(session: Session, *, project_id: str, material_id: str, version: int) -> dict | None:
@@ -982,6 +1276,103 @@ def _requirement_type(req_type: str | None) -> str | None:
     return None
 
 
+# ════════════════════════════════════════════════════════════════════
+# 覆盖率报告（2026-09-24 解析优化四步之四）：每份材料解析完自动产出
+# 「哪些定位到了、靠什么定位的、还有多少缺口」，让"漏了什么"可见，
+# 不再依赖用户肉眼在复核页发现。
+# ════════════════════════════════════════════════════════════════════
+
+
+def _coverage_of_rule_payload(payload: dict) -> str:
+    """规则候选的定位来源：missing / anchor / llm_fallback / llm_discovery。"""
+    if _is_missing(CANDIDATE_KIND_RULE, payload):
+        return "missing"
+    rule = payload.get("rule") or {}
+    if not isinstance(rule, dict):
+        return "anchor"
+    if rule.get("discovered"):
+        return "llm_discovery"
+    if rule.get("located_by") == "llm":
+        return "llm_fallback"
+    return "anchor"
+
+
+def coverage_from_candidates(rule_cands: list, field_cands: list, term_cands: list) -> dict:
+    """纯函数：内存候选（extractor 产物）→ 覆盖率摘要（worker 日志/任务 result_summary 用）。"""
+    counts = {"anchor": 0, "llm_fallback": 0, "llm_discovery": 0, "missing": 0}
+    for c in rule_cands:
+        counts[_coverage_of_rule_payload(c.to_dict() if hasattr(c, "to_dict") else c)] += 1
+    main_located = sum(1 for f in field_cands
+                       if not getattr(f, "missing_marker", False)
+                       and (getattr(f, "value", None) or "") != MISSING)
+    return {
+        "rule_total": len(rule_cands),
+        "located": {k: counts[k] for k in ("anchor", "llm_fallback", "llm_discovery")},
+        "located_total": counts["anchor"] + counts["llm_fallback"] + counts["llm_discovery"],
+        "missing_pending": counts["missing"],
+        "main_card_total": len(field_cands),
+        "main_card_located": main_located,
+        "main_card_missing": len(field_cands) - main_located,
+        "term_total": len(term_cands),
+    }
+
+
+def parse_coverage(session: Session, *, project_id: str, material_id: str,
+                   version: int | None = None) -> dict | None:
+    """DB 版覆盖率（grouped_requirements / API 透出）：已决策行按 revised_payload 口径，
+    llm_pending = 大模型定位或发现、仍待人工确认的行数。材料无候选 → None。"""
+    if version is None:
+        material = session.scalar(
+            select(Material).where(Material.material_id == material_id)
+            .order_by(Material.version.desc()).limit(1)
+        )
+        if material is None:
+            return None
+        version = material.version
+    rows = session.scalars(
+        select(ParseCandidate).where(
+            ParseCandidate.project_id == project_id,
+            ParseCandidate.material_id == material_id,
+            ParseCandidate.version == version,
+        )
+    ).all()
+    if not rows:
+        return None
+    counts = {"anchor": 0, "llm_fallback": 0, "llm_discovery": 0, "missing": 0}
+    llm_pending = 0
+    main_located = main_missing = term_total = 0
+    for r in rows:
+        payload = (r.revised_payload or r.payload) if r.status == STATUS_REVISED else (r.payload or {})
+        if r.kind == CANDIDATE_KIND_RULE:
+            src = _coverage_of_rule_payload(payload)
+            counts[src] += 1
+            if src in ("llm_fallback", "llm_discovery") and r.status == STATUS_PENDING:
+                llm_pending += 1
+        elif r.kind == CANDIDATE_KIND_FIELD:
+            if _is_missing(r.kind, payload):
+                main_missing += 1
+            else:
+                main_located += 1
+        else:
+            term_total += 1
+    located_total = counts["anchor"] + counts["llm_fallback"] + counts["llm_discovery"]
+    denom = located_total + counts["missing"]
+    return {
+        "material_id": material_id,
+        "version": version,
+        "rule_total": len([r for r in rows if r.kind == CANDIDATE_KIND_RULE]),
+        "located": {k: counts[k] for k in ("anchor", "llm_fallback", "llm_discovery")},
+        "located_total": located_total,
+        "missing_pending": counts["missing"],
+        "located_ratio": round(located_total / denom, 3) if denom else None,
+        "llm_pending": llm_pending,
+        "main_card_total": main_located + main_missing,
+        "main_card_located": main_located,
+        "main_card_missing": main_missing,
+        "term_total": term_total,
+    }
+
+
 def grouped_requirements(
     session: Session, *, project_id: str, material_id: str | None = None, version: int | None = None,
 ) -> dict[str, Any]:
@@ -1093,38 +1484,20 @@ def grouped_requirements(
             .order_by(ParseCandidate.created_at, ParseCandidate.kind)
         ).all()
         for row in rows:
-            payload = row.payload or {}
-            # 已决 revised 行展示合并后的修正 payload（人工定位的页码/摘录），未决行展示解析原值
-            shown = (row.revised_payload or payload) if row.status == STATUS_REVISED else payload
-            missing = _is_missing(row.kind, shown)
-            is_rule = row.kind == CANDIDATE_KIND_RULE
-            item = {
-                "id": row.candidate_id,
-                "title": _review_title(payload, kind=row.kind),
-                "requirement_type": _requirement_type(payload.get("req_type")),
-                "value": shown.get("value"),
-                "assertion": "" if missing else (shown.get("assertion") or ""),
-                # 未定位到原文的候选不回传锚点基线文件的条款提示（在本文件里是错误位置）
-                "clause_ref": None if (missing and is_rule) else _clean_clause(shown.get("clause_ref") or shown.get("clause")),
-                "page_no": None if missing else shown.get("page_no"),
-                "confidence": shown.get("confidence"),
-                "review_status": row.status,
-                "missing": missing,
-                "needs_redecision": row.status == STATUS_APPROVED and missing,
-                "issue": _issue_text(shown, row),
-                "locate_hints": _locate_hints(payload) if (missing and is_rule) else [],
-                "review_note": row.review_note,
-                "reviewer": row.reviewer,
-                "source_link": source_link,
-                "audit": dict(audit, kind=row.kind,
-                              requirement_id=payload.get("requirement_id"),
-                              field_key=payload.get("field_key")),
-            }
-            groups[_review_group(payload, kind=row.kind)].append(item)
+            item = _candidate_view_item(row, audit=audit, source_link=source_link)
+            groups[_review_group(row.payload or {}, kind=row.kind)].append(item)
         source = "candidates"
         as_of_suggestion = suggested_as_of(
             session, project_id=project_id, material_id=material_id, version=version
         )
+
+    # ADR-007：待确认例外（两视图都透出——风险页顶部处置区数据源；confirmed 视图下
+    # 这些行不在规则集里，必须显式带出，否则用户在风险页看不到"还有几条没确认"）
+    pending_items = [
+        _candidate_view_item(r, audit=audit, source_link=source_link)
+        for r in pending_exception_rows(session, project_id=project_id, material_id=material_id)
+        if r.version == version
+    ]
 
     return {
         "source": source,
@@ -1137,4 +1510,39 @@ def grouped_requirements(
         ],
         "progress": pending_summary(session, project_id=project_id, material_id=material_id),
         "as_of_suggestion": as_of_suggestion,
+        "pending_exceptions": pending_items,
+        # 覆盖率报告（2026-09-24 四步之四）：定位来源分布与缺口，随聚合视图透出给前端
+        "coverage": parse_coverage(session, project_id=project_id,
+                                   material_id=material_id, version=version),
+    }
+
+
+def _candidate_view_item(row: ParseCandidate, *, audit: dict, source_link: str) -> dict:
+    """候选 → 复核/待确认视图条目（candidates 视图与 pending_exceptions 共用）。"""
+    payload = row.payload or {}
+    # 已决 revised 行展示合并后的修正 payload（人工定位的页码/摘录），未决行展示解析原值
+    shown = (row.revised_payload or payload) if row.status == STATUS_REVISED else payload
+    missing = _is_missing(row.kind, shown)
+    is_rule = row.kind == CANDIDATE_KIND_RULE
+    return {
+        "id": row.candidate_id,
+        "title": _review_title(payload, kind=row.kind),
+        "requirement_type": _requirement_type(payload.get("req_type")),
+        "value": shown.get("value"),
+        "assertion": "" if missing else (shown.get("assertion") or ""),
+        # 未定位到原文的候选不回传锚点基线文件的条款提示（在本文件里是错误位置）
+        "clause_ref": None if (missing and is_rule) else _clean_clause(shown.get("clause_ref") or shown.get("clause")),
+        "page_no": None if missing else shown.get("page_no"),
+        "confidence": shown.get("confidence"),
+        "review_status": row.status,
+        "missing": missing,
+        "needs_redecision": row.status == STATUS_APPROVED and missing,
+        "issue": _issue_text(shown, row),
+        "locate_hints": _locate_hints(payload) if (missing and is_rule) else [],
+        "review_note": row.review_note,
+        "reviewer": row.reviewer,
+        "source_link": source_link,
+        "audit": dict(audit, kind=row.kind,
+                      requirement_id=payload.get("requirement_id"),
+                      field_key=payload.get("field_key")),
     }

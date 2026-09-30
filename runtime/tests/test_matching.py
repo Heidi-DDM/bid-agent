@@ -37,11 +37,15 @@ def test_build_enterprise_evidence_filters_inactive():
 
 
 def test_build_enterprise_evidence_filters_unverified():
+    # 2026-09-23 语义修正（F023 §2.3 v1.6）：核验行为时间不再要求早于判定时点——
+    # 核验是对既有事实的事后确认（企业资料库 2026-09 整体导入核验，历史项目判定
+    # 时点早于此）。未核验（verified_at 为空）依旧不入快照；有效性仍按有效期判。
     evidence = matching.build_enterprise_evidence(
         qualifications=[_qualification(verified_at=None), _qualification(verified_at="2026-01-01")],
         as_of="2025-10-30",
     )
-    assert "qualification_record" not in evidence  # 未核验/核验晚于 as_of 均不入快照
+    assert "qualification_record" in evidence
+    assert [r["material_id"] for r in evidence["qualification_record"]] == ["MAT-Q-1"]
 
 
 def test_build_enterprise_evidence_filters_validity():
@@ -337,17 +341,17 @@ def test_engine_unstructured_rules_do_not_fabricate_conclusions():
                                         "area": 100.0, "completed_at": "2024-06-01", "status": "active",
                                         "verified_at": "2025-01-01"}]}
     # 业绩：无任何约束 → manual_review（否则任何一条业绩都"满足"空约束）
-    r, reason = engine._match_similar_performance({"type": "similar_performance"}, ev_perf, "2025-10-30")
+    r, reason = engine._match_similar_performance({"type": "similar_performance"}, ev_perf, "2025-10-30")[:2]
     assert r == "manual_review" and "未结构化" in reason
     # 业绩：有约束照常判定
-    r, _ = engine._match_similar_performance({"type": "similar_performance", "min_area": 50}, ev_perf, "2025-10-30")
+    r = engine._match_similar_performance({"type": "similar_performance", "min_area": 50}, ev_perf, "2025-10-30")[0]
     assert r == "satisfied"
     # 技术团队：无专业要求不得判 satisfied
-    r, _ = engine._match_hard({"type": "technical_team"}, {}, "2025-10-30")
+    r = engine._match_hard({"type": "technical_team"}, {}, "2025-10-30")[0]
     assert r == "manual_review"
     # 联合体：接受 → 满足；不接受且无声明 → unverifiable；极性未知 → manual_review
     assert engine._match_hard({"type": "consortium", "accepts_consortium": True}, {}, "2025-10-30")[0] == "satisfied"
-    assert engine._match_hard({"type": "consortium", "accepts_consortium": False}, {}, "2025-10-30")[0] == "unverifiable"
+    assert engine._match_hard({"type": "consortium", "accepts_consortium": False}, {}, "2025-10-30")[0] == "satisfied"  # 2026-09-29 裁定：文件事实，按独立投标人即可
     assert engine._match_hard({"type": "consortium"}, {}, "2025-10-30")[0] == "manual_review"
     # 项目经理：规则无专业/等级/B证/在建约束 → manual_review
     assert engine._match_hard({"type": "project_manager"}, {}, "2025-10-30")[0] == "manual_review"
@@ -356,5 +360,5 @@ def test_engine_unstructured_rules_do_not_fabricate_conclusions():
     assert engine._match_hard({"type": "quote_cap"}, quotes, "2025-10-30")[0] == "manual_review"
     assert engine._match_hard({"type": "quote_cap", "max_amount": 50}, quotes, "2025-10-30")[0] == "not_satisfied"
     # 硬性业绩要求路由到业绩判定而非「尚未实现」
-    r, reason = engine._match_hard({"type": "similar_performance", "min_area": 50}, ev_perf, "2025-10-30")
+    r, reason = engine._match_hard({"type": "similar_performance", "min_area": 50}, ev_perf, "2025-10-30")[:2]
     assert r == "satisfied"

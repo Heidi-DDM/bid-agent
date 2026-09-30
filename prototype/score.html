@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>风险与缺失｜投标智能体原型</title>
-  <link rel="stylesheet" href="styles.css">
+  <title>评分分析｜投标智能体</title>
+  <link rel="stylesheet" href="styles.css?v=20260929d">
 </head>
 <body>
   <header class="topbar"></header>
@@ -16,218 +16,154 @@
 
       <div class="state-banner" id="state-banner" style="display:none"></div>
 
-      <!-- 准入摘要 -->
-      <section class="score-hero" id="score-hero" style="display:none"></section>
-
-      <!-- 四类结论 -->
       <section class="card">
-        <h2>匹配结果摘要（F008 / ADR-001）</h2>
-        <table class="tbl" style="margin-top:8px">
-          <thead><tr><th>结论</th><th>结果</th><th>说明</th></tr></thead>
-          <tbody id="four-rows"></tbody>
-        </table>
-      </section>
-
-      <!-- 硬条件与计分：每条要求都列出（满足 / 不满足 / 待补 / 复核 / 未执行）+ 原因 -->
-      <section class="card">
-        <h2>逐条匹配明细</h2>
-        <p class="sub" style="margin-top:4px">招标文件解析并确认的每一条要求 × 企业资料快照的逐项结论：满足项写明依据，不满足/待补/复核项写明原因。完整表格与证据抽屉见「自动匹配」页。</p>
-        <div id="detail-note" style="margin-top:6px"></div>
-        <div class="tabs" id="tabs">
-          <button class="tab active" data-t="hard_requirement">硬性要求（…）</button>
-          <button class="tab" data-t="scored_requirement">评分项（…）</button>
-          <button class="tab" data-t="action_requirement">动作项（…）</button>
+        <div class="card-title-row">
+          <h2>评分分析 — <span id="proj-name">加载中…</span></h2>
+          <span class="hint">评分项按「可操作性」五类分组（ADR-008 §2.5）；系统不生成、推荐或假定报价（docs/12 §2.3）。</span>
         </div>
-        <div id="detail-rows" class="hint" style="margin-top:8px">加载中…</div>
+        <div id="run-context" class="run-context"></div>
+        <div id="hist-banner"></div>
+        <div id="score-summary" style="margin:10px 0"></div>
+        <div id="score-groups" class="score-groups"></div>
       </section>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
-        <a class="btn" href="workbench.html">进入项目工作台 →</a>
-        <a class="btn ghost" href="queue.html">进入复核与补录 →</a>
-        <a class="btn ghost" href="matrix.html">← 查看自动匹配</a>
+        <a class="btn" href="matrix.html">← 当前结论（资格与资源）</a>
+        <a class="btn ghost" href="operations.html">投标执行计划 →</a>
+        <a class="btn ghost" href="queue.html">待确认与处置 →</a>
         <a class="btn ghost" href="approval.html">审批页（仅满分显示操作）</a>
       </div>
     </div>
   </div>
 
+  <!-- 原文定位弹层（与矩阵页同一契约：Bearer 拉 blob 后 iframe 内嵌，附 #page=N） -->
+  <div class="source-modal" id="source-modal" style="display:none">
+    <div class="source-modal-box">
+      <div class="source-modal-head">
+        <b>招标文件原文</b>
+        <span id="source-modal-meta" class="hint"></span>
+        <button type="button" class="btn ghost" id="source-modal-close">关闭</button>
+      </div>
+      <iframe id="source-modal-frame" class="source-modal-frame" title="招标文件原文"></iframe>
+    </div>
+  </div>
+
   <footer class="footer">
-    <span>某建设集团 · 投标智能体 — 可点击原型 v0.1.0（R012 真实 API 版）</span>
+    <span>某建设集团 · 投标智能体 — 评分分析页（ADR-008 / docs/12 §2.3）</span>
     <span>数据均为脱敏演示数据，不代表真实业务</span>
   </footer>
 
-  <script src="data.js"></script>
-  <script src="api.js"></script>
-  <script src="common.js"></script>
+  <script src="data.js?v=20260929d"></script>
+  <script src="api.js?v=20260929d"></script>
+  <script src="common.js?v=20260929d"></script>
   <script>
     initPage("score.html", "score");
     const PJ0 = apiProjectId();
     const PJ = () => PJ0.id;
-
-    function matchBadge(m) {
-      // 引擎输出 satisfied/not_satisfied/unverifiable/manual_review；结果页补 not_evaluated（未执行）；兼容旧演示枚举
-      const map = {
-        satisfied: ["ok", "满足"], passed: ["ok", "满足"],
-        not_satisfied: ["danger", "不满足"], failed: ["danger", "不满足"], not_qualified: ["danger", "不满足"],
-        blocked_hard_requirement: ["danger", "硬性不满足"],
-        unverifiable: ["warn", "待补/不可判定"], blocked_missing_data: ["warn", "缺证阻断"],
-        manual_review: ["review", "人工复核"],
-        not_evaluated: ["gray", "未执行"],
-      };
-      const mm = map[m] || ["gray", m || "未判定"];
-      return `<span class="badge ${mm[0]}">${mm[1]}</span>`;
-    }
-    const escS = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-    function gateTag(r) {
-      return r.gate_executed === false && r.match !== "not_evaluated"
-        ? `<div class="gate-tag" title="门禁在前序硬性不满足处已短路；此条由诊断全量补齐判定，供补录/核对参考">门禁短路后·诊断结果</div>` : "";
-    }
-
-    /* 准入状态 / 四类结论 / 处置项摘要的中文化统一在 api.js（ADMISSION_STATE_META 等），本页只做布局 */
-    const labelOf = apiMetaLabel;
-    const badgeOf = apiMetaBadge;
-    const stateBadge = apiAdmissionStateBadge;
-    const briefList = apiQueueBriefList;
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
     async function loadScore() {
       const errBox = document.getElementById("api-error");
       try {
-        const [adm, proj] = await Promise.all([
+        const [sa, adm, proj] = await Promise.allSettled([
+          apiScoringAnalysis(PJ()),
           apiGet(`/projects/${PJ()}/admission`),
           apiGet(`/projects/${PJ()}`),
         ]);
-        const a = (adm.admission || {});
-        const name = proj.project_name;
-        const state = a.state || "collecting";
+        document.getElementById("proj-name").textContent =
+          proj.status === "fulfilled" ? proj.value.project_name : PJ();
+        if (sa.status === "rejected") {
+          if (sa.reason && sa.reason.status === 404) {
+            errBox.innerHTML = `<div class="notice error">评分分析接口不存在（404）：本机 API 进程仍是旧版本——请重启 API 与 worker（bash scripts/setup_local_env.sh stop && start）后刷新本页。</div>`;
+            errBox.style.display = "block";
+            return;
+          }
+          throw sa.reason;
+        }
+        const data = sa.value;
+        const a = adm.status === "fulfilled" ? (adm.value.admission || {}) : {};
+        document.getElementById("proj-name").insertAdjacentHTML("afterend", apiProjectChip(PJ0));
 
-        // state banner（徽标文字一律中文）
+        /* 状态横幅（准入摘要仍来自 /admission；无可算评分时不再显示「未满分」） */
         const banner = document.getElementById("state-banner");
         banner.style.display = "flex";
-        const stateLabel = labelOf(ADMISSION_STATE_META, a.eligible ? "qualified_full_score" : state, "状态待定");
-        const bTone = a.eligible ? ["ok", "内部满分——可进入人工审批"] :
-          (state === "blocked_hard_requirement" || state === "not_qualified" ? ["danger", "存在硬性不满足项（一票否决）"] :
-          (state === "blocked_missing_data" ? ["warn", "存在缺证阻断项——不推断满足，补录核验后重算"] :
-          (state === "matching" ? ["info", "存在需人工复核项——核对后重算"] : ["info", ""])));
-        banner.innerHTML = `<span class="badge ${bTone[0]}">${stateLabel}</span>
-          <div><span class="state-name">${escS(name)}</span>
-          <span class="state-desc">— ${bTone[1] || "当前准入状态，随匹配结果更新。"}</span></div>`;
+        const state = a.state || "collecting";
+        const calculable = data.summary && data.summary.calculable;
+        const bTone = a.eligible ? ["ok", "内部满分——可进入人工审批"]
+          : (state === "blocked_hard_requirement" || state === "not_qualified" ? ["danger", "存在硬性不满足项（一票否决）"]
+          : (calculable === false ? ["info", "当前无可自动计算评分项——不能自动判断是否达到内部满分"]
+          : (state === "blocked_missing_data" ? ["warn", "存在缺证阻断项——补录核验后重算"] : ["info", "评分与准入状态随匹配结果更新"])));
+        banner.innerHTML = `<span class="badge ${bTone[0]}">${esc(bTone[1].split("——")[0])}</span>
+          <div><span class="state-name">${esc(name)}</span>
+          <span class="state-desc">— ${esc(bTone[1])}</span></div>`;
 
-        // hero
-        const hero = document.getElementById("score-hero");
-        hero.style.display = "flex";
-        const missing = a.missing || [], review = a.review || [], blocked = a.blocked || [];
-        const missingN = missing.length, reviewN = review.length, blockedN = blocked.length;
-        hero.innerHTML = `
-          <div class="score-ring"><div class="inner">
-            <div class="val">${missingN + reviewN + blockedN} 项</div>
-            <div class="cap">待处置</div>
-          </div></div>
-          <div class="info">
-            <h2>${escS(name)}${apiProjectChip(PJ0)}</h2>
-            <p class="sub" style="margin-top:2px">招标文件解析完成 · 自动匹配结果（准入状态 ${stateBadge(a.eligible ? "qualified_full_score" : state)}）</p>
-            <div class="rows">
-              <div><span class="k">资格/响应性核查：</span><span class="v">${labelOf(QUALIFICATION_META, a.qualification, "待定")}（硬性要求 ${a.hard_satisfied || 0}/${a.hard_total || 0} 满足）</span></div>
-              <div><span class="k">计分结论：</span><span class="v">${labelOf(SCORING_META, a.scoring, "未满分")}（可复算客观分 ${a.objective_score ?? 0}/${a.objective_max ?? 0}）</span></div>
-              <div><span class="k">行动就绪：</span><span class="v">${labelOf(READINESS_META, a.readiness, "未就绪")}（投标动作 ${a.action_done ?? 0}/${a.action_total ?? 0} 已登记）</span></div>
-              ${blockedN ? `<div><span class="k">硬性不满足：</span><span class="v" style="color:var(--danger)">${blockedN} 项——${briefList(blocked, true)}</span></div>` : ""}
-              <div><span class="k">缺证待补：</span><span class="v" style="color:var(--warn)">${missingN ? `${missingN} 项——${briefList(missing, true)}` : "无"}</span></div>
-              <div><span class="k">人工复核：</span><span class="v">${reviewN ? `${reviewN} 项——${briefList(review, false)}` : "无"}</span></div>
-              <div><span class="k">项目经理：</span><span class="v">${a.manager && !a.manager._summary ? escS(a.manager.display_name || a.manager.name || a.manager.manager_id || "") + "（可用候选，规则判定见逐条明细）" : "无可用候选（资料未核验或规则待人工核对）"}</span></div>
-              ${a.price ? `<div><span class="k">报价：</span><span class="v">${apiFmtMoney(a.price)}</span></div>` : ""}
-              <div><span class="k">准入：</span><span class="v" style="color:${a.eligible ? "var(--ok)" : "var(--warn)"}">${a.eligible ? "内部满分（可提交人工审批）" : "阻断/未满分（不可进入审批）"}</span></div>
-              <div><span class="k">下一步处置（F026）：</span><span class="v" style="font-weight:600">${escS(a.next_step || "等待解析/匹配任务完成")}</span></div>
-            </div>
-            <div class="notice info" style="margin-top:10px;margin-bottom:0">
-              <b>结果说明</b>：每一项的满足/不满足及原因见下方「逐条匹配明细」；系统不把缺失推断为满足。缺证项补录并核验后重算（「复核与补录」页，投标专员/经营负责人均可办理）；人工复核项按条款原文核对企业资料后处置。<br>
-              <span class="hint">满分 ≠ 自动投标：满分仅进入待审批，最终由经营负责人决定（ADR-001 §2.3）。</span>
-            </div>
-          </div>`;
+        /* 运行上下文条（与矩阵页同一 run） */
+        const rc = data.run_context || {};
+        const when = data.generated_at ? String(data.generated_at).slice(0, 16).replace("T", " ") : "—";
+        document.getElementById("run-context").innerHTML = [
+          `<span class="rc-item">运行 <b>${esc(rc.run_id || "尚无")}</b></span>`,
+          `<span class="rc-item">规则集 <b>${esc(rc.ruleset_version || "—")}</b></span>`,
+          `<span class="rc-item">判定时点 <b>${esc(data.as_of || "—")}</b></span>`,
+          `<span class="rc-item">生成时间 <b>${esc(when)}</b></span>`,
+        ].join("") + ((data.result_freshness === "stale" || data.is_current === false)
+          ? `<span class="rc-stale"><span class="badge warn">已过期（stale）</span></span>` : "");
+        document.getElementById("hist-banner").innerHTML = data.historical_sample
+          ? `<div class="hist-banner"><span class="hist-tag">${esc(data.historical_sample_banner)}</span>
+              <div>${esc(data.historical_sample_note || "")}</div></div>` : "";
 
-        // 四类结论
-        const four = document.getElementById("four-rows");
-        const mk = (t, badgeHtml, desc) => `<tr><td><b>${t}</b></td><td>${badgeHtml}</td><td style="color:var(--ink-2)">${desc}</td></tr>`;
-        four.innerHTML = mk("① 资格/响应性核查", badgeOf(QUALIFICATION_META, a.qualification, "待定"),
-            `硬性要求 ${a.hard_satisfied || 0}/${a.hard_total || 0} 满足；${blockedN ? `${blockedN} 项明确不满足（一票否决）；` : ""}${missingN} 项缺证默认阻断、不推断`)
-          + mk("② 计分结论", badgeOf(SCORING_META, a.scoring, "未满分"),
-            `可复算客观分 ${a.objective_score ?? 0}/${a.objective_max ?? 0}；${reviewN} 项待人工复核（规则未结构化或无可复算公式，不计入满分）`)
-          + mk("③ 行动就绪", badgeOf(READINESS_META, a.readiness, "未就绪"),
-            `投标动作 ${a.action_done ?? 0}/${a.action_total ?? 0} 已登记（报名/递交/开标等由人员完成后登记，系统不代办）`)
-          + mk("④ 下一步", a.eligible ? `<span class="badge ok">可进入审批</span>` : `<span class="badge info">人工补录 / 复核</span>`,
-            a.eligible ? "满分结果可提交经营负责人审批（「人工审核」页）" : "补齐材料并核验后重算（「复核与补录」页）；人工复核项核对后处置");
-      } catch (err) {
-        if (err.status === 403) { errBox.innerHTML = `<div class="notice error">权限不足：当前角色「${apiRoleLabel()}」无权查看结果。请用右上角切换投标专员或经营负责人登录。</div>`; errBox.style.display = "block"; return; }
-        errBox.innerHTML = `<div class="notice error">加载准入摘要失败：${escS(err.message)}</div>`; errBox.style.display = "block";
-      }
-    }
-
-    /* 逐条明细（matrix 数据，按 tab 分组）：每条要求都列出结论与原因，满足项同样展示（不只列缺项） */
-    let REQS = [];
-    let RUN2 = null;
-    async function loadDetails() {
-      try {
-        const data = await apiGet(`/projects/${PJ()}/matrix`);
-        REQS = data.requirements || [];
-        RUN2 = data.run || null;
-        const counts = {};
-        REQS.forEach((r) => { counts[r.req_type] = (counts[r.req_type] || 0) + 1; });
-        document.querySelectorAll("#tabs .tab").forEach((t) => {
-          const n = counts[t.dataset.t] || 0;
-          const label = { hard_requirement: "硬性要求", scored_requirement: "评分项", action_requirement: "动作项" }[t.dataset.t];
-          t.textContent = `${label}（${n}）`;
-        });
-        const cov = (RUN2 && RUN2.coverage) || {};
-        const note = document.getElementById("detail-note");
-        if (Array.isArray(cov.short_circuited) && cov.short_circuited.length) {
-          note.innerHTML = `<div class="notice warn">门禁在硬性不满足处短路（一票否决结论已定）；其后 ${cov.short_circuited.length} 条为诊断全量补齐判定（标「门禁短路后·诊断结果」），供逐条核对补录。</div>`;
-        } else if (RUN2 && RUN2.run_id && cov.complete === false) {
-          const notRun = REQS.filter((r) => r.match === "not_evaluated").length;
-          note.innerHTML = `<div class="notice warn">此运行为旧版门禁短路结果：只执行了 ${cov.executed ?? "?"}/${cov.declared ?? REQS.length} 条，其后 ${notRun} 条无结论（标「未执行」）。请到「自动匹配」页由经营负责人重算，获得逐条全量结论。</div>`;
+        /* 摘要：可自动计算 X 项 · 待内部评审 Y 项 · 待结构化 Z 项（X=0 时不显示 0/0） */
+        const s = data.summary || {};
+        let sumHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span class="badge ok">可自动计算 ${s.objective_count ?? 0} 项</span>
+          <span class="badge review">待内部质量评审 ${s.subjective_count ?? 0} 项</span>
+          <span class="badge info">报价计算规则 ${s.price_formula_count ?? 0} 项</span>
+          <span class="badge gray">评标方法说明 ${s.methodology_count ?? 0} 项（不计分）</span>
+          <span class="badge warn">待结构化 ${s.unstructured_count ?? 0} 项</span>
+        </div>`;
+        if (s.calculable && (s.objective_score != null || s.objective_max != null)) {
+          sumHtml += `<div class="hint" style="margin-top:6px">可复算客观分：<b>${esc(s.objective_score ?? "—")} / ${esc(s.objective_max ?? "—")}</b>
+            ${s.internal_full_score_ready === true ? '<span class="badge ok">达到内部满分条件</span>'
+              : s.internal_full_score_ready === false ? '<span class="badge warn">未达到内部满分条件</span>' : ""}</div>`;
         } else {
-          note.innerHTML = "";
+          sumHtml += `<div class="notice warn" style="margin-top:8px"><b>当前无可自动计算评分项，不能自动判断是否达到内部满分</b>。
+            原因见各分组（评分规则待结构化 / 授权输入未录入 / 计分证据缺失）——<b>不显示「0/0」或「未满分」</b>（docs/12 §2.3）。</div>`;
         }
-        renderDetails("hard_requirement");
+        document.getElementById("score-summary").innerHTML = sumHtml;
+
+        /* 五类分组 */
+        const toneOf = { objective_calculable: "ok", subjective_review: "review", price_formula: "info",
+                         methodology_only: "gray", unstructured: "warn" };
+        const groups = data.groups || [];
+        document.getElementById("score-groups").innerHTML = groups.length ? groups.map((g) => `
+          <div class="score-group">
+            <div class="sg-head"><span class="badge ${toneOf[g.classification] || "gray"}">${esc(g.label)}</span>
+              <span class="n">${g.items.length} 项</span></div>
+            <table class="tbl"><tbody>
+              ${g.items.map((it, i) => `
+                <tr class="row-${toneOf[g.classification] || "gray"}">
+                  <td class="num" style="width:70px"><b>第 ${i + 1} 项</b></td>
+                  <td>${esc((it.assertion || "").slice(0, 140))}${(it.assertion || "").length > 140 ? "…" : ""}
+                    <div class="req-src">条款 ${fmtClause(it.clause_ref) || "—"}${it.page_no != null ? ` · ${apiSourcePageLink(it.source_link, it.page_no, "原文第 " + it.page_no + " 页")}` : (it.source_link ? ` · ${apiSourcePageLink(it.source_link, null)}` : "")}</div></td>
+                  <td style="width:120px">${apiResultStateBadge(it.projected_result, it.state_label)}${it.reason_code ? `<div style="margin-top:4px">${apiReasonCodeBadge(it.reason_code)}</div>` : ""}</td>
+                  <td style="width:240px;color:var(--ink-2)">${esc((it.reason || "—").slice(0, 150))}</td>
+                  ${g.classification === "objective_calculable" || g.classification === "price_formula"
+                    ? `<td class="num" style="width:90px">${it.score != null ? `<b>${esc(it.score)}</b> / ${esc(it.max_score ?? "—")}` : "待复算"}</td>` : ""}
+                </tr>`).join("")}
+            </tbody></table>
+          </div>`).join("")
+          : `<div class="hint">本项目的招标文件尚未解析出评分项（或评分候选仍在解析质量区待处置）。</div>`;
       } catch (err) {
-        document.getElementById("detail-rows").innerHTML = `<div class="notice error">加载明细失败：${err.message}</div>`;
+        if (err.status === 403) { errBox.innerHTML = `<div class="notice error">权限不足：当前角色「${apiRoleLabel()}」无权查看结果。</div>`; errBox.style.display = "block"; return; }
+        if (err.status === 401) { errBox.innerHTML = `<div class="notice error">未登录：请用右上角账号登录。</div>`; errBox.style.display = "block"; return; }
+        errBox.innerHTML = `<div class="notice error">加载评分分析失败：${esc(err.message)}</div>`; errBox.style.display = "block";
       }
     }
-    function renderDetails(type) {
-      const rows = REQS.filter((r) => r.req_type === type);
-      const box = document.getElementById("detail-rows");
-      if (!rows.length) { box.innerHTML = `<div class="hint">该类别暂无条目。</div>`; return; }
-      const tone = (m) => ({ satisfied: "ok", passed: "ok", not_satisfied: "danger", failed: "danger", not_qualified: "danger",
-        blocked_hard_requirement: "danger", unverifiable: "warn", blocked_missing_data: "warn", manual_review: "review" }[m] || "gray");
-      const tally = { ok: 0, danger: 0, warn: 0, review: 0, gray: 0 };
-      rows.forEach((r) => { tally[tone(r.match)]++; });
-      const reason = (r) => (r.match_reason && (typeof r.match_reason === "string" ? r.match_reason : r.match_reason.text)) || "—";
-      box.innerHTML = `
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-          <span class="badge gray">共 ${rows.length} 项</span><span class="badge ok">满足 ${tally.ok}</span>
-          ${tally.danger ? `<span class="badge danger">不满足 ${tally.danger}</span>` : ""}
-          ${tally.warn ? `<span class="badge warn">待补/不可判定 ${tally.warn}</span>` : ""}
-          ${tally.review ? `<span class="badge review">人工复核 ${tally.review}</span>` : ""}
-          ${tally.gray ? `<span class="badge gray">未执行 ${tally.gray}</span>` : ""}
-        </div>
-        <table class="tbl"><tbody>
-        ${rows.map((r, i) => `<tr class="row-${tone(r.match)}" title="系统编号：${escS(r.requirement_id)}">
-          <td class="num" style="width:96px"><b>第 ${i + 1} 项</b>${r.category ? `<div class="hint">${escS(r.category)}</div>` : ""}</td>
-          <td>${escS((r.assertion || "").slice(0, 150))}${(r.assertion || "").length > 150 ? "…" : ""}<br><span class="hint">条款 ${fmtClause(r.clause_ref) || "—"}${r.page_no != null ? ` · 第 ${escS(r.page_no)} 页` : ""}</span></td>
-          <td style="width:120px">${matchBadge(r.match)}${gateTag(r)}</td>
-          <td style="width:260px;color:var(--ink-2)">${escS(reason(r))}${(r.evidence || []).length ? `<div class="ev-list">证据：${r.evidence.map((e) => `<span title="${escS(e)}">${escS(apiEvidenceRefLabel(e))}</span>`).join("；")}</div>` : ""}
-            ${r.next_step ? `<div class="hint" style="margin-top:3px">下一步处置：<b>${escS(r.next_step)}</b></div>` : ""}</td>
-          ${type === "scored_requirement" ? `<td class="num" style="width:90px">${r.max_score ?? "—"}${r.score != null ? `（可复算 ${escS(r.score)}）` : ""}</td>` : ""}
-        </tr>`).join("")}
-      </tbody></table>`;
-    }
-    document.getElementById("tabs").addEventListener("click", (e) => {
-      const btn = e.target.closest(".tab");
-      if (!btn) return;
-      document.querySelectorAll("#tabs .tab").forEach((t) => t.classList.remove("active"));
-      btn.classList.add("active");
-      renderDetails(btn.dataset.t);
-    });
 
-    loadScore();
-    loadDetails();
+    try { loadScore(); } catch (e) {
+      const box = document.getElementById("api-error");
+      if (box) { box.innerHTML = '<div class="notice error">页面初始化失败：' + esc(e && e.message || e) +
+        '。多为浏览器缓存了旧版脚本——请强制刷新（Mac：Cmd+Shift+R / Windows：Ctrl+F5）。</div>'; box.style.display = "block"; }
+    }
   </script>
 </body>
 </html>

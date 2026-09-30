@@ -37,11 +37,16 @@ TOOL_ENV = {
 
 @dataclass
 class ParsedPage:
-    """解析器产物：页码 + 段落文本（对齐 runtime/rag/chunker.ParsedPage）。"""
+    """解析器产物：页码 + 段落文本（对齐 runtime/rag/chunker.ParsedPage）。
+
+    tables = 版面层表格行（[[单元格,…],…]；可选能力，pdfplumber 缺席时恒为空）。
+    只供「label→同行右邻单元格」类主卡兜底取值；不并入 paragraphs（文本流是锚点
+    正则与逐字校验的基准，混入表格会引入表头类误报，2026-09-24）。"""
 
     page_no: int
     paragraphs: list[str] = field(default_factory=list)
     ocr_confidence: float | None = None
+    tables: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -191,8 +196,26 @@ def _route_text_pdf(path: str, digest: str) -> RouteResult:
         return RouteResult(kind="error", source=path, sha256=digest,
                            error="pdftotext 无输出（文本层为空？）",
                            needs_review=True, note="解析失败进人工复核（F005 §7）")
+    _attach_page_tables(path, pages)
     return RouteResult(kind="text_pdf", source=path, sha256=digest,
                        pages=pages, confidence=1.0, needs_review=False)
+
+
+def _attach_page_tables(path: str, pages: list[ParsedPage]) -> None:
+    """版面层表格行挂到对应页（可选能力：pdfplumber 缺席/失败/无表格 → 零副作用）。
+
+    只抽前 layout_table_pages() 页（前附表/公告区在文件前部），供 extractor 主卡
+    label→单元格兜底；不影响 paragraphs 与既有锚点行为。"""
+    try:
+        from runtime.core.config import layout_table_pages
+        from runtime.parsing import layout
+        tables = layout.extract_pdf_tables(path, max_pages=layout_table_pages())
+    except Exception:  # 版面层任何异常不得阻断主链
+        return
+    for p in pages:
+        rows = tables.get(p.page_no)
+        if rows:
+            p.tables = rows
 
 
 def _route_scanned_pdf(path: str, digest: str) -> RouteResult:

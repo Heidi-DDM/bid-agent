@@ -398,3 +398,143 @@ async function apiInitSession() {
     return false;
   }
 }
+
+/* ===================== ADR-008 / docs/12：结果分层标签与 API（2026-09-28） ===================== */
+
+/* 细粒度结论状态（服务端 domain_dict 投影；颜色之外必须有中文文字标识，docs/12 §6） */
+const RESULT_STATE_META = {
+  satisfied: ["ok", "已满足"], not_satisfied: ["danger", "明确不满足"],
+  blocked_missing_data: ["warn", "待补资料"], manual_review: ["review", "人工复核"],
+  not_calculable: ["review", "暂不可计算"], parse_exception: ["review", "解析待处置"],
+  not_evaluated: ["gray", "未执行"], legacy_ambiguous: ["gray", "历史结果，需重算确认"],
+  not_started: ["gray", "尚未开始"], ready: ["info", "就绪"], completed: ["ok", "已完成"],
+  overdue: ["danger", "已逾期"], not_applicable: ["gray", "不适用（归档说明）"],
+};
+function apiResultStateBadge(state, labelOverride) {
+  const meta = RESULT_STATE_META[state] || ["gray", state || "—"];
+  return '<span class="badge ' + meta[0] + '">' + apiEsc(labelOverride || meta[1]) + "</span>";
+}
+const apiEsc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+
+/* 原因码（docs/12 §3.2 最小原因码表；服务端字典 runtime/core/domain_dict.py 同源） */
+const REASON_CODE_LABEL = {
+  verified_quantity_insufficient: "已核验数量不足", grade_below_requirement: "等级低于要求",
+  certificate_expired: "证书已过期", profession_mismatch: "专业/类别不符", onsite_conflict: "人员在施冲突",
+  enterprise_record_missing: "企业台账无此类记录", evidence_missing: "缺少可核验证据",
+  evidence_pending_verification: "证据尚未核验", validity_date_missing: "有效期字段缺失",
+  evidence_conflict: "证据相互冲突", rule_unstructured: "规则未结构化",
+  candidate_plan_unselected: "无完整候选班子方案", professional_judgement_required: "需专业判断",
+  formula_missing: "评分公式缺失", authorized_input_missing: "授权输入（报价等）未录入",
+  scoring_evidence_missing: "计分证据缺失", anchor_not_located: "关键条款未定位",
+  llm_candidate_pending: "模型候选待确认", source_conflict: "多版本来源冲突",
+  legacy_ambiguous: "历史结果语义不明", not_applicable: "不适用（非判定项）",
+};
+function apiReasonCodeBadge(code) {
+  if (!code) return "";
+  return '<span class="chip static" title="原因码 ' + apiEsc(code) + '">' + apiEsc(REASON_CODE_LABEL[code] || code) + "</span>";
+}
+const NEXT_ACTION_LABEL = {
+  replace_or_add_qualified_person: "更换/补足合格人员", renew_or_upgrade_certificate: "更新或升级证书资源",
+  resolve_onsite_conflict: "调整在施安排释放人员", create_or_merge_evidence_task: "创建/合并补证任务",
+  verify_pending_evidence: "核验在途证据", supply_validity_dates: "补录有效期字段",
+  assign_reviewer: "指派复核人处理", structure_scoring_rule: "结构化评分规则",
+  await_authorized_input: "等待授权输入（报价等）", handle_parse_exception: "处置解析例外",
+  confirm_not_applicable: "确认不适用（归档说明）", complete_operation_task: "到阶段完成执行动作",
+  recalculate_to_confirm: "重算确认",
+};
+const EVIDENCE_STATE_LABEL = {
+  sufficient: "证据充分且满足", sufficient_but_insufficient: "证据充分但数量/等级不足",
+  missing: "无可核验证据", pending_verification: "证据在途未核验", conflict: "证据冲突",
+  not_applicable: "无需企业证据", none: "无",
+};
+const SCORE_CLASS_META = {
+  objective_calculable: ["ok", "可自动复算的客观项"], subjective_review: ["review", "待内部质量评审项"],
+  price_formula: ["info", "报价计算规则"], methodology_only: ["gray", "评标方法说明"],
+  unstructured: ["warn", "评分规则待结构化"],
+};
+const STAGE_LABEL = { preparation: "投标准备", approval_ready: "审批前就绪", submission_ready: "准备递交", submitted: "已递交", opened: "开标" };
+const TASK_KIND_LABEL = { registration: "报名/文件获取", ca_cert: "CA 证书", bond: "保证金", preparation: "标书编制", submission: "递交投标文件", opening: "开标", site_visit: "现场踏勘", other: "其他动作" };
+const BLOCKING_REASON_LABEL = {
+  qualification_not_satisfied: "资格/资源存在明确不满足或缺证", scoring_not_ready: "评分未达到内部满分条件",
+  parse_exceptions_pending: "存在待处置解析例外（满分准入暂不可用）", approval_actions_not_ready: "审批前动作未就绪",
+  historical_sample_context: "历史解析样本测试上下文（不可用于真实审批或递交）", result_stale: "结果已过期（stale），需重算",
+};
+function apiBlockingReasonList(reasons) {
+  return (reasons || []).map((r) => '<span class="badge warn">' + apiEsc(BLOCKING_REASON_LABEL[r] || r) + "</span>").join(" ");
+}
+/* 事实值对（要求值 vs 实际值）：安全员 0/3 这类数字对必须可读（docs/12 §2.2-4） */
+function apiFactPair(required, observed) {
+  const fmtScalar = (x) => {
+    if (x == null) return "";
+    if (typeof x === "object") {
+      if (Array.isArray(x)) return x.map(fmtScalar).filter(Boolean).join(" / ");
+      const parts = Object.entries(x).filter(([, v]) => v != null && v !== "")
+        .map(([k, v]) => apiEsc(k) + "=" + fmtScalar(v));
+      return parts.length > 1 ? parts.slice(0, 4).join("；") + (parts.length > 4 ? "…" : "") : parts.join("");
+    }
+    const s = String(x);
+    return apiEsc(s.length > 32 ? s.slice(0, 32) + "…" : s);
+  };
+  const fmt = (v) => {
+    if (v == null) return null;
+    if (typeof v === "object" && !Array.isArray(v) && (v.value != null || v.operator)) {
+      const unit = v.unit === "person" ? "人" : v.unit || "";
+      return (v.operator ? apiEsc(v.operator) + " " : "") + apiEsc(v.value) + (unit ? " " + unit : "");
+    }
+    if (typeof v === "object") {
+      // acceptable=[{category,level},…] 这类结构化要求 → 「类别 等级」并列表述
+      if (Array.isArray(v)) {
+        const parts = v.map((x) => typeof x === "object"
+          ? [x.category, x.level].filter(Boolean).map(apiEsc).join(" ")
+          : fmtScalar(x));
+        return parts.filter(Boolean).join("；") || null;
+      }
+      const parts = Object.entries(v).filter(([, x]) => x != null && x !== "").slice(0, 3)
+        .map(([k, x]) => {
+          let val = fmtScalar(x);
+          if (/amount|price|max/.test(k)) {
+            const f = parseFloat(x);
+            if (Number.isFinite(f)) {
+              const i = Math.round(f);
+              val = (Math.abs(f - i) < 1e-9 ? i.toLocaleString("en-US") : f.toLocaleString("en-US")) + " 元";
+            }
+          }
+          return apiEsc(k) + "=" + val;
+        });
+      return parts.join("；") || null;
+    }
+    return fmtScalar(v);
+  };
+  const req = fmt(required), obs = fmt(observed);
+  if (!req && !obs) return '<span class="hint">—</span>';
+  return (req ? '<div class="hint">要求：' + req + "</div>" : "") + (obs ? '<div class="hint">实际：' + obs + "</div>" : "");
+}
+/* 原文页码链接（docs/12 用户追溯验收）：openSourceFn 由页面提供（blob 弹层） */
+function apiSourcePageLink(sourceLink, page, label) {
+  if (!sourceLink) return "";
+  if (page != null) return ' <a href="#" onclick="openSource(\'' + sourceLink + '\', ' + page + ');return false">' + apiEsc(label || "原文第 " + page + " 页") + "</a>";
+  return ' <a href="#" onclick="openSource(\'' + sourceLink + '\');return false">' + apiEsc(label || "查看原文") + "</a>";
+}
+
+/* —— 新 API 封装（docs/12 §4.2；全部接受可选 run_id，默认最新 current 运行） —— */
+async function apiResultOverview(pid, runId) { return apiGet(`/projects/${pid}/result-overview${runId ? "?run_id=" + encodeURIComponent(runId) : ""}`); }
+async function apiQualificationMatrix(pid, opts = {}) {
+  const q = new URLSearchParams();
+  if (opts.run_id) q.set("run_id", opts.run_id);
+  if (opts.lot_id) q.set("lot_id", opts.lot_id);
+  if (opts.state) q.set("state", opts.state);
+  const s = q.toString();
+  return apiGet(`/projects/${pid}/qualification-matrix${s ? "?" + s : ""}`);
+}
+async function apiScoringAnalysis(pid, runId) { return apiGet(`/projects/${pid}/scoring-analysis${runId ? "?run_id=" + encodeURIComponent(runId) : ""}`); }
+async function apiOperationPlan(pid, stage) { return apiGet(`/projects/${pid}/operation-plan${stage ? "?stage=" + encodeURIComponent(stage) : ""}`); }
+async function apiParseExceptions(pid, status) { return apiGet(`/projects/${pid}/parse-exceptions${status ? "?status=" + encodeURIComponent(status) : ""}`); }
+async function apiDecideParseException(excId, body) { return apiPost(`/parse-exceptions/${encodeURIComponent(excId)}/decisions`, body); }
+async function apiCandidatePlans(pid, runId) { return apiGet(`/projects/${pid}/candidate-plans${runId ? "?run_id=" + encodeURIComponent(runId) : ""}`); }
+async function apiSelectCandidatePlan(pid, body) { return apiPost(`/projects/${pid}/candidate-plans/select`, body); }
+async function apiRemediationTasks(pid) { return apiGet(`/projects/${pid}/remediation-tasks`); }
+async function apiUpdateOperationTask(taskId, body) {
+  return apiReq("PATCH", `/operation-tasks/${encodeURIComponent(taskId)}`, { json: body });
+}
+async function apiTestContext(pid) { return apiGet(`/projects/${pid}/test-context`); }
+async function apiSetTestContext(pid, body) { return apiPost(`/projects/${pid}/test-context`, body); }

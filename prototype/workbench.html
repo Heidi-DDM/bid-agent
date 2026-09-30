@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>项目工作台｜投标智能体</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260929d">
 </head>
 <body>
   <header class="topbar"></header>
@@ -49,7 +49,7 @@
     <section class="card">
       <h2>下一步与正式门禁</h2>
       <div class="notice info" style="margin-bottom:0">完成补证或人工复核后，请在“复核与补录”中发起受服务端门禁保护的重算。仅最新、完整且满足内部准入条件的结果，才可进入经营负责人正式审批；满分不等于自动投标。</div>
-      <p style="margin-bottom:0"><a class="btn ghost" href="queue.html">前往复核与补录</a> <a class="btn ghost" href="approval.html">查看正式人工审批</a></p>
+      <p style="margin-bottom:0"><a class="btn" href="matrix.html">当前结论（资格与资源）</a> <a class="btn ghost" href="score.html">评分分析</a> <a class="btn ghost" href="operations.html">投标执行计划</a> <a class="btn ghost" href="queue.html">待确认与处置</a> <a class="btn ghost" href="approval.html">正式人工审批</a></p>
     </section>
   </main></div>
   <footer class="footer"><span>某建设集团 · 投标智能体</span><span>数据均以系统实际权限与服务端门禁为准</span></footer>
@@ -76,7 +76,7 @@
     </section>
   </div>
 
-  <script src="data.js"></script><script src="api.js"></script><script src="common.js"></script>
+  <script src="data.js?v=20260929d"></script><script src="api.js?v=20260929d"></script><script src="common.js?v=20260929d"></script>
   <script>
     initPage("workbench.html", "workbench");
     const PJ0 = apiProjectId(); const PJ = () => PJ0.id;
