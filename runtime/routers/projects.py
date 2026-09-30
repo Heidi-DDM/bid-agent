@@ -298,7 +298,7 @@ def set_bid_deadline(
         "request_id": request_id,
         "project_id": project_id,
         "bid_deadline": project.bid_deadline.isoformat() if project.bid_deadline else None,
-        "bid_deadline_at": project.bid_deadline_at.astimezone(lifecycle_service.CN_TZ).isoformat()
+        "bid_deadline_at": lifecycle_service.deadline_at_cn(project.bid_deadline_at).isoformat()
                            if project.bid_deadline_at else None,
         "deadline_precision": "datetime" if project.bid_deadline_at else
                               ("date" if project.bid_deadline else "missing"),

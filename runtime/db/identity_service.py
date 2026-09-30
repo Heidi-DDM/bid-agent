@@ -18,6 +18,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from runtime.db.lifecycle_service import deadline_at_cn
+
 from runtime.core import identity as identity_logic
 from runtime.core.errors import ApiError
 from runtime.db.models import (
@@ -263,7 +265,7 @@ def identity_payload(row: ProjectIdentity | None) -> dict[str, Any]:
         "expected": row.expected_snapshot or {},
         "actual": row.actual_snapshot or {},
         "bid_deadline": row.bid_deadline.isoformat() if row.bid_deadline else None,
-        "bid_deadline_at": row.bid_deadline_at.astimezone(_CN_TZ).isoformat() if row.bid_deadline_at else None,
+        "bid_deadline_at": deadline_at_cn(row.bid_deadline_at).isoformat() if row.bid_deadline_at else None,
         "deadline_precision": "datetime" if row.bid_deadline_at else ("date" if row.bid_deadline else "missing"),
         "source_refs": row.source_refs or [],
         "checked_by": row.checked_by,

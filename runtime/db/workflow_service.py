@@ -181,13 +181,14 @@ def build_prescreen_snapshot(session: Session, project_id: str) -> dict[str, Any
         select(func.count()).select_from(Material).where(Material.project_id == project_id)
     ) or 0
 
+    from runtime.db.lifecycle_service import deadline_at_cn
     facts: list[dict[str, Any]] = [
         {"code": "project_registered", "text": "项目已登记", "value": project.project_name},
         {"code": "identity_status", "text": "项目身份校验状态", "value": identity.identity_status if identity else "待核验"},
         {"code": "tender_document", "text": "当前招标文件引用", "value": project.tender_document_ref or None},
         {"code": "project_material_count", "text": "关联材料版本数量", "value": document_count},
         {"code": "bid_deadline", "text": "投标截止事实", "value": (
-            project.bid_deadline_at.isoformat() if project.bid_deadline_at else
+            deadline_at_cn(project.bid_deadline_at).isoformat() if project.bid_deadline_at else
             (project.bid_deadline.isoformat() if project.bid_deadline else None)
         )},
     ]

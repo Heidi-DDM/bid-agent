@@ -13,8 +13,15 @@ unverifiable 的细分（blocked_missing_data 等）由投影层按 reason_code 
 from __future__ import annotations
 
 import re
+import sys
 from datetime import date
+from pathlib import Path
 from typing import Any
+
+if __package__ in (None, ""):
+    # 独立脚本方式运行（golden lab / CI）时仓库根不在 sys.path，补引导；
+    # 被 runtime 以 scripts.matching.engine 导入时本分支不生效。
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 RESULTS = {"satisfied", "not_satisfied", "unverifiable", "manual_review",

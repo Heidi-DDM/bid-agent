@@ -47,13 +47,24 @@ def now_cn(now: datetime | None = None) -> datetime:
     return now.astimezone(CN_TZ)
 
 
+def deadline_at_cn(value: datetime | None) -> datetime | None:
+    """截止时点统一为 CN 时区 aware。
+
+    无时区后端（SQLite 测试库）读回 naive 值时必须按 CN 墙钟解释；
+    不得直接 astimezone()——那会按服务器本地时区解释，UTC 环境（CI/容器）下漂移 8 小时。
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        # 数据库历史异常值不能按服务器本地时区解释；统一按中国时区处理。
+        return value.replace(tzinfo=CN_TZ)
+    return value.astimezone(CN_TZ)
+
+
 def deadline_text(project: Project) -> str:
     """面向审计/错误信息的截止事实；不将日期级事实伪装为精确时刻。"""
     if project.bid_deadline_at is not None:
-        point = project.bid_deadline_at
-        if point.tzinfo is None:
-            point = point.replace(tzinfo=CN_TZ)
-        return point.astimezone(CN_TZ).isoformat()
+        return deadline_at_cn(project.bid_deadline_at).isoformat()
     if project.bid_deadline is not None:
         return f"{project.bid_deadline.isoformat()}（仅日期，时刻待补）"
     return "待补"
@@ -63,11 +74,7 @@ def is_overdue(project: Project, *, now: datetime | None = None,
                today: date | None = None) -> bool:
     """精确截止时点优先；仅日期时保守地在次日才关闭。"""
     if project.bid_deadline_at is not None:
-        point = project.bid_deadline_at
-        if point.tzinfo is None:
-            # 数据库历史异常值不能按服务器本地时区解释；统一按中国时区处理。
-            point = point.replace(tzinfo=CN_TZ)
-        return now_cn(now) >= point.astimezone(CN_TZ)
+        return now_cn(now) >= deadline_at_cn(project.bid_deadline_at)
     if project.bid_deadline is None:
         return False
     return project.bid_deadline < (today or today_cn(now))
@@ -277,14 +284,14 @@ def project_readiness(session: Session, project_id: str, *, now: datetime | None
                          "text": admission.internal_admission_result.get("decision") or "内部准入未满足"})
 
     days_left = (project.bid_deadline - today).days if project.bid_deadline else None
-    seconds_left = (project.bid_deadline_at.astimezone(CN_TZ) - current_now).total_seconds() if project.bid_deadline_at else None
+    seconds_left = (deadline_at_cn(project.bid_deadline_at) - current_now).total_seconds() if project.bid_deadline_at else None
     precision = "datetime" if project.bid_deadline_at else ("date" if project.bid_deadline else "missing")
     return {
         "project_id": project.project_id,
         "project_name": project.project_name,
         "stage": project.admission_status,
         "bid_deadline": project.bid_deadline.isoformat() if project.bid_deadline else None,
-        "bid_deadline_at": project.bid_deadline_at.astimezone(CN_TZ).isoformat() if project.bid_deadline_at else None,
+        "bid_deadline_at": deadline_at_cn(project.bid_deadline_at).isoformat() if project.bid_deadline_at else None,
         "deadline_precision": precision,
         "deadline_accuracy_note": (
             "精确截止时点，系统在该时点及之后关闭正式操作" if precision == "datetime" else
